@@ -1,20 +1,19 @@
-## 0.80.4 - 2026-09-19
+## 0.80.5 - 2026-09-19
 
-One parser fix.
+One filesystem fix.
 
-### A positional payload reaches through a lowercase module
+### `FS.glob` answered nothing for an absolute pattern
 
-A module bound by `let l = import ./lib` has a lowercase name, so the type
-`l.S` opens with a word the parser also reads as a variable. The bracketed
-spelling read it; the unbracketed one `wand f` writes did not, and the
-payload became a statement below the constructor.
+The walk always started at the working directory, so a pattern that names
+its own directory could never match. It came back empty and said nothing.
 
 ```
--- type T(l.S) formatted
--- before        -- now
-type T = T       type T = T l.S
-l.S
+FS.glob /var/log/*.log
+
+-- before    -- now
+[]           [/var/log/displaypolicyd.stdout.log, /var/log/fsck_apfs.log]
 ```
 
-Both spellings read it now, so a type declared this way survives `wand f`.
-An applied type and the arguments of `implement` read it too.
+An absolute pattern now starts its walk where the pattern says.
+`FS.glob_in` is unchanged: it always searches the directory given to it,
+and an absolute pattern there simply matches whole paths.
