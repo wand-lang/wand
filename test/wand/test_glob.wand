@@ -122,6 +122,37 @@ test "over files, FS.glob answers exactly what matches? accepts" (fn t ->
     t.eq (3, true, []) (List.length found, all_match, missed)
   ))
 
+-- `FS.glob` has no directory argument, so an absolute pattern is the only
+-- thing saying where to look. The walk used to begin at the working
+-- directory whatever the pattern said, so no absolute pattern ever matched
+-- and every one answered `[]`.
+test "FS.glob takes its start from an absolute pattern" (fn t ->
+  with FS.temp_dir "wand_glob_abs_" as dir -> (
+    FS.mkdir! (Path.join dir ./src);
+    ["a.wand", "b.ml", "src/c.wand"]
+    |> List.each (fn n -> FS.write_file! (Path.join dir (Path.of_string n)) "x");
+    let pattern = String.to_glob! "%{Path.to_string dir}/**.wand";
+    let found = FS.glob pattern;
+    let all_match = found |> List.all? (fn p -> Glob.matches? pattern p);
+    t.eq (2, true) (List.length found, all_match)
+  ))
+
+-- `FS.glob_in` does have one, and it is what chooses where to look. An
+-- absolute pattern only says which whole paths count, so a directory that
+-- cannot hold them answers with nothing: `<dir>/*.wand` names a file
+-- directly under `dir`, and none of those is under `dir/src`.
+test "FS.glob_in keeps its directory whatever the pattern" (fn t ->
+  with FS.temp_dir "wand_glob_in_abs_" as dir -> (
+    FS.mkdir! (Path.join dir ./src);
+    ["a.wand", "src/c.wand"]
+    |> List.each (fn n -> FS.write_file! (Path.join dir (Path.of_string n)) "x");
+    let pattern = String.to_glob! "%{Path.to_string dir}/*.wand";
+    t.eq (1, []) (
+      List.length (FS.glob_in pattern dir),
+      FS.glob_in pattern (Path.join dir ./src)
+    )
+  ))
+
 -- The walk and the predicate answer different questions, and a directory is
 -- where they part. `Glob.matches?` reads a name and performs nothing, so it
 -- cannot know what is on disk; `FS.glob` walks and answers with files. The

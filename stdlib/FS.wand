@@ -1,5 +1,7 @@
 uses {Clock, FS.Read, FS.Write}
 
+import Glob
+import Path
 import Resource
 
 -- Every operation that touches the filesystem can fail for a reason the OS
@@ -497,32 +499,33 @@ let size path = try size! path
 -- true : Bool
 let cwd () = fs_cwd ()
 
--- Return the files matching a glob pattern, relative to the current
--- directory.
+-- The files matching a pattern, searched from the working directory.
 --
--- Relative to the working directory. `glob_in` takes the directory to
--- look in.
+-- An absolute pattern is searched from its own directory instead, because
+-- the pattern is then the only thing saying where to look. `glob_in` takes
+-- the directory as an argument.
 --
--- Files, not paths: a directory the pattern names is not in the answer.
--- `FS.list_dir` is what reads a directory's entries, subdirectories
--- included.
+-- Files only: a directory whose name fits is not in the answer.
+-- `FS.list_dir` reads a directory's entries, subdirectories included.
 --
 -- >> List.length (FS.glob *.wand) >= 0
 -- true : Bool
-let glob pattern = fs_glob pattern (fs_cwd ())
+let glob pattern =
+  let base = Glob.base pattern;
+  fs_glob pattern (if Path.absolute? base then base else fs_cwd ())
 
--- Return the files matching a glob pattern relative to the given directory.
+-- The files under `dir` that the pattern matches.
 --
--- A directory is not in the answer, so `./*` in a directory holding nothing
--- but subdirectories answers with `[]`. The pattern itself matches a name,
--- so `Glob.matches?` says true for a directory whose name fits; it is this
--- walk that keeps only files.
+-- The walk always starts at `dir`. An absolute pattern matches a file's
+-- whole path, so it answers only where `dir` holds the files it names.
+--
+-- Files only: a directory whose name fits is not in the answer, so `./*`
+-- in a directory of nothing but subdirectories answers `[]`.
 --
 -- >> with FS.temp_dir "ex_" as d ->
--- ..   (FS.write_file! (Path.join d ./a.txt) "x";
--- ..    FS.mkdir! (Path.join d ./b);
--- ..    List.map Path.basename (FS.glob_in ./* d))
--- [a.txt] : List Path
+-- ..   (FS.write_file! (Path.join d ./a.wand) "x";
+-- ..    List.length (FS.glob_in *.wand d))
+-- 1 : Int
 let glob_in pattern dir = fs_glob pattern dir
 
 -- A stream of the file's lines -- nothing is read until a terminal

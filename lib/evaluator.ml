@@ -5309,6 +5309,7 @@ let stdlib_eval_env : env = [
             | Ok re -> re
             | Error why -> raise (EvalError ("fs_glob: " ^ why))
           in
+          let absolute = String.length pat > 0 && pat.[0] = '/' in
           let is_link p =
             match Unix.lstat p with
             | { Unix.st_kind = Unix.S_LNK; _ } -> true
@@ -5327,8 +5328,9 @@ let stdlib_eval_env : env = [
              The base itself is followed, since naming it is what asks for
              it. *)
           let rec collect ~walk_link path rel acc =
+            let subject = if absolute then path else rel in
             if (not walk_link) && is_link path then
-              (if Re.execp re rel then VPath path :: acc else acc)
+              (if Re.execp re subject then VPath path :: acc else acc)
             else if not (Sys.file_exists path) then acc
             else if Sys.is_directory path then begin
               let entries = Sys.readdir path in
@@ -5338,7 +5340,7 @@ let stdlib_eval_env : env = [
                 let child_rel  = if rel = "" then name
                                  else rel ^ "/" ^ name in
                 collect ~walk_link:false child_path child_rel a) acc entries
-            end else if Re.execp re rel then VPath path :: acc
+            end else if Re.execp re subject then VPath path :: acc
             else acc
           in
           (* A directory the walk cannot read is the filesystem answering,

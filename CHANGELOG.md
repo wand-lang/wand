@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.80.5] - 2026-09-19
+
+### Fixed
+
+- **`FS.glob` answered nothing for an absolute pattern.** The walk always
+  started at the working directory, so a pattern that names its own
+  directory could never match. It came back empty and said nothing.
+
+  ```
+  FS.glob /var/log/*.log
+
+  -- before    -- now
+  []           [/var/log/displaypolicyd.stdout.log, /var/log/fsck_apfs.log]
+  ```
+
+  An absolute pattern now starts its walk where the pattern says.
+  `FS.glob_in` is unchanged: it always searches the directory given to it,
+  and an absolute pattern there simply matches whole paths.
+
 ## [0.80.4] - 2026-09-19
 
 ### Fixed
@@ -3975,7 +3994,8 @@ With these, every command whose output a tool might read — `t`, `d`, `v`, `s` 
 - Add discovery pointers to unbound-name errors: `'wand env' lists the modules, 'wand env List' one module's members` (`35379bf`)
 - Add `install.sh`: one-line install with platform detection and checksum verification (`a871d73`)
 
-[unreleased]: https://github.com/wand-lang/wand/compare/v0.78.0...HEAD
+[unreleased]: https://github.com/wand-lang/wand/compare/v0.80.5...HEAD
+[0.80.5]: https://github.com/wand-lang/wand/compare/v0.80.4...v0.80.5
 [0.78.0]: https://github.com/wand-lang/wand/compare/v0.77.1...v0.78.0
 [0.77.1]: https://github.com/wand-lang/wand/compare/v0.77.0...v0.77.1
 [0.77.0]: https://github.com/wand-lang/wand/compare/v0.76.0...v0.77.0
