@@ -3996,6 +3996,12 @@ With these, every command whose output a tool might read — `t`, `d`, `v`, `s` 
 
 [unreleased]: https://github.com/wand-lang/wand/compare/v0.80.5...HEAD
 [0.80.5]: https://github.com/wand-lang/wand/compare/v0.80.4...v0.80.5
+[0.80.4]: https://github.com/wand-lang/wand/compare/v0.80.3...v0.80.4
+[0.80.3]: https://github.com/wand-lang/wand/compare/v0.80.2...v0.80.3
+[0.80.2]: https://github.com/wand-lang/wand/compare/v0.80.1...v0.80.2
+[0.80.1]: https://github.com/wand-lang/wand/compare/v0.80.0...v0.80.1
+[0.80.0]: https://github.com/wand-lang/wand/compare/v0.79.0...v0.80.0
+[0.79.0]: https://github.com/wand-lang/wand/compare/v0.78.0...v0.79.0
 [0.78.0]: https://github.com/wand-lang/wand/compare/v0.77.1...v0.78.0
 [0.77.1]: https://github.com/wand-lang/wand/compare/v0.77.0...v0.77.1
 [0.77.0]: https://github.com/wand-lang/wand/compare/v0.76.0...v0.77.0
