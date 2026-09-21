@@ -136,39 +136,60 @@ let keyword_or_ident word = match word with
    copies a command body through without reading braces in it, tracking only
    the parens that say where the command ends.
 
-   Nested strings are not handled here and do not need to be: a quote or a
-   backtick inside an interpolation is refused by the lexer before this can
-   matter. All three interpolation forms share this, which is why it is one
-   function. Found by test/fuzz. *)
+   A brace inside a nested string is text for the same reason: the
+   interpolated expression may itself hold a string, and
+   `"%{String.replace s "{" "["}"` ended a `{` short. A string opened here
+   interpolates again, so what is open is a stack rather than a count. All
+   three interpolation forms share this, which is why it is one function.
+   Found by test/fuzz. *)
 let read_interp_body s ~unterminated =
   let expr_buf = Buffer.create 16 in
-  let depth = ref 1 in
+  (* What is open, innermost last. A `Brace` waits for its `}` -- the body
+     itself is the first -- and the two string forms wait for their closing
+     mark, where a brace says nothing. *)
+  let open_ = ref [`Brace] in
+  let pop () = open_ := List.tl !open_ in
+  let push m = open_ := m :: !open_ in
   (* Inside `$(`/`$?(`/`$*(`/`$!(`, copying verbatim until the parens
      balance. *)
   let cmd_parens = ref 0 in
-  while !depth > 0 do
+  let add = Buffer.add_char expr_buf in
+  while !open_ <> [] do
     if is_at_end s then raise (Fail unterminated);
     let c = advance s in
-    if !cmd_parens > 0 then begin
-      if c = '(' then incr cmd_parens
-      else if c = ')' then decr cmd_parens;
-      Buffer.add_char expr_buf c
-    end else if c = '$' && peek s = '(' then begin
-      cmd_parens := 1;
-      Buffer.add_char expr_buf c;
-      Buffer.add_char expr_buf (advance s)
-    end else if c = '$' && (peek s = '?' || peek s = '*' || peek s = '!')
-                && peek2 s = '(' then begin
-      cmd_parens := 1;
-      Buffer.add_char expr_buf c;
-      Buffer.add_char expr_buf (advance s);
-      Buffer.add_char expr_buf (advance s)
-    end else if c = '{' then (incr depth; Buffer.add_char expr_buf c)
-    else if c = '}' then begin
-      decr depth;
-      if !depth > 0 then Buffer.add_char expr_buf c
-    end else
-      Buffer.add_char expr_buf c
+    match !open_ with
+    | `Quoted :: _ ->
+      add c;
+      if c = '\\' then (if not (is_at_end s) then add (advance s))
+      else if c = '"' then pop ()
+      else if c = '%' && peek s = '{' then (add (advance s); push `Brace)
+    | `Raw :: _ ->
+      add c;
+      if c = '`' then pop ()
+      else if c = '%' && peek s = '{' then (add (advance s); push `Brace)
+    | _ ->
+      if !cmd_parens > 0 then begin
+        if c = '(' then incr cmd_parens
+        else if c = ')' then decr cmd_parens;
+        add c
+      end else if c = '$' && peek s = '(' then begin
+        cmd_parens := 1;
+        add c;
+        add (advance s)
+      end else if c = '$' && (peek s = '?' || peek s = '*' || peek s = '!')
+                  && peek2 s = '(' then begin
+        cmd_parens := 1;
+        add c;
+        add (advance s);
+        add (advance s)
+      end else if c = '"' then (add c; push `Quoted)
+      else if c = '`' then (add c; push `Raw)
+      else if c = '{' then (push `Brace; add c)
+      else if c = '}' then begin
+        pop ();
+        if !open_ <> [] then add c
+      end else
+        add c
   done;
   Buffer.contents expr_buf
 

@@ -179,6 +179,18 @@ let test_a_nested_pipeline_keeps_its_brackets () =
   if Lint.contains out "|> (" then
     Alcotest.failf "an ordinary pipeline gained brackets:\n%s" out
 
+(* A construction whose fields all pun is written as a list of bare names,
+   and that list reads back as the payload form `T(a, b)` -- which had no
+   wrapped shape, so it stayed on one line however narrow the margin. The
+   named source wrapped and the bare source did not, so the two passes
+   disagreed. Found by test/fuzz. *)
+let test_a_bare_field_list_wraps () =
+  let src = "let h = quest! Request(url = url, metho)\n" in
+  formats_and_parses "bare field list" 27 src;
+  let out = Formatter.with_width 27 (fun () -> fmt src) in
+  if not (Lint.contains out "Request(\n") then
+    Alcotest.failf "the field list should have wrapped:\n%s" out
+
 (* `fn` binding nothing wrote two spaces before the arrow. *)
 let test_a_parameterless_fn_has_one_space () =
   let out = fmt "let f = fn -> ()\n" in
@@ -1840,6 +1852,8 @@ let () =
         test_a_command_literal_is_not_a_bracket;
       Alcotest.test_case "a nested pipeline keeps its brackets" `Quick
         test_a_nested_pipeline_keeps_its_brackets;
+      Alcotest.test_case "a bare field list wraps" `Quick
+        test_a_bare_field_list_wraps;
       Alcotest.test_case "parameterless fn spacing" `Quick
         test_a_parameterless_fn_has_one_space;
       Alcotest.test_case "a string is not a comment" `Quick

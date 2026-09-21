@@ -1190,7 +1190,14 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
   | Tuple es -> emit_sequence ~col indent "(" ")" (List.map (emit_expr (indent + 2)) es)
   | List es  -> emit_list ~col indent es
   | ConstrBare (name, ids) ->
-    Doc.text (name ^ "(" ^ String.concat ", " ids ^ ")")
+    let oneline = Doc.text (name ^ "(" ^ String.concat ", " ids ^ ")") in
+    if fits col oneline then oneline
+    else
+      let ind = Doc.spaces indent in
+      let inner = Doc.spaces (indent + 2) in
+      Doc.text (name ^ "(\n") ^^ inner
+      ^^ Doc.text (String.concat (",\n" ^ Doc.to_string inner) ids)
+      ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
   | Qualified (m, e) ->
     (* A constructor reached through its module takes the bracket written
        after it. That bracket puts the payload inside the module. `d.M(N)`

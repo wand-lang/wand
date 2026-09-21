@@ -1,0 +1,17 @@
+found:     Daily Fuzz, seed 35511057703, 2026-09-20 (issue 32)
+reported:  format:unparses:unterminated string interpolation
+fixed in:  lib/lexer.ml, read_interp_body
+
+`%{...}` ended at the first `}` that balanced the braces counted since it
+opened, and a brace inside a string in the expression was counted with the
+rest. So `"%{String.replace "{" "[" s}"` ran off the end of the file, and
+`"%{f "}"}"` ended one character into the argument.
+
+This input carried a second `}` that paid for the one the nested `"{"`
+added, so it lexed; the formatter then wrote the strings back without it
+and the output did not lex.
+
+read_interp_body now tracks what is open -- a brace, a `"..."` string or a
+`` `...` `` one -- rather than counting braces, so a brace inside a string
+is text. A string opened there may interpolate again, which is why it is a
+stack.

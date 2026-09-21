@@ -28,6 +28,31 @@ let test_string () =
   check_tokens "escape tab"      {|"a\tb"|}         [String "a\tb"];
   check_tokens "escape quote"    {|"say \"hi\""|} [String {|say "hi"|}]
 
+(* A brace inside a string in the interpolated expression is text, not a
+   bracket. Counted with the rest, `"%{f "{" }"` ran off the end of the file
+   and `"%{f "}"}"` ended one character into the argument. Found by
+   test/fuzz. *)
+let test_a_brace_in_a_nested_string () =
+  let bodies src =
+    List.filter_map
+      (function
+        | Token.InterpStr (parts, _) | Token.RawInterpStr (parts, _) ->
+          Some (List.map (fun (_, body, _) -> body) parts)
+        | _ -> None)
+      (tokens src)
+    |> List.concat
+  in
+  Alcotest.(check (list string)) "an open brace"
+    [{|f "{" |}] (bodies {|"%{f "{" }"|});
+  Alcotest.(check (list string)) "a closing brace"
+    [{|f "}"|}] (bodies {|"%{f "}"}"|});
+  Alcotest.(check (list string)) "a string that interpolates again"
+    [{|f "a%{g "{"}b"|}] (bodies {|"%{f "a%{g "{"}b"}"|});
+  Alcotest.(check (list string)) "an escaped quote"
+    [{|f "\"{"|}] (bodies {|"%{f "\"{"}"|});
+  Alcotest.(check (list string)) "a raw string"
+    [{|f `{`|}] (bodies {|"%{f `{`}"|})
+
 let test_bool () =
   check_tokens "true"  "true"  [Bool true];
   check_tokens "false" "false" [Bool false]
@@ -254,6 +279,8 @@ let () =
       Alcotest.test_case "integers"  `Quick test_integer;
       Alcotest.test_case "floats"    `Quick test_float;
       Alcotest.test_case "strings"   `Quick test_string;
+      Alcotest.test_case "a brace in a nested string" `Quick
+        test_a_brace_in_a_nested_string;
       Alcotest.test_case "booleans"  `Quick test_bool;
     ];
     "identifiers", [

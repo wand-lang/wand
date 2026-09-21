@@ -1,19 +1,23 @@
-## 0.80.5 - 2026-09-19
+## 0.80.6 - 2026-09-21
 
-One filesystem fix.
+Two fixes, both found by the fuzzer.
 
-### `FS.glob` answered nothing for an absolute pattern
+### A brace inside a string in `%{...}` did not lex
 
-The walk always started at the working directory, so a pattern that names
-its own directory could never match. It came back empty and said nothing.
+The interpolation ended at the first `}` that balanced the braces counted
+since it opened, and a brace written inside a string was counted with them.
+So a `{` in a string ran off the end of the file, and a `}` ended the
+interpolation one character into the argument.
 
 ```
-FS.glob /var/log/*.log
+"%{String.replace "{" "[" s}"
 
--- before    -- now
-[]           [/var/log/displaypolicyd.stdout.log, /var/log/fsck_apfs.log]
+-- before    lex error: unterminated string interpolation
+-- now       a[b}
 ```
 
-An absolute pattern now starts its walk where the pattern says.
-`FS.glob_in` is unchanged: it always searches the directory given to it,
-and an absolute pattern there simply matches whole paths.
+### `wand f` left a list of punned fields on one line however long it was
+
+A construction whose fields all pun is written as a list of bare names, and
+that form had no wrapped shape. The named spelling of the same construction
+did wrap, so reformatting it twice gave two answers.

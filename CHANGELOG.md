@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.80.6] - 2026-09-21
+
+### Fixed
+
+- **A brace inside a string in `%{...}` did not lex.** The interpolation
+  ended at the first `}` that balanced the braces counted since it opened,
+  and a brace written inside a string was counted with them. So a `{` in a
+  string ran off the end of the file, and a `}` ended the interpolation one
+  character into the argument.
+
+  ```
+  "%{String.replace "{" "[" s}"
+
+  -- before    lex error: unterminated string interpolation
+  -- now       a[b}
+  ```
+
+- **`wand f` left a list of punned fields on one line however long it was.**
+  A construction whose fields all pun is written as a list of bare names,
+  and that form had no wrapped shape. The named spelling of the same
+  construction did wrap, so reformatting it twice gave two answers.
+
 ## [0.80.5] - 2026-09-19
 
 ### Fixed
@@ -3995,6 +4017,7 @@ With these, every command whose output a tool might read — `t`, `d`, `v`, `s` 
 - Add `install.sh`: one-line install with platform detection and checksum verification (`a871d73`)
 
 [unreleased]: https://github.com/wand-lang/wand/compare/v0.80.5...HEAD
+[0.80.6]: https://github.com/wand-lang/wand/compare/v0.80.5...v0.80.6
 [0.80.5]: https://github.com/wand-lang/wand/compare/v0.80.4...v0.80.5
 [0.80.4]: https://github.com/wand-lang/wand/compare/v0.80.3...v0.80.4
 [0.80.3]: https://github.com/wand-lang/wand/compare/v0.80.2...v0.80.3
