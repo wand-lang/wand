@@ -566,9 +566,12 @@ let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
   let mentioned_as_value =
     List.concat_map (fun item ->
       let types = names_of_item_types item in
+      let all = names_of_item item in
+      let count n xs = List.length (List.filter (fun x -> x = n) xs) in
       List.filter (fun n ->
-        not (List.mem n types) || not (Typechecker.builtin_type_name n))
-        (names_of_item item)) prog.Ast.items
+        not (Typechecker.builtin_type_name n)
+        || count n all > count n types)
+        (List.sort_uniq compare all)) prog.Ast.items
   in
   (* An import brings its module's types and their constructors as well as
      the names it says, and which module a type came from is not in this

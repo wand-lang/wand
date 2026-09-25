@@ -72,6 +72,16 @@ let test_imp2 () =
   fires "a module named only as a built-in type"
     "import Option\nimport List\nlet f (x: Option Int) = x\nList.length [1]"
     "V-IMP2";
+  (* Named in both positions, it is used. Membership could not tell the two
+     apart, so one mention in a signature hid every call beside it and the
+     fix deleted an import the file needed. *)
+  silent "one named as a type and called as well"
+    "import Option\nimport List\nlet f (x: Option Int) = Option.default 0 x\n\
+     List.length [f (Some 1)]";
+  silent "and where the type is inside a pattern's annotation"
+    "uses {IO}\nimport IO\nimport Path\n\
+     let show ((p, n): (Path, Int)) = IO.println \"%{n} %{Path.to_string p}\"\n\
+     show (/tmp/x, 1)";
   (* A type this file did not declare could have come from any of its
      imports, so none of them is reported. *)
   silent "a file that names a type it did not declare"

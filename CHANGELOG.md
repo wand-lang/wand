@@ -26,6 +26,28 @@
 
 ### Fixed
 
+- **`wand t --fix` deleted an import the file needed.** `V-IMP2` asked
+  whether a name was mentioned in type position, not how often, so a module
+  named once as a built-in type counted as unused however many times it was
+  also called. `--fix` then deleted the import, hit the type error it had
+  just made, reported that it had put the import back, and left the file
+  without it.
+
+  ```
+  import IO
+  import Path
+
+  let show ((p, n): (Path, Int)) = IO.println "%{n} %{Path.to_string p}"
+
+  -- before    V-IMP2: nothing in this file uses Path
+  --           and --fix removed the line, leaving a file that does not
+  --           typecheck
+  -- now       silent; Path is called as well as named
+  ```
+
+  A module named *only* as a built-in type is still reported, which is what
+  the rule is for.
+
 - **A contract clause could not call a function.** `requires` and `ensures`
   read an expression with no application in it, so a call was cut in two:
   the name became the whole condition, and its argument started the body.
