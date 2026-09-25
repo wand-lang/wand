@@ -28,6 +28,7 @@ examples. Most tasks need only one part.
 - `test/` — Alcotest suites (`test_*.ml`, one per area) plus `test/wand/*.wand`, which are wand-language tests run by `wand s`.
 - `tools/check_fmt.wand` — CI gate that `stdlib/`, `test/wand/` and `examples/` are formatter fixed points. Run it locally as shown below.
 - `tools/fuzz_sweep.wand` — runs the fuzzer over several seeds and keeps what each one finds. The fuzzer is OCaml; the orchestration around it is wand.
+- `tools/check_port_imports.wand` — CI gate that every port `test/wand/test_ports.wand` imports keeps its effects behind an entry point. An import runs a file's bindings and not its bare expressions, so a port that puts work in a top-level binding runs it during the test suite, and the suite goes on passing.
 - `tools/check_docs.wand` — CI gate that every stdlib function has a `>>` example and that every example produces what it says. The handful that cannot have one are listed in the script with the reason. `wand d -x <name>` prints a doc with its examples run; `wand d -t` checks them and says nothing when they hold.
 - `test/fuzz/` — the fuzzer. `oracle.ml` holds the property (a typecheck of
   any input answers with a diagnostic; anything else is a finding),
@@ -55,6 +56,8 @@ WAND=$PWD/_build/default/bin/wand.exe \
   $PWD/_build/default/bin/wand.exe tools/check_fmt.wand
 WAND=$PWD/_build/default/bin/wand.exe \
   $PWD/_build/default/bin/wand.exe tools/check_docs.wand
+WAND=$PWD/_build/default/bin/wand.exe \
+  $PWD/_build/default/bin/wand.exe tools/check_port_imports.wand
 dune build @fmt                                       # dune files
 make fuzz                                             # 20,000 inputs
 make fuzz-eval                                        # and runs the programs

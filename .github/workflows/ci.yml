@@ -104,6 +104,16 @@ jobs:
           WAND: ${{ github.workspace }}/_build/default/bin/wand.exe
         run: $WAND tools/check_docs.wand
 
+      # `test/wand/test_ports.wand` imports the ports and tests their pure
+      # halves. An import runs a file's bindings and not its bare
+      # expressions, so a port it imports has to keep its effects behind an
+      # entry point -- otherwise the test suite runs the script, and goes on
+      # passing while it does.
+      - name: Check the imported ports run nothing on import
+        env:
+          WAND: ${{ github.workspace }}/_build/default/bin/wand.exe
+        run: $WAND tools/check_port_imports.wand
+
       # setup-wand's test suite is written in wand and is the only wand code
       # that exercises an installed binary the way a user meets it. Nothing
       # in that repository runs against an unreleased wand, so a change here

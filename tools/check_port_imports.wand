@@ -1,0 +1,123 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Path
+import Proc
+import Regex
+import String
+
+-- An import runs a file's bindings. It does not run its bare expressions.
+--
+-- `test/wand/test_ports.wand` imports the ports and tests the pure half of
+-- each against fixtures, so a port it imports must keep its effects out of
+-- a top-level binding -- otherwise importing the file runs the script, in
+-- the middle of the test suite. Everything that reaches the world goes
+-- behind `main`, and the call to `main` is a bare expression, which an
+-- import leaves alone.
+--
+-- Nothing tells you when that breaks. The test suite goes on passing while
+-- `df` runs, or a lock is taken, or argv is read from the test runner. So
+-- this gate reads the imports out of test_ports.wand and holds every port
+-- named there to the rule.
+--
+-- A port nothing imports is under no such obligation and is not checked:
+-- its body is statements at the top level, which is what a script is.
+
+let ports_test = ./test/wand/test_ports.wand
+
+-- The paths test_ports.wand imports, as it writes them: `import
+-- ../../examples/ports/<name>`. Read from the source rather than listed
+-- here, so adding an import to that file brings the port under the gate
+-- with nothing else to remember.
+let imported_names text =
+  Regex.match_all r/examples\/ports\/[a-z-]+/ text
+  |> List.map (fn m -> String.replace "examples/ports/" "" m)
+  |> List.unique
+
+-- A top-level binding: a `let` in the first column that takes no
+-- parameters. Its value is computed when the file is loaded, which for an
+-- imported file is when the import runs.
+let binding_line? line = Regex.match? r/^let [a-z_][A-Za-z0-9_]*[!?]? = / line
+
+-- A binding continues onto every line indented under it, so a list or a
+-- record written over several lines is read as one binding.
+let continues? line = line != "" && String.starts_with? " " line
+
+let binding_text! lines i =
+  let rest = List.drop (i + 1) lines;
+  let tail = List.take_while continues? rest;
+  String.join "\n" (List.get! i lines :: tail)
+
+let bindings! text =
+  let lines = String.lines text;
+  lines
+  |> List.indexed
+  |> List.filter_map (fn (i, line) ->
+    if binding_line? line then Some (i + 1, binding_text! lines i) else None)
+
+-- What makes a binding reach the world. A command literal in any of its
+-- three spellings; a call into one of the modules that perform; or a call
+-- to a `!` name, which is this dialect's mark for a function that can
+-- raise and in these files is always one that does something first.
+--
+-- It reads the text rather than the types, so it is a rule about how a
+-- port is written and not a proof about what it does. That is the trade:
+-- `wand t --effects` does not attribute an import's load-time effects to
+-- the file that imports it, so there is nothing to ask.
+let reaching =
+  r/\$\(|\$\?\(|\$\*\(|\b(Clock|Env|FS|HTTP|IO|Net|Proc|Random|Shell)\.|\b[a-z_][A-Za-z0-9_]*!\s/
+
+let offending! text =
+  bindings! text |> List.filter (fn (_, body) -> Regex.match? reaching body)
+
+-- The entry point itself. A port under this gate has to have one, because
+-- without it there is nowhere for the effects to be.
+let has_entry_point? text =
+  String.lines text |> List.any? (fn line -> String.starts_with? "let main" line)
+
+let port_path name = Path.of_string "examples/ports/%{name}.wand"
+
+type Fault(port: String, why: String)
+
+let faults! name =
+  let text = FS.read_file! (port_path name);
+  let missing =
+    if has_entry_point? text then []
+    else [
+      Fault(port = name, why = "no `main`, so an import runs whatever is at the top level")
+    ];
+  let reached =
+    offending! text
+    |> List.map (fn (line, _) ->
+      Fault(port = name, why = "line %{line}: a top-level binding reaches the world"));
+  List.concat missing reached
+
+let report faults = (
+  IO.println_err "a port test_ports.wand imports runs work when it is imported:";
+  faults
+  |> List.each (fn (f: Fault) -> IO.println_err "  examples/ports/%{f.port}.wand: %{f.why}");
+  IO.println_err "";
+  IO.println_err "put the work behind `main` and call it in a bare expression;";
+  IO.println_err "an import runs a file's bindings and not its bare expressions.";
+  Proc.exit 1
+)
+
+let main! () = (
+  let names = imported_names (FS.read_file! ports_test);
+  match names with
+  | [] -> (
+    IO.println_err
+      "%{Path.to_string ports_test} imports no port; this gate is checking nothing";
+    Proc.exit 1
+  )
+  | _ -> (
+    match List.flatten (List.map faults! names) with
+    | [] -> IO.println
+      "%{List.length names} imported ports keep their effects behind `main`"
+    | faults -> report faults
+  )
+)
+
+main! ()
