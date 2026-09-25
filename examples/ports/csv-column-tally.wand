@@ -1,0 +1,48 @@
+uses {FS.Read, IO, Proc}
+
+import CSV
+import IO
+import List
+import Map
+import Proc
+import Path
+import Result
+
+-- Count how often each value appears in one column of a CSV file.
+--
+-- bash:  cut -d, -f3 inventory.csv | sort | uniq -c | sort -rn
+--
+-- `cut -d,` splits on every comma, so a field that contains one -- a
+-- quoted address, a name written "Last, First" -- shifts every column after
+-- it by one, and the count comes out against the wrong column with no
+-- warning. The header line is counted as data too, so the header's own text
+-- appears in the tally. Neither shows up as an error; both show up as a
+-- number that is slightly wrong.
+--
+-- `CSV.read_file` reads the quoting rules, so a comma inside a field stays
+-- in that field. The header is taken off by name, which also says what
+-- happens when the column is not there.
+
+let column name header =
+  match List.find (fn (_, label) -> label == name) (List.indexed header) with
+  | None -> Error "no column called %{name}"
+  | Some(i, _) -> Ok i
+
+let values i rows = List.filter_map (fn row -> List.get i row) rows
+
+let tally counts = counts |> Map.to_list |> List.sort_by (fn (value, n) -> (0 - n, value))
+
+let report path name =
+  CSV.read_file path
+  |> Result.and_then (fn rows ->
+    match rows with
+    | [] -> Error "%{Path.to_string path} is empty"
+    | [header :: body] -> column name header
+    |> Result.map (fn i -> tally (List.tally (values i body))))
+
+let main () =
+  match report ./inventory.csv "owner" with
+  | Error why -> (IO.println_err why; Proc.exit 1)
+  | Ok counts -> counts |> List.each (fn (value, n) -> IO.println "%{n}\t%{value}")
+
+main ()

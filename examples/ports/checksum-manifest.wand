@@ -1,0 +1,82 @@
+uses {FS.Read, IO, Proc}
+
+import Digest
+import FS
+import Hash
+import IO
+import List
+import Path
+import Proc
+import Result
+import String
+
+let {Sha256} = import Digest
+
+-- Check a directory against the digests a manifest states.
+--
+-- bash:  sha256sum -c SHASUMS
+--
+-- `sha256sum -c` reads the manifest, hashes each name beside it, and exits
+-- non-zero if any line disagrees. It resolves each name against the working
+-- directory rather than against the manifest, so running it from one
+-- directory up checks nothing and still says `OK` for every line it cannot
+-- find -- `--ignore-missing` is the flag that turns that into a failure,
+-- and leaving it off is the quiet half of this command.
+--
+-- Here the digest is taken in this process. No checksum program is spawned,
+-- so there is no second implementation to agree with, nothing to find on
+-- the host, and no output to parse back. A name is read against the
+-- manifest's own directory, so where the script runs from does not change
+-- what it checks.
+--
+-- `verify-archives.wand` is the other shape of this task: many one-line
+-- `.sha256` files, checked in parallel.
+
+-- A manifest line is a digest and the name it was taken from. `sha256sum`
+-- writes two spaces between them and a `*` before a name it read in binary
+-- mode; both survive `String.words`.
+let entry line =
+  match String.words line with
+  | [digest, name] -> Ok (String.lower digest, Path.of_string name)
+  | _ -> Error "expected a digest and a name, got: %{line}"
+
+let entries text =
+  text |> String.lines |> List.filter (fn line -> String.trim line != "") |> List.map entry
+
+-- The name is resolved against the manifest, which is what makes the check
+-- independent of where this runs. A line that did not parse is a failure of
+-- the same kind, so it travels in the same `Result`.
+let verify dir parsed =
+  parsed
+  |> Result.and_then (fn (stated, name) -> (
+    let file = Path.join dir name;
+    match Hash.file Sha256 file with
+    | Error _ -> Error "cannot read %{Path.to_string file}"
+    | Ok taken -> if Digest.hex taken == stated then Ok name
+      else Error "%{Path.to_string name}: digest does not match"
+  ))
+
+let failures dir lines =
+  lines
+  |> List.filter_map (fn line ->
+    match verify dir line with
+    | Ok _ -> None
+    | Error why -> Some why)
+
+let report manifest = (
+  let dir = Path.parent manifest;
+  match FS.read_file manifest with
+  | Error why -> (IO.println_err "%{Path.to_string manifest}: %{why}"; Proc.exit 2)
+  | Ok text -> (
+    let lines = entries text;
+    let bad = failures dir lines;
+    IO.println "%{List.length lines} checked, %{List.length bad} failed";
+    match bad with
+    | [] -> ()
+    | _ -> (bad |> List.each (fn why -> IO.println_err "  %{why}"); Proc.exit 1)
+  )
+)
+
+let main () = report ./dist/SHASUMS
+
+main ()

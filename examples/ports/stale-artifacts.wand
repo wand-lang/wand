@@ -1,0 +1,62 @@
+uses {Clock, FS.Read, FS.Write, IO}
+
+import Clock
+import Duration
+import FS
+import Glob
+import IO
+import List
+import Path
+
+-- List the build artifacts nothing has touched for a month, oldest first.
+--
+-- bash:  find build -name '*.tar.gz' -mtime +30 -delete
+--
+-- `-mtime +30` counts in whole 24-hour periods and rounds towards zero, so
+-- it means "more than 30 periods", which is 31 days and not 30. `-delete`
+-- then removes what it found without printing it, and it is easy to write
+-- the flags in an order where `find` deletes first and filters after. The
+-- run that tells you what would go and the run that removes it are two
+-- different command lines.
+--
+-- Here the cutoff is a `DateTime` subtracted from now, so 30 days is 30
+-- days. The script reports and removes in one pass over one list, and
+-- `--dry-run` withholds every removal while reporting exactly the same
+-- thing, so the rehearsal is the same command line as the run.
+
+let cutoff (age: Duration) = Clock.now () - age
+
+-- A file with no readable mtime is not stale; it is a file to leave alone
+-- and say nothing about.
+let older_than before file =
+  match FS.mtime file with
+  | Error _ -> None
+  | Ok touched -> if touched < before then Some(file, touched) else None
+
+let stale age pattern dir =
+  let before = cutoff age;
+  FS.glob_in pattern dir
+  |> List.filter_map (older_than before)
+  |> List.sort_by (fn (_, touched) -> touched)
+
+-- The age is printed as an age rather than as a date, because "63 days"
+-- is what tells you the cleanup has not been running.
+let remove! (now: DateTime) (touched: DateTime) file = (
+  IO.println "%{Duration.format (now - touched)}  %{Path.to_string file}";
+  FS.delete! file
+)
+
+let main! () = (
+  let age = 30d;
+  let pattern = *.tar.gz;
+  let found = stale age pattern ./build;
+  match found with
+  | [] -> IO.println "no %{Glob.to_string pattern} older than %{Duration.format age}"
+  | _ -> (
+    let now = Clock.now ();
+    found |> List.each (fn (file, touched) -> remove! now touched file);
+    IO.println "%{List.length found} removed"
+  )
+)
+
+main! ()

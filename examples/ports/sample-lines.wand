@@ -1,0 +1,42 @@
+uses {FS.Read, IO, Random}
+
+import FS
+import IO
+import List
+import Random
+import Stream
+
+-- Take a random sample of a log, reproducibly.
+--
+-- bash:  shuf -n 100 access.log
+--
+-- `shuf` is GNU coreutils, so this line is not there on a mac unless
+-- somebody installed it. The fallback people reach for, `sort -R`, is not
+-- a shuffle: it sorts by a hash of each line, so identical lines end up
+-- next to each other and a log full of repeated entries comes back
+-- clustered. The other fallback, `awk 'rand() < 0.01'`, gives a different
+-- number of lines every run, and seeds itself from the clock in seconds --
+-- so two runs in the same second produce the same "random" sample.
+--
+-- `Random.seed` makes a sample repeatable when you want to compare two runs
+-- over the same lines, and leaving it out makes it different every time.
+-- The count is the count.
+
+let lines! log = FS.stream_lines log |> Stream.to_list
+
+let sample n xs = Random.shuffle xs |> List.take n
+
+-- A seed given on purpose is a sample somebody else can reproduce. Without
+-- one the draw is different every run, which is what you want when the
+-- sample is the point rather than the comparison.
+let repeatable seed = Random.seed seed
+
+let main! () = (
+  repeatable 20260925;
+  let all = lines! ./access.log;
+  let taken = sample 100 all;
+  IO.println "%{List.length taken} of %{List.length all}";
+  taken |> List.each IO.println
+)
+
+main! ()

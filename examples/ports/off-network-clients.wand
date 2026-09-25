@@ -1,0 +1,60 @@
+uses {FS.Read, IO}
+
+import CIDR
+import FS
+import IO
+import IPv4
+import List
+import Stream
+import String
+
+-- Count the requests that came from outside the networks we run.
+--
+-- bash:  grep -cvE '^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)' access.log
+--
+-- That alternation is the private ranges written as text, and the third
+-- branch is where it goes wrong: 172.16.0.0/12 is sixteen networks, so the
+-- pattern has to enumerate 16 through 31 and get the digit grouping right.
+-- A prefix that is not on a dot boundary -- 10.4.0.0/14, the range an
+-- office actually gets -- cannot be written as a regular expression over
+-- the text at all. And matching text means 10.0.0.1 and 100.0.0.1 are told
+-- apart by an anchor and a dot rather than by being addresses.
+--
+-- `CIDR.contains?` answers the question the regex was imitating. The
+-- networks are values, so adding one is adding a line to a list rather
+-- than editing an alternation.
+
+let ours = [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16]
+
+let inside? address = ours |> List.any? (fn net -> CIDR.contains? net address)
+
+-- The first field of a common-log line is the client. A line whose first
+-- field is not an address is counted as neither inside nor outside: it is
+-- a line this script does not understand, and saying so is better than
+-- guessing which side it belongs on.
+let client line =
+  match String.word 0 line with
+  | None -> None
+  | Some first -> (
+    match IPv4.of_string first with
+    | Ok address -> Some address
+    | Error _ -> None
+  )
+
+let tally! log =
+  FS.stream_lines log
+  |> Stream.filter_map client
+  |> Stream.fold_left (fn (in_, out) address -> if inside? address then (in_ + 1, out) else (in_, out + 1)) (
+    0,
+    0
+  )
+
+let main! () = (
+  let (in_, out) = tally! ./access.log;
+  IO.println "%{in_} from our networks, %{out} from elsewhere";
+  ours
+  |> List.each (fn net ->
+    IO.println "  %{CIDR.to_string net} holds %{CIDR.count net} addresses")
+)
+
+main! ()

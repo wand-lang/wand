@@ -1,0 +1,65 @@
+uses {IO, Proc, Shell(git)}
+
+import IO
+import List
+import Proc
+import String
+import Version
+
+-- Say which release tag is the newest, and whether a proposed one follows
+-- it.
+--
+-- bash:  git tag --list 'v*' | sort -V | tail -1
+--
+-- `sort -V` is a GNU extension: it is not in BSD `sort`, so the pipeline
+-- that works on the build machine fails on a laptop, and it fails by
+-- sorting alphabetically rather than by refusing -- which puts `v0.9.0`
+-- after `v0.80.0`. Where it does exist it still does not know semantic
+-- versioning: it orders `v1.0.0-rc1` after `v1.0.0`, because it is reading
+-- digits and separators rather than a version. `tail -1` on an empty list
+-- prints nothing and exits 0, so a repository with no tags reports success
+-- with an empty answer.
+--
+-- A `Version` compares as a version. A prerelease sorts below the release
+-- it leads to, a tag that is not one is reported rather than silently
+-- ordered, and no tags is a case with a name.
+
+-- Tags are `v1.2.3`; the `v` is not part of the version.
+let parse tag =
+  if String.starts_with? "v" tag then
+    Version.of_string (String.slice 1 (String.length tag) tag)
+  else Error "%{tag} does not start with v"
+
+let tags! () =
+  $(git tag --list v*)
+  |> String.lines
+  |> List.map String.trim
+  |> List.filter (fn tag -> tag != "")
+
+-- A tag that does not parse is worth saying out loud rather than dropping:
+-- it is usually a tag written by hand.
+let versions tags =
+  tags
+  |> List.map (fn tag -> (tag, parse tag))
+  |> List.filter_map (fn (tag, parsed) ->
+    match parsed with
+    | Ok v -> Some v
+    | Error _ -> None)
+
+let newest vs = List.fold_left Version.max 0.0.0 vs
+
+let main! () = (
+  let all = versions (tags! ());
+  match all with
+  | [] -> (IO.println_err "no release tags"; Proc.exit 1)
+  | _ -> (
+    let top = newest all;
+    IO.println "latest: %{Version.to_string top}";
+    let next = Version.bump_minor top;
+    IO.println "next minor: %{Version.to_string next}";
+    if Version.stable? top then IO.println "the latest tag is a release"
+    else IO.println "the latest tag is a prerelease"
+  )
+)
+
+main! ()

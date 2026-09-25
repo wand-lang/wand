@@ -1,0 +1,57 @@
+uses {Clock, FS.Read, FS.Write, IO, Proc, Shell(./import.sh)}
+
+import Clock
+import DateTime
+import FS
+import IO
+import Path
+import Proc
+import Resource
+
+-- Run a job, and make sure only one copy of it runs at a time.
+--
+-- bash:  if [ -f /tmp/import.lock ]; then exit 0; fi
+--        touch /tmp/import.lock
+--        trap 'rm -f /tmp/import.lock' EXIT
+--        ./import.sh
+--
+-- The test and the `touch` are two commands, so two runs that start
+-- together both see no lock and both proceed -- the race this is supposed
+-- to prevent. `trap ... EXIT` does not run on `kill -9` or a power cut, so
+-- one hard stop leaves a lock file that blocks every run after it, and the
+-- file records nothing about who left it, so the operator clearing it is
+-- guessing. `flock`, the answer to the race, is Linux-only.
+--
+-- `Resource.make` pairs taking the lock with releasing it, and `with`
+-- releases however the body ends -- returning, raising, or a signal that
+-- unwinds. The lock records who took it and when, so a stale one can be
+-- read rather than guessed at.
+
+let lock_file = /tmp/import.lock
+
+-- `FS.write_file!` on a path that exists overwrites it, so the check is
+-- what refuses a second run. It is still two steps, and a lock that has to
+-- hold against another machine belongs in something that arbitrates --
+-- this holds against another copy of this script.
+let held () =
+  match FS.mtime lock_file with
+  | Error _ -> "not held"
+  | Ok taken -> "held since %{DateTime.date_string taken}"
+
+let take! () = (
+  if FS.exists? lock_file then (IO.println_err "already running, %{held ()}"; Proc.exit 0);
+  FS.write_file! lock_file "%{Clock.now ()} pid %{Proc.pid ()}\n";
+  lock_file
+)
+
+let release! file = FS.delete! file
+
+let lock = Resource.make take! release!
+
+let main! () =
+  with lock as file -> (
+    IO.println "holding %{Path.to_string file}";
+    IO.println $(./import.sh)
+  )
+
+main! ()
