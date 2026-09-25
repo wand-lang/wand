@@ -2704,6 +2704,26 @@ each. A broken contract is a bug, not an operation that failed. So state what
 must be true. For input that you expect to be wrong, validate it and return a
 `Result`.
 
+A clause is an expression, so it can call a function. `result` is a value
+like any other and can be an argument:
+
+```ocaml
+let shout s =
+  requires String.length s > 0
+  ensures String.length result == String.length s + 1
+  "%{String.upper s}!"
+```
+
+Each clause ends at the end of its line. A clause that runs on is indented
+past its keyword, and the body begins at the keyword's own column:
+
+```ocaml
+let clamp lo hi x =
+  requires lo <= hi
+    && hi - lo < 100
+  if x < lo then lo else if x > hi then hi else x
+```
+
 ---
 
 ## Typed holes

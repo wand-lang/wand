@@ -12,7 +12,6 @@ let fail_at loc msg = raise (ParseError (Some loc, msg))
 type state = {
   tokens : (Token.t * Token.loc) array;
   mutable pos : int;
-  mutable in_contract : bool;
   mutable paren_depth : int;
     (* depth of unclosed (/[/{ -- lets newline-significance checks tell "end
        of statement" apart from "still inside an open bracket" *)
@@ -51,7 +50,7 @@ type state = {
 }
 
 let make tokens =
-  { tokens = Array.of_list tokens; pos = 0; in_contract = false;
+  { tokens = Array.of_list tokens; pos = 0;
     paren_depth = 0; top_fns = Hashtbl.create 16; with_owners = 0;
     clause_name = None; stmt_depth = 0; stmt_col = 1; shell_allow = None;
     net_allow = None }
@@ -534,6 +533,7 @@ let is_atom_start = function
   | Token.CommandRaw _
   | Token.RawStr _ | Token.RawInterpStr _
   | Token.Regex _ | Token.EnvVar _ | Token.Import
+  | Token.Result
   | Token.Handle | Token.Try -> true
   | _ -> false
 
@@ -1048,8 +1048,7 @@ let rec expr_ bp s =
     if bp' > bp then begin
       ignore (advance s);
       left := infix_ !left t s
-    end else if is_atom_start t && 70 > bp && not s.in_contract
-            && not had_newline then
+    end else if is_atom_start t && 70 > bp && not had_newline then
       left := App (!left, atom_ s)
     else
       continue_ := false
@@ -1799,9 +1798,13 @@ and match_ s =
       "match has no cases; each begins with '|', as in `| Some x -> x`";
   Match (scrutinee, !cases)
 
-and contract_expr_ s =
-  s.in_contract <- true;
-  Fun.protect ~finally:(fun () -> s.in_contract <- false) (fun () -> expr_ 0 s)
+and contract_expr_ ~col s =
+  let outer = s.stmt_col and outer_depth = s.stmt_depth in
+  s.stmt_col <- col;
+  s.stmt_depth <- s.paren_depth;
+  Fun.protect
+    ~finally:(fun () -> s.stmt_col <- outer; s.stmt_depth <- outer_depth)
+    (fun () -> expr_ 0 s)
 
 and parse_contract_body s =
   let reqs = ref [] in
@@ -1810,11 +1813,13 @@ and parse_contract_body s =
   while !continue_ do
     match peek s with
     | Token.Requires ->
+      let col = peek_col s in
       ignore (advance s);
-      reqs := !reqs @ [locate s (fun () -> contract_expr_ s)]
+      reqs := !reqs @ [locate s (fun () -> contract_expr_ ~col s)]
     | Token.Ensures  ->
+      let col = peek_col s in
       ignore (advance s);
-      ens := !ens @ [locate s (fun () -> contract_expr_ s)]
+      ens := !ens @ [locate s (fun () -> contract_expr_ ~col s)]
     | _ -> continue_ := false
   done;
   (* Statements, not one expression. A binding's body has sequenced them

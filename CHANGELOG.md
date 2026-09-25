@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.80.7] - 2026-09-25
+
+### Fixed
+
+- **A contract clause could not call a function.** `requires` and `ensures`
+  read an expression with no application in it, so a call was cut in two:
+  the name became the whole condition, and its argument started the body.
+
+  ```
+  let half n =
+    requires even? n
+    n / 2
+
+  -- before    type error: expected Bool, got Int -> Bool
+  --           the condition was `even?` and the body was `n`
+  -- now       the condition is `even? n`, the body is `n / 2`
+  ```
+
+  `result` can be an argument now as well, so
+  `ensures String.length result > 0` says what it looks like it says.
+
+- **`wand f` wrote a lambda's contracts outside the lambda.** The first
+  clause was hugged onto the `fn ... ->` line and the rest were written at
+  the indent around the lambda, so the indentation said the body belonged
+  to whatever held it.
+
+  ```
+  -- before
+  let pair =
+    fn a b -> requires a > 0
+    requires b > 0
+    a + b
+
+  -- now
+  let pair =
+    fn a b ->
+      requires a > 0
+      requires b > 0
+      a + b
+  ```
+
 ## [0.80.6] - 2026-09-21
 
 ### Fixed
@@ -4017,6 +4058,7 @@ With these, every command whose output a tool might read — `t`, `d`, `v`, `s` 
 - Add `install.sh`: one-line install with platform detection and checksum verification (`a871d73`)
 
 [unreleased]: https://github.com/wand-lang/wand/compare/v0.80.5...HEAD
+[0.80.7]: https://github.com/wand-lang/wand/compare/v0.80.6...v0.80.7
 [0.80.6]: https://github.com/wand-lang/wand/compare/v0.80.5...v0.80.6
 [0.80.5]: https://github.com/wand-lang/wand/compare/v0.80.4...v0.80.5
 [0.80.4]: https://github.com/wand-lang/wand/compare/v0.80.3...v0.80.4

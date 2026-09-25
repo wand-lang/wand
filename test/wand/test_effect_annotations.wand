@@ -1,0 +1,101 @@
+uses {FS.Read, FS.Write}
+
+import FS
+import List
+import Path
+import Result
+
+let {test, group} = import Test
+
+-- Written effects, in every shape the printer emits: an exact set, a set
+-- with a variable beside it, a bare variable, and nothing at all. wand
+-- checks what is written against what the body performs, so each of these
+-- is a claim the typechecker has to agree with.
+
+-- ── An exact set ────────────────────────────────────────────────────────
+
+let first! : List 'a -> 'a ! {Raise} = fn xs -> List.head! xs
+
+group "an exact set" (fn () -> [
+  test "the body performs it" (fn t -> t.eq 1 (first! [1, 2, 3])),
+  test "and raises when it says it does" (fn t -> t.raises (fn () -> first! []))
+])
+
+-- Only the innermost arrow carries the effects. One argument of several
+-- does nothing until the last one arrives.
+let between! : Int -> Int -> Int -> Int ! {Raise} =
+  fn lo hi x -> if x < lo || x > hi then Result.get! (Error "out of range") else x
+
+group "several arguments" (fn () -> [
+  test "inside" (fn t -> t.eq 5 (between! 0 10 5)),
+  test "outside" (fn t -> t.raises (fn () -> between! 0 10 99))
+])
+
+-- ── A set with a variable beside it ─────────────────────────────────────
+
+-- Raises whatever happens, and also whatever the thunk performs.
+let twice! : (Unit -> Int ! 'e) -> Int ! {Raise | 'e} =
+  fn thunk -> (let n = thunk (); if n < 0 then Result.get! (Error "negative") else n * 2)
+
+group "a set and a variable" (fn () -> [
+  test "a thunk that performs nothing" (fn t -> t.eq 14 (twice! (fn () -> 7))),
+  test "the known half still raises" (fn t -> t.raises (fn () -> twice! (fn () -> -1)))
+])
+
+-- ── A bare variable ─────────────────────────────────────────────────────
+
+-- Whatever the function performs, and nothing more.
+let apply : ('a -> 'b ! 'e) -> 'a -> 'b ! 'e = fn f x -> f x
+
+group "a bare variable" (fn () -> [
+  test "arithmetic performs nothing" (fn t -> t.eq 8 (apply (fn x -> x + 1) 7)),
+  test "and a raising function raises" (fn t -> t.raises (fn () -> apply List.head! []))
+])
+
+-- ── Nothing written ─────────────────────────────────────────────────────
+
+let add : Int -> Int -> Int = fn a b -> a + b
+
+test "inferred, as usual" (fn t -> t.eq 7 (add 3 4))
+
+-- ── An alias naming an arrow that carries effects ───────────────────────
+
+type Reader = Path -> String ! {FS.Read, Raise}
+
+let read_it! : Reader = fn p -> FS.read_file! p
+
+-- ── A field holding a function ──────────────────────────────────────────
+
+-- No variable: the effects come from the value that builds the field, and
+-- stop there.
+type Action(run: Unit -> String)
+
+let fire! (a: Action) = a.run ()
+
+-- The same variable twice: a call passes the field's effects on, which is
+-- the one case the reference says to write effects for.
+type Step 'a(apply: (Unit -> 'a ! 'e) -> 'a ! 'e)
+
+let plain = Step(apply = fn thunk -> thunk ())
+
+group "a function in a field" (fn () -> [
+  test "the value decides the effects" (fn t ->
+    t.eq "hi" (fire! Action(run = fn () -> "hi"))),
+  test "and a named variable passes them on" (fn t -> t.eq 42 (plain.apply (fn () -> 42)))
+])
+
+-- ── Effects that reach the world ────────────────────────────────────────
+
+let scratch = with FS.temp_file "wand_effects_" "" as p -> Path.to_string p
+let () = FS.mkdir! (Path.of_string scratch)
+
+let note = Path.of_string "%{scratch}/note.txt"
+
+let write_note! : String -> Unit ! {FS.Write, Raise} = fn text -> FS.write_file! note text
+
+group "written against the world" (fn () -> [
+  test "the write happens" (fn t -> (write_note! "kept\n"; t.ok (FS.exists? note))),
+  test "and the read answers" (fn t -> t.eq "kept\n" (read_it! note))
+])
+
+let () = FS.delete_tree! (Path.of_string scratch)

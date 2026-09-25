@@ -1142,6 +1142,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
       match strip_located body with
       | Let (_, _, _, (LetIn | LetBlock))
       | LetRec (_, _, (LetIn | LetBlock)) -> indent + 2
+      | Contract (reqs, ens, _) when reqs <> [] || ens <> [] -> indent + 2
       | _ -> indent
     in
     let on_head_line =

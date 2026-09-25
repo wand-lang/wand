@@ -1247,6 +1247,31 @@ let test_contract_clauses_keep_their_indent () =
     "let f n =\n  requires n > 0\n  **/*.wand\nf 3"
     "**/*.wand"
 
+(* A lambda's clauses belong under its own arrow. Written after `fn ... ->`
+   the first one was hugged onto that line and the rest landed at the
+   enclosing indent, so the indentation said the body was not the lambda's. *)
+let test_a_lambda_keeps_its_contract_under_the_arrow () =
+  let out =
+    fmt "let step : Int -> Int =\n  fn n ->\n    requires n > 0\n    ensures result > n\n    n + 1\nstep 3"
+  in
+  let lines = String.split_on_char '\n' out in
+  List.iter (fun needle ->
+    Alcotest.(check bool)
+      (Printf.sprintf "%S sits under the arrow" needle) true
+      (List.exists (fun l -> l = needle) lines))
+    ["  fn n ->"; "    requires n > 0"; "    ensures result > n"; "    n + 1"];
+  ok_after_format "and it still runs"
+    "let step : Int -> Int =\n  fn n ->\n    requires n > 0\n    n + 1\nstep 3"
+    "4";
+  ok_after_format "several clauses and two parameters"
+    "let pair =\n  fn a b ->\n    requires a > 0\n    requires b > 0\n    ensures result > a\n    a + b\npair 1 2"
+    "3";
+  (* Inside brackets the parser suspends the layout rule, so this one read
+     correctly while the indentation said otherwise. *)
+  ok_after_format "a lambda passed as an argument"
+    "let apply f x = f x\napply\n  (fn n ->\n    requires n > 0\n    n * 2)\n  5"
+    "10"
+
 let test_handle_and_regex_round_trip () =
   ok_after_format "a handler"
     "let m () = handle $(git push) with\n| Shell!run c k -> k \"ok\"\nm ()"
@@ -1911,6 +1936,8 @@ let () =
       Alcotest.test_case "command text"     `Quick test_command_text_is_not_quoted;
       Alcotest.test_case "try as operand"   `Quick test_try_is_parenthesised_as_an_operand;
       Alcotest.test_case "contract indent"  `Quick test_contract_clauses_keep_their_indent;
+      Alcotest.test_case "a lambda's contract" `Quick
+        test_a_lambda_keeps_its_contract_under_the_arrow;
       Alcotest.test_case "handle and regex" `Quick test_handle_and_regex_round_trip;
       Alcotest.test_case "env interpolation" `Quick test_env_var_interpolation;
       Alcotest.test_case "string openers" `Quick test_string_openers_come_back_escaped;

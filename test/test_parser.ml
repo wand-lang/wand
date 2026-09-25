@@ -838,6 +838,32 @@ let test_fn () =
 
 (* ── Sequencing in parentheses ──────────────────────────────────────────── *)
 
+(* A contract clause is its own statement: it anchors at its keyword, so
+   the line below it is the body rather than another argument. *)
+let test_a_contract_clause_takes_a_call () =
+  runs "a call in a precondition"
+    "let even? n = n % 2 == 0\nlet half n =\n  requires even? n\n  n / 2\nhalf 8"
+    "4";
+  runs "a call in a postcondition"
+    "let pos? n = n > 0\nlet inc n =\n  ensures pos? result\n  n + 1\ninc 1"
+    "2";
+  runs "a qualified call"
+    "import List\nlet size xs =\n  requires List.length xs > 0\n  List.length xs\nsize [1, 2]"
+    "2";
+  runs "result as an argument"
+    "import String\nlet shout s =\n  ensures String.length result > 0\n  \"%{s}!\"\nshout \"hi\""
+    "hi!";
+  (* The two shapes the blanket refusal of application was protecting. *)
+  runs "a body that opens with a minus"
+    "let f n =\n  requires n > 0\n  (-n)\nf 3"
+    "-3";
+  runs "a body that is a glob"
+    "let f n =\n  requires n > 0\n  **/*.wand\nf 1"
+    "**/*.wand";
+  runs "a clause wrapping onto the line below"
+    "let f n =\n  requires n > 0\n    && n < 10\n  n\nf 3"
+    "3"
+
 let test_paren_seq () =
   e "two statements"
     "(1; 2)"
@@ -1271,5 +1297,7 @@ let () =
       Alcotest.test_case "qualified names"  `Quick test_qualified_names;
       Alcotest.test_case "fn"           `Quick test_fn;
       Alcotest.test_case "paren seq"    `Quick test_paren_seq;
+      Alcotest.test_case "a contract clause takes a call" `Quick
+        test_a_contract_clause_takes_a_call;
     ];
   ]
