@@ -3769,6 +3769,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | _ -> ());
     infer tenv env b
   | Contract (reqs, ens, body) ->
+    if reqs <> [] || ens <> [] then
+      performs (Effect_set.single Effect_set.Raise);
     List.iter (fun req ->
       unify_expected ~expected:TBool ~got:(infer tenv env req)) reqs;
     let body_t = infer tenv env body in

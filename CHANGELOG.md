@@ -2,6 +2,28 @@
 
 ## [0.80.7] - 2026-09-25
 
+### Changed
+
+- **A contract makes a function raise.** A failed `requires` or `ensures`
+  raises, and `try` catches it, but the effects said otherwise. The
+  signature read `Int -> Int`, and `V-BANG2` called the `!` on such a
+  function a promise of a risk that was not there. A contract now performs
+  `Raise`, like everything else that can raise.
+
+  ```
+  let half n =
+    requires n % 2 == 0
+    n / 2
+
+  -- before    half : Int -> Int
+  -- now       half : Int -> Int ! {Raise}
+  --           V-BANG1: 'half' can raise -- call it 'half!'
+  ```
+
+  A caller of a contract-carrying function performs `Raise` as well, so the
+  names above it take the `!` too. `wand t --effects` is unchanged: it names
+  the labels a manifest would, and `Raise` is not one of them.
+
 ### Fixed
 
 - **A contract clause could not call a function.** `requires` and `ensures`

@@ -127,6 +127,20 @@ let test_pred1 () =
     "import List\nlet empty? xs = List.head! xs > 0\nempty? [1]"
     "V-BANG1"
 
+(* A contract raises where it fails, and `try` catches it, so a function
+   carrying one performs Raise and takes the name every raiser takes. *)
+let test_bang1_reads_a_contract () =
+  fires "a precondition"
+    "let half n =\n  requires n % 2 == 0\n  n / 2\nhalf 8" "V-BANG1";
+  fires "a postcondition"
+    "let inc n =\n  ensures result > n\n  n + 1\ninc 1" "V-BANG1";
+  silent "and the ! settles it"
+    "let half! n =\n  requires n % 2 == 0\n  n / 2\nhalf! 8";
+  (* It reaches the caller, the way any other raise does. *)
+  fires "a caller of one"
+    "let half! n =\n  requires n % 2 == 0\n  n / 2\nlet quarter n = half! (half! n)\nquarter 8"
+    "V-BANG1"
+
 (* A raise the caller may bring is not one the function performs. `try`
    discharges Raise across a function, so a wrapper asks for a thunk that
    may raise and answers a Result -- and reading that argument row told
@@ -705,6 +719,8 @@ let () =
         test_bang1_on_a_predicate;
       Alcotest.test_case "V-BANG1 ignores a demanded raise" `Quick
         test_bang1_ignores_a_demanded_raise;
+      Alcotest.test_case "V-BANG1 reads a contract" `Quick
+        test_bang1_reads_a_contract;
       Alcotest.test_case "V-OR1"    `Quick test_or1;
       Alcotest.test_case "V-NAME1"  `Quick test_name1;
       Alcotest.test_case "V-DROP1"  `Quick test_drop1;

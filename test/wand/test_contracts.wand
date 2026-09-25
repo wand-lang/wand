@@ -10,63 +10,63 @@ let try_msg thunk =
 
 -- ── requires ────────────────────────────────────────────────────────────
 
-let abs_req x =
+let abs_req! x =
   requires x >= 0
   x
-test "requires passes" (fn t -> t.eq 5 (abs_req 5))
+test "requires passes" (fn t -> t.eq 5 (abs_req! 5))
 test "requires fails" (fn t ->
-  t.ok (String.contains? "precondition failed" (try_msg (fn () -> abs_req (-1)))))
+  t.ok (String.contains? "precondition failed" (try_msg (fn () -> abs_req! (-1)))))
 test "requires shows condition" (fn t ->
-  t.ok (String.contains? "x >= 0" (try_msg (fn () -> abs_req (-1)))))
+  t.ok (String.contains? "x >= 0" (try_msg (fn () -> abs_req! (-1)))))
 
 -- ── multiple requires ───────────────────────────────────────────────────
 
-let clamp_req lo hi x =
+let clamp_req! lo hi x =
   requires lo <= hi
   requires x >= 0
   if x < lo then lo else if x > hi then hi else x
-test "all requires pass" (fn t -> t.eq 5 (clamp_req 0 10 5))
+test "all requires pass" (fn t -> t.eq 5 (clamp_req! 0 10 5))
 test "first requires fails" (fn t ->
-  t.ok (String.contains? "precondition failed" (try_msg (fn () -> clamp_req 10 0 5))))
+  t.ok (String.contains? "precondition failed" (try_msg (fn () -> clamp_req! 10 0 5))))
 
 -- ── ensures ─────────────────────────────────────────────────────────────
 
-let abs_ens x =
+let abs_ens! x =
   ensures result >= 0
   if x < 0 then 0 - x else x
-test "ensures passes" (fn t -> t.eq 5 (abs_ens (-5)))
+test "ensures passes" (fn t -> t.eq 5 (abs_ens! (-5)))
 
-let broken x =
+let broken! x =
   ensures result > 100
   x
 test "ensures fails" (fn t ->
-  t.ok (String.contains? "postcondition failed" (try_msg (fn () -> broken 5))))
+  t.ok (String.contains? "postcondition failed" (try_msg (fn () -> broken! 5))))
 test "ensures shows condition" (fn t ->
-  t.ok (String.contains? "result > 100" (try_msg (fn () -> broken 5))))
+  t.ok (String.contains? "result > 100" (try_msg (fn () -> broken! 5))))
 
 -- ── requires + ensures ──────────────────────────────────────────────────
 
-let clamp_both lo hi x =
+let clamp_both! lo hi x =
   requires lo <= hi
   ensures result >= lo
   ensures result <= hi
   if x < lo then lo else if x > hi then hi else x
-test "clamp with contracts" (fn t -> t.eq 10 (clamp_both 0 10 15))
+test "clamp with contracts" (fn t -> t.eq 10 (clamp_both! 0 10 15))
 
-let double_ens x =
+let double_ens! x =
   ensures result == x * 2
   x * 2
-test "result equals expected" (fn t -> t.eq 14 (double_ens 7))
+test "result equals expected" (fn t -> t.eq 14 (double_ens! 7))
 
 -- ── both kinds on one definition ────────────────────────────────────────
 
 -- The parser takes them in either order; `wand f` puts every `requires`
 -- first, which is why that is the order written here.
-let halve n =
+let halve! n =
   requires n % 2 == 0
   ensures result * 2 == n
   n / 2
-test "both kinds" (fn t -> t.eq 4 (halve 8))
+test "both kinds" (fn t -> t.eq 4 (halve! 8))
 
 -- ── a written type beside the contracts ─────────────────────────────────
 
@@ -84,21 +84,21 @@ test "the annotation does not silence the contract" (fn t -> t.raises (fn () -> 
 
 let even? n = n % 2 == 0
 
-let quarter n =
+let quarter! n =
   requires even? n
   requires even? (n / 2)
   n / 4
-test "a call in the condition" (fn t -> t.eq 3 (quarter 12))
+test "a call in the condition" (fn t -> t.eq 3 (quarter! 12))
 test "and it can fail" (fn t ->
-  t.ok (String.contains? "precondition failed" (try_msg (fn () -> quarter 6))))
+  t.ok (String.contains? "precondition failed" (try_msg (fn () -> quarter! 6))))
 
 -- ── a result that is not a number ───────────────────────────────────────
 
-let shout s =
+let shout! s =
   requires String.length s > 0
   ensures String.length result == String.length s + 1
   "%{String.upper s}!"
-test "a String result" (fn t -> t.eq "HI!" (shout "hi"))
+test "a String result" (fn t -> t.eq "HI!" (shout! "hi"))
 
 let take_two! xs =
   requires List.length xs >= 2
@@ -106,45 +106,45 @@ let take_two! xs =
   [List.get! 0 xs, List.get! 1 xs]
 test "a List result" (fn t -> t.eq [1, 2] (take_two! [1, 2, 3]))
 
-let split_at_zero n =
+let split_at_zero! n =
   ensures match result with
   | (a, b) -> a <= b
   if n < 0 then (n, 0) else (0, n)
-test "a tuple result" (fn t -> t.eq (0, 5) (split_at_zero 5))
+test "a tuple result" (fn t -> t.eq (0, 5) (split_at_zero! 5))
 
 -- ── a body that is a match ──────────────────────────────────────────────
 
 type Level = Low | High
 
-let weight lvl =
+let weight! lvl =
   ensures result > 0
   match lvl with
   | Low -> 1
   | High -> 10
-test "a match under the contract" (fn t -> t.eq 10 (weight High))
+test "a match under the contract" (fn t -> t.eq 10 (weight! High))
 
 -- ── a body a contract once swallowed ────────────────────────────────────
 
 -- A clause ends at the end of its line, and the body begins on the next
 -- one. `requires n > 0` above `(-n)` once re-read as `requires n > 0 - n`,
 -- leaving no body at all, so both of these are here as running code.
-let negate n =
+let negate! n =
   requires n > 0
   (-n)
-test "a body that opens with a minus" (fn t -> t.eq (-3) (negate 3))
+test "a body that opens with a minus" (fn t -> t.eq (-3) (negate! 3))
 
-let pattern_for n =
+let pattern_for! n =
   requires n > 0
   ( **/*.wand)
-test "a body that is a glob" (fn t -> t.eq **/*.wand (pattern_for 1))
+test "a body that is a glob" (fn t -> t.eq **/*.wand (pattern_for! 1))
 
 -- ── a contract on a local binding ───────────────────────────────────────
 
-let outer n =
+let outer! n =
   let inner m =
     requires m >= 0
     m * 2;
   inner n + 1
-test "a nested contract passes" (fn t -> t.eq 9 (outer 4))
+test "a nested contract passes" (fn t -> t.eq 9 (outer! 4))
 test "a nested contract fails" (fn t ->
-  t.ok (String.contains? "precondition failed" (try_msg (fn () -> outer (-1)))))
+  t.ok (String.contains? "precondition failed" (try_msg (fn () -> outer! (-1)))))

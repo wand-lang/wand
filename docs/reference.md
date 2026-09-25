@@ -2687,7 +2687,7 @@ A function body can state preconditions and postconditions. wand checks them
 during the run. In a postcondition, `result` is bound to the return value:
 
 ```ocaml
-let half n =
+let half! n =
   requires n % 2 == 0
   ensures result * 2 == n
   n / 2
@@ -2696,8 +2696,11 @@ let half n =
 A violated contract raises, reporting the clause that failed:
 
 ```ocaml
-half 7   -- precondition failed: ((n % 2) == 0)
+half! 7   -- precondition failed: ((n % 2) == 0)
 ```
+
+So a function that carries a contract performs `Raise`, and its name takes
+the `!` that every raising function takes. Its callers perform `Raise` too.
 
 Contracts come after the `=` and before the body. You can write several of
 each. A broken contract is a bug, not an operation that failed. So state what
@@ -2708,7 +2711,7 @@ A clause is an expression, so it can call a function. `result` is a value
 like any other and can be an argument:
 
 ```ocaml
-let shout s =
+let shout! s =
   requires String.length s > 0
   ensures String.length result == String.length s + 1
   "%{String.upper s}!"
@@ -2718,7 +2721,7 @@ Each clause ends at the end of its line. A clause that runs on is indented
 past its keyword, and the body begins at the keyword's own column:
 
 ```ocaml
-let clamp lo hi x =
+let clamp! lo hi x =
   requires lo <= hi
     && hi - lo < 100
   if x < lo then lo else if x > hi then hi else x
