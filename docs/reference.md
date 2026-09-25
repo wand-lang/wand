@@ -3471,6 +3471,66 @@ utils.my_function 42
 utils.greeting
 ```
 
+### What an import runs
+
+An import evaluates the file's bindings. It does not evaluate the
+statements that bind nothing:
+
+```ocaml
+-- greet.wand
+let greeting = "hello"
+
+IO.println "one"
+IO.println "two"
+```
+
+```ocaml
+-- main.wand
+let {greeting} = import ./greet
+IO.println greeting
+```
+
+```console
+$ wand greet.wand
+one
+two
+
+$ wand main.wand
+hello
+```
+
+So one file is a module and a script at once. `import` takes the module,
+and `wand <file>` runs the script. Most scripting languages run the whole
+file on import, and ask you to write a guard around the script half —
+Python's `if __name__ == "__main__":` is that guard. wand needs no guard:
+a statement that binds nothing is the script, and an import leaves it
+alone.
+
+Only the `let` decides this, so a statement moved onto the right of one
+starts running on import:
+
+```ocaml
+IO.println "four"           -- the script: an import skips it
+let noisy = IO.println "four"   -- a binding: an import runs it
+```
+
+Keep work that reaches the world in a function, and call it in a statement
+that binds nothing. Then a file that imports yours reads your definitions
+and runs none of your work:
+
+```ocaml
+let deploy! target = (
+  FS.mkdir! target;
+  FS.write_file! (Path.join target ./v) "1\n"
+)
+
+deploy! ./build
+```
+
+A binding that computes is fine to leave at the top level. A binding that
+reads a file, runs a command or takes a lock is work, and on import it
+happens.
+
 ### Destructured imports
 
 Import specific names from a module by naming them in braces:
@@ -6312,6 +6372,12 @@ writes it and reads it. A script does not have to.
   makes the first half of this rule for you -- a binding whose body is a
   block comes back with the `;` -- and leaves the second to you, because
   `let () =` says something about `e1` that `;` does not.
+
+- **Keep the work in a function where the file is imported.** An import
+  runs a file's bindings and not its statements, so a script another file
+  imports puts what it does in a function and calls it in a statement. See
+  [What an import runs](#what-an-import-runs). A script nothing imports
+  needs no such thing and reads as statements from top to bottom.
 
 - **Prefer `match` to several equations.** Two definitions with different
   patterns are legal. The standard library uses that form, as in

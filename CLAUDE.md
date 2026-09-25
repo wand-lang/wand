@@ -357,6 +357,11 @@ let {test} = import Test        -- destructure specific names
 let {helper} = import ./util    -- another file, by path
 ```
 
+An import runs a file's bindings and not its statements, so importing a
+script runs none of its work -- and a `let` at the top level whose value
+reaches the world does run. That is what lets `test/wand/test_ports.wand`
+test `examples/ports/` without running any of them.
+
 Stdlib modules: List, String, Regex, Map, FS, Resource, Stream, Path, IO,
 Float, Int, Proc, Env, CSV, JSON, TOML, YAML, Duration, Size, Clock,
 DateTime, Par, Shell, Decode, Args, Test, Option, Result, Hash, Digest,
