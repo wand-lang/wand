@@ -3529,7 +3529,25 @@ deploy! ./build
 
 A binding that computes is fine to leave at the top level. A binding that
 reads a file, runs a command or takes a lock is work, and on import it
-happens.
+happens — so the file that writes the import performs it, and its manifest
+has to say so:
+
+```ocaml
+-- b.wand
+uses {Shell(echo)}
+let greeting = $(echo hi)
+
+-- a.wand
+uses {IO}
+let {greeting} = import ./b
+-- type error: performs Shell, which the manifest does not allow.
+--             The manifest should be: "uses {IO, Shell}"
+```
+
+Defining a function performs nothing on import, so a module of functions
+imports clean however much its functions do. The effects arrive when
+something calls one. They also travel the whole chain: a file that imports
+a file that imports one of these performs it too.
 
 ### Destructured imports
 

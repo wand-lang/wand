@@ -43,7 +43,7 @@ let disabled =
    different key rather than being read back as the wrong shape -- Marshal
    returns the bytes typed as whatever the reader expects, whatever they
    hold. "5" is the digest an entry carries in front of its bytes. *)
-let format_version = "5"
+let format_version = "6"
 
 (* Where the entries live, most specific first.
 

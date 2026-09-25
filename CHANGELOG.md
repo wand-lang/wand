@@ -4,6 +4,30 @@
 
 ### Changed
 
+- **An import performs what the imported file's bindings perform.** An
+  import evaluates a module's bindings, so a binding that runs a command or
+  reads a file does that work when another file imports it. The effects
+  reached nobody: the importing file performed nothing, and a manifest that
+  did not mention them still typechecked while the run did the work.
+
+  ```
+  -- b.wand
+  uses {Shell(echo)}
+  let greeting = $(echo hi)
+
+  -- a.wand
+  uses {IO}
+  let {greeting} = import ./b
+
+  -- before    typechecks, and running it runs `echo`
+  -- now       type error: performs Shell, which the manifest does not allow
+  ```
+
+  Defining a function performs nothing on import — its effects sit on the
+  arrow and arrive when something calls it — so a module of functions
+  imports clean however much its functions do. Nothing in the standard
+  library does work at load, so no existing file changes.
+
 - **A contract makes a function raise.** A failed `requires` or `ensures`
   raises, and `try` catches it, but the effects said otherwise. The
   signature read `Int -> Int`, and `V-BANG2` called the `!` on such a

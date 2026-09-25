@@ -185,6 +185,54 @@ let test_typecheck_does_not_run_imports () =
     Alcotest.(check bool) "running did run the import"
       true (Sys.file_exists marker))
 
+(* An import evaluates the module's bindings, so the file that writes the
+   import performs what they perform. Defining a function performs nothing:
+   its effects sit on the arrow and arrive when something calls it. *)
+let test_an_import_performs_the_module_s_load_effects () =
+  with_module_dir (fun dir ->
+    write_file (Filename.concat dir "loud.wand")
+      "uses {Shell(echo)}\nlet greeting = $(echo hi)\n";
+    write_file (Filename.concat dir "quiet.wand")
+      "let shout! () = $(echo hi)\n";
+    let check name src =
+      let path = Filename.concat dir name in
+      write_file path src;
+      Runner.typecheck_file path
+    in
+    (match check "a.wand" "uses {IO}\nimport IO\nlet {greeting} = import ./loud\nIO.println greeting\n" with
+     | Ok _ -> Alcotest.fail "a manifest without Shell was accepted"
+     | Error d ->
+       let m = Diag.legacy d in
+       if not (Lint.contains m "performs Shell") then
+         Alcotest.failf "expected Shell in: %s" m);
+    (match check "b.wand" "uses {IO, Shell}\nimport IO\nlet {greeting} = import ./loud\nIO.println greeting\n" with
+     | Ok _ -> ()
+     | Error d -> Alcotest.failf "declaring Shell was refused: %s" (Diag.legacy d));
+    (* A module of functions performs nothing when it is imported, so the
+       importer's manifest does not have to grow for one it never calls. *)
+    (match check "c.wand" "uses {IO}\nimport IO\nlet {shout!} = import ./quiet\nIO.println \"fine\"\n" with
+     | Ok _ -> ()
+     | Error d ->
+       Alcotest.failf "importing a module of functions wanted a manifest: %s"
+         (Diag.legacy d)))
+
+(* Loading a file loads what it imports, so the effects travel the whole
+   chain rather than one link of it. *)
+let test_load_effects_are_transitive () =
+  with_module_dir (fun dir ->
+    write_file (Filename.concat dir "leaf.wand")
+      "uses {Shell(echo)}\nlet deep = $(echo deep)\n";
+    write_file (Filename.concat dir "mid.wand")
+      "uses {Shell}\nlet {deep} = import ./leaf\nlet passed = deep\n";
+    let top = Filename.concat dir "top.wand" in
+    write_file top "uses {IO}\nimport IO\nlet {passed} = import ./mid\nIO.println passed\n";
+    match Runner.typecheck_file top with
+    | Ok _ -> Alcotest.fail "the effect two imports away was not seen"
+    | Error d ->
+      let m = Diag.legacy d in
+      if not (Lint.contains m "performs Shell") then
+        Alcotest.failf "expected Shell in: %s" m)
+
 (* ── Suite ───────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -210,6 +258,12 @@ let () =
     "analysis", [
       Alcotest.test_case "typecheck does not run imports" `Quick
         test_typecheck_does_not_run_imports;
+    ];
+    "effects", [
+      Alcotest.test_case "an import performs the module's load effects" `Quick
+        test_an_import_performs_the_module_s_load_effects;
+      Alcotest.test_case "and they are transitive" `Quick
+        test_load_effects_are_transitive;
     ];
     "aliases", [
       Alcotest.test_case "used inside its module"   `Quick test_module_alias_used_inside;

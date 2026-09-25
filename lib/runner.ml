@@ -1756,10 +1756,14 @@ type import_env = {
      contract is read where a module claims it and where a parameter is
      annotated with it, and both can be in a file that only imports it. *)
   ifaces : (string * Ast.interface_def) list;
+  (* What evaluating the imported modules' bindings performs. An import
+     evaluates them, so the file that writes the import performs this. *)
+  load_effects : Effect_set.EffSet.t;
 }
 
 let empty_import_env =
-  { tenv = []; type_env = []; eval_env = []; type_names = []; ifaces = [] }
+  { tenv = []; type_env = []; eval_env = []; type_names = []; ifaces = [];
+    load_effects = Effect_set.EffSet.empty }
 
 (* ── Multi-clause merging ─────────────────────────────────────────────────── *)
 
@@ -1962,6 +1966,9 @@ type module_result =
   * env
   * (string * Ast.type_def) list
   * (string * string) list
+  (* What evaluating this module's bindings performs: the effects an import
+     of it performs in the file that writes the import. *)
+  * Effect_set.EffSet.t
 
 (* A module's cache key, by path: the hash of its source and of everything it
    imports. Recorded as modules load so a parent can fold its children's keys
@@ -2046,6 +2053,7 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
        gave them. `own_tenv` is the module's own, for reaching them through
        it. *)
     let add_import ~modul ?alias ?(own_tenv = []) ?(extra_names = [])
+        ?(load_eff = Effect_set.EffSet.empty)
         modul_import type_entries eval_entries mod_docs =
       let (own_entries, qual_names) = qualified_types ~modul alias own_tenv in
       (* An import brings what it names. A module's types used to arrive
@@ -2066,7 +2074,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
             | None -> []
             | Some a ->
               List.map (fun (n, i) -> (a ^ "." ^ n, i)) modul_import.ifaces)
-           @ acc.ifaces },
+           @ acc.ifaces;
+         load_effects = Effect_set.EffSet.union load_eff acc.load_effects },
        mod_docs @ acc_docs)
     in
     at_import @@ fun () ->
@@ -2074,9 +2083,10 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
     | Ast.TLImport kind ->
       let ns_name = namespace_name_of kind in
       let modul = Module_types.key_of (resolve_import base_dir kind) in
-      let (modul_import, own_type, own_eval, own_tenv, mod_docs) = load_kind kind in
+      let (modul_import, own_type, own_eval, own_tenv, mod_docs, load_eff) =
+        load_kind kind in
       let prefixed_docs = List.map (fun (n, d) -> (ns_name ^ "." ^ n, d)) mod_docs in
-      add_import ~modul ~alias:ns_name ~own_tenv modul_import
+      add_import ~modul ~alias:ns_name ~own_tenv ~load_eff modul_import
         [(ns_name, (let (ms, cs) = Typechecker.split_claims own_type in
            Typechecker.Namespace (ms, cs)))]
         (* The namespace holds the module's constructors as well as its
@@ -2087,9 +2097,10 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
     | Ast.TLLet (name, [], body) when Option.is_some (import_kind_of body) ->
       let kind = Option.get (import_kind_of body) in
       let modul = Module_types.key_of (resolve_import base_dir kind) in
-      let (modul_import, own_type, own_eval, own_tenv, mod_docs) = load_kind kind in
+      let (modul_import, own_type, own_eval, own_tenv, mod_docs, load_eff) =
+        load_kind kind in
       let prefixed_docs = List.map (fun (n, d) -> (name ^ "." ^ n, d)) mod_docs in
-      add_import ~modul ~alias:name ~own_tenv modul_import
+      add_import ~modul ~alias:name ~own_tenv ~load_eff modul_import
         [(name, (let (ms, cs) = Typechecker.split_claims own_type in
            Typechecker.Namespace (ms, cs)))]
         [(name, VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))]
@@ -2097,7 +2108,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
     | Ast.TLLetPat (pat, body) when Option.is_some (import_kind_of body) ->
       let kind = Option.get (import_kind_of body) in
       let modul = Module_types.key_of (resolve_import base_dir kind) in
-      let (modul_import, own_type, own_eval, own_tenv, mod_docs) = load_kind kind in
+      let (modul_import, own_type, own_eval, own_tenv, mod_docs, load_eff) =
+        load_kind kind in
       let (type_entries, eval_entries, extra_docs, selected_tenv) = match pat with
         | Ast.PVar name ->
           let pdocs = List.map (fun (n, d) -> (name ^ "." ^ n, d)) mod_docs in
@@ -2189,7 +2201,7 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
                         | Some (n, _) -> n
                         | None -> alias))) selected_tenv)
       in
-      add_import ~modul ?alias ~own_tenv:own_tenv' ~extra_names modul_import
+      add_import ~modul ?alias ~own_tenv:own_tenv' ~extra_names ~load_eff modul_import
         type_entries eval_entries extra_docs
     | _ -> (acc, acc_docs)
   ) (empty_import_env, []) (List.mapi (fun i it -> (i, it)) prog.Ast.items)
@@ -2280,14 +2292,15 @@ and load_module src_ref ~cache ~loading ~evaluate =
   let refresh = List.map (fun (n, s) -> (n, Typechecker.refresh_scheme s)) in
   let inferred =
     match Compile_cache.find own_key with
-    | Some (own_part, own_type) ->
-      Ok (rebuild (refresh own_part), refresh own_type)
+    | Some (own_part, own_type, load_eff) ->
+      Ok (rebuild (refresh own_part), refresh own_type, load_eff)
     | None ->
       (match Typechecker.infer_program_env_with_own
                ~init_tenv:imported.tenv ~init_env:imported.type_env
                ~init_ifaces:imported.ifaces
+               ~init_effects:imported.load_effects
                ~type_names:(own_type_names @ imported.type_names) prog with
-       | Ok (type_env, own_type) as ok ->
+       | Ok (type_env, own_type, load_eff) as ok ->
          let n_own = List.length type_env - tail_len in
          if n_own >= 0 then begin
            let own_part = List.filteri (fun i _ -> i < n_own) type_env in
@@ -2296,7 +2309,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
               deep-comparing several hundred of them would cost more than the
               inference being cached. *)
            if List.map fst (rebuild own_part) = List.map fst type_env then
-             Compile_cache.store own_key (own_part, own_type)
+             Compile_cache.store own_key (own_part, own_type, load_eff)
          end;
          ok
        | Error _ as e -> e)
@@ -2304,7 +2317,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
   let result =
     (match inferred with
      | Error msg -> raise (Module_types.ImportError ("type error: " ^ msg))
-     | Ok (type_env, own_type) ->
+     | Ok (type_env, own_type, own_load_eff) ->
        (* Indexed here: everything a module can see that it did not define
           itself is fixed by this point, and every name the module goes on to
           look up sits in front of it. *)
@@ -2380,11 +2393,12 @@ and load_module src_ref ~cache ~loading ~evaluate =
            ifaces =
              List.filter_map (function
                | Ast.TLInterface (i, _) -> Some (i.Ast.if_name, i)
-               | _ -> None) prog.Ast.items } in
+               | _ -> None) prog.Ast.items;
+           load_effects = own_load_eff } in
        (full_import, own_type, own_eval,
         List.map (fun (n, d) ->
           (n, Module_types.canonicalise_tdef ~modul:path own_names d)) own,
-        prog.Ast.docs @ imp_docs))
+        prog.Ast.docs @ imp_docs, own_load_eff))
   in
   Hashtbl.replace cache (module_cache_key ~evaluate path) result;
   loading := List.filter (fun p -> p <> path) !loading;
@@ -2413,7 +2427,7 @@ let stdlib_module_sig name :
           load_module (Module_types.resolve_stdlib name)
             ~cache:(Hashtbl.create 8) ~loading:(ref []) ~evaluate:false
         with
-        | (_, own_type, _, _, docs) -> Some (own_type, docs)
+        | (_, own_type, _, _, docs, _) -> Some (own_type, docs)
         | exception _ -> None
     in
     Hashtbl.replace stdlib_sig_cache name r;
@@ -3132,9 +3146,10 @@ let run_test_program ~base_dir ?(item_locs = []) prog
   let prog = Typechecker.settle_aliases ~init_tenv:imp.tenv prog in
   match Typechecker.infer_program_env_with_own
           ~init_tenv:imp.tenv ~init_env:imp.type_env
-          ~init_ifaces:imp.ifaces ~type_names:imp.type_names prog with
+          ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects
+          ~type_names:imp.type_names prog with
   | Error msg -> Error ("type error: " ^ msg)
-  | Ok (_, own_type_env) ->
+  | Ok (_, own_type_env, _) ->
     match drop2_refusals (Lint.check prog item_locs own_type_env) with
     | _ :: _ as refusals -> Error (String.concat "\n" refusals)
     | [] ->
@@ -3630,7 +3645,8 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~type_names:merged_type_names prog with
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects
+            ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (full_type_env, own_type_env, last_t, hole_types) ->
       let dedup lst =
@@ -3865,7 +3881,8 @@ let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
     in
     match Typechecker.infer_program_full_with_own ~base_env
             ~init_tenv:imp.tenv ~init_env:imp.type_env
-            ~init_ifaces:imp.ifaces ~type_names:imp.type_names prog with
+            ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects
+            ~type_names:imp.type_names prog with
     | Error (loc, msg, fix) ->
       (* An unbound name is the one error a check carries on past, so there
          may be several. They travel with the first, which is what every
@@ -3934,9 +3951,10 @@ let lint_module_source (src : string) : (Lint.finding list, string) result =
     match Typechecker.infer_program_env_with_own
             ~init_tenv:(local_tenv_of prog @ imp.tenv)
             ~init_env:imp.type_env ~init_ifaces:imp.ifaces
+            ~init_effects:imp.load_effects
             ~type_names:imp.type_names prog with
     | Error msg -> Error ("type error: " ^ msg)
-    | Ok (_, own_type_env) -> Ok (Lint.check prog item_locs own_type_env)
+    | Ok (_, own_type_env, _) -> Ok (Lint.check prog item_locs own_type_env)
   with
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _
@@ -3959,7 +3977,8 @@ let lint_session (sess : session) (src : string) : (Lint.finding list, string) r
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~type_names:merged_type_names prog with
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects
+            ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (_, own_type_env, _, _) ->
       Ok (Lint.check prog item_locs own_type_env)
@@ -3983,7 +4002,8 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~type_names:merged_type_names prog with
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects
+            ~type_names:merged_type_names prog with
     | Error (loc, msg, fix) -> Error (Diag.error ~code:"E-TYPE" ?loc ?fix msg)
     | Ok (full_type_env, _, last_t, hole_types) ->
       if hole_types <> [] then

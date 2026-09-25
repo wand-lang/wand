@@ -5175,6 +5175,12 @@ let last_manifest : (Effect_set.EffSet.t * Effect_set.EffSet.t * Token.loc) opti
    nothing to declare, and one that does should say what. *)
 let last_file_effects : Effect_set.EffSet.t ref = ref Effect_set.EffSet.empty
 
+(* What evaluating this file's bindings performs. An import evaluates them,
+   so this is what an `import` of this file performs in the file that writes
+   it. Labels rather than a set: it is stored in the compile cache, and a
+   set carries mutable variables that Marshal cannot write. *)
+let last_load_effects : Effect_set.EffSet.t ref = ref Effect_set.EffSet.empty
+
 let check_manifest (prog : program) (own_env : env) =
   last_manifest := None;
   (* Command words first: a disallowed literal word or a compound command
@@ -5295,7 +5301,8 @@ let settle_aliases ?(init_tenv=[]) (prog : program) : program =
   { prog with items = List.map settle prog.items }
 
 let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[])
-    ?(init_ifaces=[]) (prog : program) : typedef_env * env * env * typ =
+    ?(init_ifaces=[]) ?(init_effects=Effect_set.EffSet.empty)
+    (prog : program) : typedef_env * env * env * typ =
   next_id := 0;
   (* Seeded per file rather than accumulated: an interface is in scope where
      it is declared and where it is imported, and nowhere else. *)
@@ -5312,7 +5319,11 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   last_shell_static := true;
   last_shell_allow := None;
   pending_fix := None;
-  current_eff := Effect_set.unknown ();
+  current_eff := Effect_set.absorb ~ambient:(Effect_set.unknown ())
+      (Effect_set.of_list (Effect_set.EffSet.elements init_effects));
+  (* Seeded, not emptied: loading this file loads what it imports, so what
+     an import of this file performs includes what its own imports perform. *)
+  last_load_effects := init_effects;
   Hashtbl.reset ctor_scheme_cache;
   ctor_env_memo := None;
   visible_set := None;
@@ -5575,7 +5586,14 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     | TLLet (_, [], body) when is_import_expr body ->
       (env, last_t)  (* pre-loaded by load_imports_for *)
     | TLLet (name, [], body) ->
-      let t = infer tenv env body in
+      (* Evaluating this is what an import of this file evaluates, so its
+         effects are recorded apart as well as absorbed. A definition with
+         parameters is below and performs nothing here: its effects sit on
+         the arrow. *)
+      let (t, eff) = scoped_eff (fun () -> infer tenv env body) in
+      performs eff;
+      last_load_effects :=
+        Effect_set.EffSet.union !last_load_effects (Effect_set.labels_of eff);
       ((name, generalize env t) :: env, last_t)
     | TLLet (name, params, body) ->
       let placeholder = fresh () in
@@ -5596,7 +5614,10 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     | TLLetPat (_, body) when is_import_expr body ->
       (env, last_t)  (* pre-loaded by load_imports_for *)
     | TLLetPat (pat, e) ->
-      let t = infer tenv env e in
+      let (t, eff) = scoped_eff (fun () -> infer tenv env e) in
+      performs eff;
+      last_load_effects :=
+        Effect_set.EffSet.union !last_load_effects (Effect_set.labels_of eff);
       (* A top-level `let _ = ...` is this item, not the `Let` expression
          below, so the type the A-BIND1 lint reads has to be recorded here
          too. Keyed by the value's position, exactly as the expression case
@@ -5718,7 +5739,7 @@ let error_message = function
     Printf.sprintf "%d:%d: %s" loc.Token.line loc.Token.col msg
   | _ -> assert false
 
-let infer_program_ ?base_env ?init_tenv ?init_env ?init_ifaces
+let infer_program_ ?base_env ?init_tenv ?init_env ?init_ifaces ?init_effects
     ?(type_names = []) prog =
   (* A name with no dot is one this file may write: its own declarations, and
      what it selected in an import. `Foo.Status` is written with the module,
@@ -5731,7 +5752,8 @@ let infer_program_ ?base_env ?init_tenv ?init_env ?init_ifaces
   let result =
     with_type_name_map type_names (fun () ->
       with_visible visible (fun () ->
-        infer_program_body ?base_env ?init_tenv ?init_env ?init_ifaces prog))
+        infer_program_body ?base_env ?init_tenv ?init_env ?init_ifaces
+          ?init_effects prog))
   in
   raise_first_unbound ();
   result
@@ -5747,13 +5769,13 @@ let infer_program_full ?(init_tenv=[]) ?(init_env=[]) ?init_ifaces
 
 (* Returns (full_env, own_env); uses stdlib_type_env as base (for module loading). *)
 let infer_program_env_with_own ?(init_tenv=[]) ?(init_env=[]) ?init_ifaces
-    ?(type_names=[])
-    (prog : program) : (env * env, string) result =
+    ?init_effects ?(type_names=[])
+    (prog : program) : (env * env * Effect_set.EffSet.t, string) result =
   try
     let (_, env, own, _) =
       infer_program_ ~base_env:stdlib_type_env ~init_tenv ~init_env ?init_ifaces
-        ~type_names prog in
-    Ok (env, own)
+        ?init_effects ~type_names prog in
+    Ok (env, own, !last_load_effects)
   with (TypeError _ | TypeErrorAt _) as e -> Error (error_message e)
 
 let infer_program (prog : program) : (typ, string) result =
@@ -5772,7 +5794,7 @@ let string_of_scheme = function
 (* The Error side is (position, message, correction): everything the raise
    site knew, as data. *)
 let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
-    ?(init_env=[]) ?init_ifaces ?(type_names=[]) (prog : program)
+    ?(init_env=[]) ?init_ifaces ?init_effects ?(type_names=[]) (prog : program)
     : (env * env * typ * typ list,
        Token.loc option * string * Diag.fix option) result =
   (* An unbound name is recorded rather than raised, so the check reaches the
@@ -5787,7 +5809,8 @@ let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
   in
   try
     let (_, full_env, own_env, last_t) =
-      infer_program_ ~base_env ~init_tenv ~init_env ?init_ifaces ~type_names prog in
+      infer_program_ ~base_env ~init_tenv ~init_env ?init_ifaces ?init_effects
+        ~type_names prog in
     match answer_with_unbound () with
     | Some (loc, msg) -> Error (loc, msg, None)
     | None ->
