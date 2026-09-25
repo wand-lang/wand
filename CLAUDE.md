@@ -33,10 +33,10 @@ examples. Most tasks need only one part.
   any input answers with a diagnostic; anything else is a finding),
   `mutate.ml` the edits it makes to the corpus, `fuzz.ml` the driver.
   `known.txt` lists signatures that are found and not yet fixed, so a
-  daily run is red only for what is new; `regressions/` holds a reproducer
+  scheduled run is red only for what is new; `regressions/` holds a reproducer
   for each one that is fixed, run by `test_fuzz_regressions.ml` on every PR.
   Run it locally as shown below.
-- `.github/workflows/ci.yml` builds and tests on push/PR; `release.yml` builds release archives when a tag lands; `daily-fuzz.yml` runs the fuzzer on four seeds each day and files an issue per new signature.
+- `.github/workflows/ci.yml` builds and tests on push/PR; `release.yml` builds release archives when a tag lands; `fuzz.yml` runs the fuzzer on four seeds twice a day and files an issue per new signature.
 
 ### Verifying a change
 
@@ -85,12 +85,12 @@ manifest, a single `delete-line` took the `uses` line off
 `examples/ports/disk-threshold.wand` and the fuzzer ran `df`.
 
 It costs a little over half the throughput -- 549 inputs a second becomes
-241 -- so it covers less ground in the same time. `Daily Fuzz` does not pass
+241 -- so it covers less ground in the same time. `Fuzz` does not pass
 it.
 
 A finding is written to `_fuzz-findings/` as two files: the input, byte for
 byte, and a `.json` beside it holding the seed, the iteration, the edits and
-the backtrace. JSON because the daily job reads it to decide what to file.
+the backtrace. JSON because the scheduled job reads it to decide what to file.
 `--seed S --only I` replays a finding, and `--input FILE --path P` rechecks
 one. `tools/fuzz_sweep.wand` runs several seeds and keeps each seed's
 findings in `_fuzz-findings/sweep/seedN/` -- a finding is keyed by signature,
@@ -103,8 +103,9 @@ moves to `test/fuzz/regressions/` with a `.txt` beside it saying what it
 was, and `dune test` holds the fix in place from then on.
 
 Changing `lib/formatter.ml` needs more: the formatter has produced source
-that does not parse, so check that the corpus (stdlib + examples) is still a
-fixed point *and* still runs. `wand f` writes in place, so run it on a copy.
+that does not parse, so check that the corpus (stdlib, test/wand, examples,
+demos and tools) is still a fixed point *and* still runs. `wand f` writes in
+place, so run it on a copy.
 
 Changing anything on the startup path gets before-and-after numbers in the
 commit message, from several runs. Readings move ~15% between runs, so one

@@ -1,0 +1,20 @@
+-- One half of the pair test_interfaces.wand passes around: a module about
+-- Int that says which interfaces it answers to. An implementation is a run
+-- of bindings, and each one lands where a top-level `let` would put it.
+import List
+
+let iface = import ./interface_fixture
+
+implement iface.Ranked Int =
+  let top a b = if a > b then a else b;
+  let bottom a b = if a < b then a else b
+
+implement iface.Named =
+  let label () = "Int"
+
+implement iface.Mapper =
+  let each f xs = List.map f xs
+
+-- A binding outside every block, to say the blocks hold no monopoly on the
+-- module.
+let zero = 0

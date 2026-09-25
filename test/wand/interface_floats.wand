@@ -1,0 +1,12 @@
+-- The other half: a second module answering to the same interfaces, with
+-- 'a bound to another type. One function over `iface.Ranked 'a` serves
+-- both, which is what says the parameter is instantiation and not
+-- dispatch.
+let iface = import ./interface_fixture
+
+implement iface.Ranked Float =
+  let top a b = if a > b then a else b;
+  let bottom a b = if a < b then a else b
+
+implement iface.Named =
+  let label () = "Float"

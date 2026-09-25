@@ -1,0 +1,57 @@
+import Int
+import Size
+import String
+
+let {test, group} = import Test
+
+let iface = import ./interface_fixture
+let ints = import ./interface_ints
+let floats = import ./interface_floats
+
+-- ── A module passed as a value ──────────────────────────────────────────
+
+let biggest (m: iface.Ranked Int) a b = m.top a b
+let smallest (m: iface.Ranked Int) a b = m.bottom a b
+
+test "a module is the argument" (fn t -> t.eq 7 (biggest ints 3 7))
+test "the other member" (fn t -> t.eq 3 (smallest ints 3 7))
+
+-- ── One function over two implementations ───────────────────────────────
+
+let peak : iface.Ranked 'a -> 'a -> 'a -> 'a = fn m a b -> m.top a b
+
+group "one function, two modules" (fn () -> [
+  test "Int" (fn t -> t.eq 7 (peak ints 3 7)),
+  test "Float" (fn t -> t.eq 7.5 (peak floats 3.5 7.5))
+])
+
+-- ── An interface with no type parameter ─────────────────────────────────
+
+let name_of (m: iface.Named) = m.label ()
+
+group "no type parameter" (fn () -> [
+  test "Int" (fn t -> t.eq "Int" (name_of ints)),
+  test "Float" (fn t -> t.eq "Float" (name_of floats))
+])
+
+-- ── An effect variable the argument settles ─────────────────────────────
+
+let doubled (m: iface.Mapper) xs = m.each (fn x -> x * 2) xs
+
+test "a higher-order member" (fn t -> t.eq [2, 4, 6] (doubled ints [1, 2, 3]))
+
+-- ── A member is an ordinary binding of its module ───────────────────────
+
+test "reached without the interface" (fn t -> t.eq 7 (ints.top 3 7))
+test "a binding outside every block" (fn t -> t.eq 0 ints.zero)
+
+-- ── Ord is built in ─────────────────────────────────────────────────────
+
+let widest : Ord 'a -> 'a -> 'a -> 'a = fn m a b -> m.max a b
+
+group "the built-in interface" (fn () -> [
+  test "Int" (fn t -> t.eq 7 (widest Int 3 7)),
+  test "Size" (fn t -> t.eq 100MB (widest Size 4KB 100MB)),
+  test "String" (fn t -> t.eq "b" (widest String "a" "b")),
+  test "between?" (fn t -> t.ok (Int.between? 0 10 5))
+])

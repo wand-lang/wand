@@ -1,6 +1,6 @@
 (* Every reproducer the fuzzer has filed and that has since been fixed.
 
-   This is what makes a daily fuzz run compound. A finding that is only
+   This is what makes a scheduled fuzz run compound. A finding that is only
    fixed can come back; a finding that is fixed and left here as a fixture
    cannot, because the fix is now something `dune test` holds in place on
    every PR. Nothing else in the suite would notice: these are inputs no

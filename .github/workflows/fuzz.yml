@@ -1,20 +1,22 @@
 # The fuzzer, given time. `dune test` runs the reproducers it has already
 # filed; this is the half that looks for new ones, and it looks for as long
-# as a daily job can afford.
+# as a scheduled job can afford.
 #
 # A scheduled workflow only ever runs from the default branch, and GitHub
 # disables one after 60 days without a push -- so a quiet month turns this
 # off silently. `workflow_dispatch` is here to run it by hand, with a seed,
-# which is also how a red night is reproduced.
+# which is also how a red run is reproduced.
 
-name: Daily Fuzz
+name: Fuzz
 
 on:
   schedule:
-    # 07:37 UTC. Nothing depends on the exact time; it is early enough that a
-    # finding is waiting rather than arriving mid-morning. GitHub runs it
-    # hours late under load; `workflow_dispatch` is there for a run now.
+    # Twice a day, twelve hours apart. Nothing depends on the exact times;
+    # each run takes under an hour, so two cannot overlap. GitHub runs a
+    # schedule hours late under load, and the queue holds a second run
+    # rather than dropping it; `workflow_dispatch` is there for a run now.
     - cron: "37 7 * * *"
+    - cron: "37 19 * * *"
   workflow_dispatch:
     inputs:
       seed:
@@ -31,7 +33,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: daily-fuzz
+  group: fuzz
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +61,7 @@ jobs:
         run: opam exec -- dune build
 
       # The seed is the run id plus the shard, so it is different every
-      # night, recorded in the run, and enough on its own to replay a
+      # run, recorded in the run, and enough on its own to replay a
       # finding: `fuzz --seed S --only I`. A finding's notes carry both.
       #
       # Both arrive through `env:`, never substituted into the script: a
@@ -107,7 +109,7 @@ jobs:
           echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
 
       # Uploaded whether or not anything was found: the log is the record of
-      # how many inputs a night actually got through, which is the only way
+      # how many inputs a run actually got through, which is the only way
       # to notice the fuzzer quietly slowing down or stopping early.
       - name: Keep the findings and the log
         if: always()
@@ -142,7 +144,7 @@ jobs:
           path: findings
 
       # One issue per signature, and the title is the signature -- so the
-      # second night a bug survives updates nothing and files nothing. The
+      # second run a bug survives updates nothing and files nothing. The
       # body carries the replay line and the shrunk input, which is all
       # anyone needs to start.
       - name: File an issue for each new signature
@@ -157,7 +159,7 @@ jobs:
           shopt -s nullglob
           # The label has to exist before an issue can carry it, and a
           # fresh clone of this repository has no reason to have it.
-          gh label create fuzz --description "Found by the daily fuzzer" \
+          gh label create fuzz --description "Found by the fuzzer" \
             --color FBCA04 2>/dev/null || true
 
           # Every title with an issue still open, read once, from the
@@ -203,7 +205,7 @@ jobs:
             notes_fence=$(fence "$notes")
             input_fence=$(fence "$input")
             {
-              echo "Found by the daily fuzzer (\`$WORKFLOW\`, run [$RUN_ID]($SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID))."
+              echo "Found by the fuzzer (\`$WORKFLOW\`, run [$RUN_ID]($SERVER_URL/$REPOSITORY/actions/runs/$RUN_ID))."
               echo
               echo "${notes_fence}json"
               cat "$notes"
@@ -216,7 +218,7 @@ jobs:
               echo "$input_fence"
               echo
               echo "If this is not going to be fixed now, put the signature in"
-              echo "\`test/fuzz/known.txt\` so the next night is green. When it is fixed,"
+              echo "\`test/fuzz/known.txt\` so the next run is green. When it is fixed,"
               echo "put the input in \`test/fuzz/regressions/\`."
             } > body.md
             # One failure is one finding, not the rest of them. Under `set -e`

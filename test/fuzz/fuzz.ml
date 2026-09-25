@@ -17,7 +17,7 @@ let rec find_root dir =
     if up = dir then None else find_root up
 
 (* Every `.wand` below a directory, not just the ones directly in it.
-   `examples/ports/` is eighteen files of valid wand -- the largest single
+   `examples/ports/` is twenty files of valid wand -- the largest single
    body of it in the repository after the stdlib -- and a corpus that stops
    at the top level never sees one of them. *)
 let rec wand_files dir =
@@ -197,7 +197,7 @@ let usage = {|usage: fuzz [options]
   --shrink-seconds N  wall clock a single shrink may spend (default 45)
   --edits N         at most N mutations per input (default 6)
   --corpus DIR      a directory of .wand files (repeatable; defaults to
-                    stdlib/, test/wand/ and examples/)
+                    stdlib/, test/wand/, examples/, demos/ and tools/)
   --out DIR         where reproducers are written (default _fuzz-findings/)
   --known FILE      signatures not to fail on (default test/fuzz/known.txt)
   --input FILE      check one file and exit, no mutation
@@ -258,7 +258,8 @@ let () =
   if !out = "" then out := at "_fuzz-findings";
   if !known_path = "" then known_path := at "test/fuzz/known.txt";
   if !corpus = [] then
-    corpus := [at "stdlib"; at "test/wand"; at "examples"];
+    corpus :=
+      [at "stdlib"; at "test/wand"; at "examples"; at "demos"; at "tools"];
 
   (* One file checked and nothing mutated: how a reproducer is re-run, and
      how the regression fixtures are checked. *)

@@ -1,0 +1,11 @@
+-- Fixture for test_interfaces.wand: the module that declares the
+-- interfaces. It writes them bare, having nothing to qualify them with;
+-- every other file reaches them through the name it bound for this module.
+interface Ranked 'a(top: 'a -> 'a -> 'a, bottom: 'a -> 'a -> 'a)
+
+-- No type parameter, and a member that performs nothing.
+interface Named(label: Unit -> String)
+
+-- An effect variable an argument names, which is the higher-order shape
+-- the caller settles.
+interface Mapper(each: (Int -> Int ! 'e) -> List Int -> List Int ! 'e)
