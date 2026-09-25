@@ -1,0 +1,16 @@
+found:     Daily Fuzz, seed 36198298267, iteration 385062, 2026-09-25
+reported:  format:unparses:expected ->, got Ident(k) (did you mean _?)
+fixed in:  lib/formatter.ml, the `Handle` case's `emit_arm`
+
+A handler arm reads its pattern as an atom. An operation's argument is
+followed by the continuation name, and `return`'s pattern by the `->`, so
+neither can take a constructor pattern without brackets. The formatter
+printed both with `emit_pat`, which writes a constructor application bare.
+
+`| S!i (O _) k ->` came back as `| S!i O _ k ->`, which takes `O` for the
+argument and `_` for the continuation, and then finds `k` where the `->`
+belongs. `| return (Some y) ->` fails the same way, one arm later.
+
+Both arms now print with `emit_pat_atom`, the printer that matches the
+parser's `pat_atom_`. It is the same pairing that already holds for a
+function parameter.

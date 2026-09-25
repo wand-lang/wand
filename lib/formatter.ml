@@ -1386,12 +1386,15 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
     (* Same stepping rule as emit_match: arms of a `handle` that starts
        mid-line indent past the line that introduced it. *)
     let arm_indent = if col > indent then indent + 2 else indent in
+    (* Both arms read their pattern with `pat_atom_`: the operation's
+       argument is followed by the continuation name, and `return`'s by the
+       `->`. Found by test/fuzz. *)
     let emit_arm = function
       | EffectCase (op, p, k, b) ->
-        Doc.text (Printf.sprintf "| %s %s %s -> " op (emit_pat p) k)
+        Doc.text (Printf.sprintf "| %s %s %s -> " op (emit_pat_atom p) k)
         ^^ emit_case_body arm_indent b
       | ReturnCase (p, b) ->
-        Doc.text (Printf.sprintf "| return %s -> " (emit_pat p))
+        Doc.text (Printf.sprintf "| return %s -> " (emit_pat_atom p))
         ^^ emit_case_body arm_indent b
     in
     (* `with` has to follow the body, so a body that wrapped puts the

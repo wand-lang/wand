@@ -1,0 +1,4 @@
+let run x =
+  handle x with
+  | S!i (O _) k -> k 1
+  | return (Some y) -> y

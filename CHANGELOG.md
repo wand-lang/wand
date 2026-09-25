@@ -109,6 +109,22 @@
       a + b
   ```
 
+- **`wand f` dropped the brackets around a handler arm's pattern.** A
+  handler arm reads its pattern as a single item: an operation's argument is
+  followed by the name of the continuation, and `return`'s pattern by the
+  `->`. A constructor pattern printed without its brackets ran into the
+  name beside it, and the file no longer parsed.
+
+  ```
+  handle work () with
+  | Store!get (Key k) resume -> resume (lookup k)
+  | return (Some x) -> x
+
+  -- before    wand f wrote `| Store!get Key k resume ->` and
+  --           `| return Some x ->`, neither of which parses
+  -- now       the brackets stay
+  ```
+
 ## [0.80.6] - 2026-09-21
 
 ### Fixed
