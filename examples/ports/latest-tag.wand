@@ -48,8 +48,7 @@ let versions tags =
 
 let newest vs = List.fold_left Version.max 0.0.0 vs
 
-let main! () = (
-  let all = versions (tags! ());
+let report all =
   match all with
   | [] -> (IO.println_err "no release tags"; Proc.exit 1)
   | _ -> (
@@ -60,6 +59,5 @@ let main! () = (
     if Version.stable? top then IO.println "the latest tag is a release"
     else IO.println "the latest tag is a prerelease"
   )
-)
 
-main! ()
+report (versions (tags! ()))

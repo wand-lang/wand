@@ -37,6 +37,9 @@ let report limit host port =
   | Ok _ -> IO.println "%{host}%{port} answered"
   | Error why -> (IO.println_err "%{host}%{port}: %{why}"; Proc.exit 1)
 
+-- The waiting is in `main`: `test/wand/test_ports.wand` imports this file,
+-- and an import runs a file's bindings but not its bare expressions, so
+-- importing it waits for nothing.
 let main () = report 30s "localhost" :8080
 
 main ()

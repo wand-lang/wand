@@ -41,6 +41,9 @@ let report floor r =
 
 let read path = JSON.read_file path |> Result.and_then (JSON.decode Release.decoder)
 
+-- The manifest is read in `main`: `test/wand/test_ports.wand` imports this
+-- file, and an import runs a file's bindings but not its bare expressions,
+-- so importing it touches no disk.
 let main () =
   match read ./release.json with
   | Error why -> (IO.println_err "release.json: %{why}"; Proc.exit 1)

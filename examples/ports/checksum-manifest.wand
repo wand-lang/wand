@@ -77,6 +77,4 @@ let report manifest = (
   )
 )
 
-let main () = report ./dist/SHASUMS
-
-main ()
+report ./dist/SHASUMS

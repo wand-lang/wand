@@ -39,6 +39,8 @@ let report full =
   | [] -> IO.println "every filesystem is under 90%"
   | _ -> full |> List.each (fn (mount, percent) -> IO.println "%{percent}%\t%{mount}")
 
+-- Reached when this file is run and not when it is imported, which is what
+-- the note at the top is about.
 let main! () = report (over 90 (String.lines $(df -P)))
 
 main! ()

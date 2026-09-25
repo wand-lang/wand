@@ -47,6 +47,9 @@ let render (o: Opts) =
 
 let usage = "usage: probe-args %{Opts.usage}"
 
+-- argv is read in `main`: `test/wand/test_ports.wand` imports this file,
+-- and an import runs a file's bindings but not its bare expressions, so a
+-- test sees the test runner's arguments only if it asks for them.
 let main () =
   if Args.help? (Proc.args ()) then IO.println usage
   else match Args.read Opts.parser (Proc.args ()) with

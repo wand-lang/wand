@@ -45,6 +45,9 @@ let stage! dir = (
 -- `FS.lock` is the operating system's lock on an open file, so a second run
 -- is told the lock is held rather than writing over it. A lock file written
 -- with `write_file!` is not a lock: both runs write it and both proceed.
+-- The lock and the copies are in `main!`: `test/wand/test_ports.wand`
+-- imports this file, and an import runs a file's bindings but not its bare
+-- expressions, so importing it takes no lock.
 let main! () =
   with FS.temp_dir "release_" as dir ->
   with FS.lock ./release.lock as taken ->

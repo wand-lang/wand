@@ -59,6 +59,9 @@ let read out = JSON.parse out |> Result.and_then (JSON.decode Health.decoder)
 
 let report (h: Health) = IO.println "%{h.status}, version %{h.version}"
 
+-- The request is made in `main!`: `test/wand/test_ports.wand` imports this
+-- file, and an import runs a file's bindings but not its bare expressions,
+-- so importing it reaches no host.
 let main! () =
   match Env.get "TOKEN" with
   | None -> (IO.println_err "TOKEN is not set"; Proc.exit 1)

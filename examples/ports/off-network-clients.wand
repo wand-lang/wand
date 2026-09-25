@@ -49,12 +49,7 @@ let tally! log =
     0
   )
 
-let main! () = (
-  let (in_, out) = tally! ./access.log;
-  IO.println "%{in_} from our networks, %{out} from elsewhere";
-  ours
-  |> List.each (fn net ->
-    IO.println "  %{CIDR.to_string net} holds %{CIDR.count net} addresses")
-)
-
-main! ()
+let (in_, out) = tally! ./access.log
+IO.println "%{in_} from our networks, %{out} from elsewhere"
+ours
+|> List.each (fn net -> IO.println "  %{CIDR.to_string net} holds %{CIDR.count net} addresses")

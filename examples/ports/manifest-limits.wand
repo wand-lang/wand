@@ -74,6 +74,4 @@ let report! path = (
   | _ -> (bad |> List.each (fn name -> IO.println_err "  %{name}"); Proc.exit 1)
 )
 
-let main! () = report! ./deploy.yaml
-
-main! ()
+report! ./deploy.yaml

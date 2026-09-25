@@ -31,12 +31,11 @@ let sample n xs = Random.shuffle xs |> List.take n
 -- sample is the point rather than the comparison.
 let repeatable seed = Random.seed seed
 
-let main! () = (
-  repeatable 20260925;
-  let all = lines! ./access.log;
-  let taken = sample 100 all;
+let report n all = (
+  let taken = sample n all;
   IO.println "%{List.length taken} of %{List.length all}";
   taken |> List.each IO.println
 )
 
-main! ()
+repeatable 20260925
+report 100 (lines! ./access.log)

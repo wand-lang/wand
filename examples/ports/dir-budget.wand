@@ -42,6 +42,4 @@ let check budget dir = (
     (IO.println_err "over budget by %{Size.format (total - budget)}"; Proc.exit 1)
 )
 
-let main () = check 500MB ./stdlib
-
-main ()
+check 500MB ./stdlib

@@ -42,6 +42,4 @@ let report limit dir = (
   |> List.each (fn (p, size) -> IO.println "%{Size.format size}\t%{Path.to_string p}")
 )
 
-let main () = report 4KB ./stdlib
-
-main ()
+report 4KB ./stdlib

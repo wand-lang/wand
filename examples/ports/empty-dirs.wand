@@ -38,6 +38,4 @@ let report root = (
   | _ -> found |> List.each (fn d -> IO.println (Path.to_string d))
 )
 
-let main () = report ./examples
-
-main ()
+report ./examples

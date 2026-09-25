@@ -65,6 +65,9 @@ let backup_name now = Path.of_string "backup-%{now}.tgz"
 let listing! dir =
   FS.list_dir! dir |> List.filter ours? |> List.map (fn p -> (p, FS.mtime! p))
 
+-- The write and the deletes are in `main!`: `test/wand/test_ports.wand`
+-- imports this file, and an import runs a file's bindings but not its bare
+-- expressions, so importing it rotates nothing.
 let main! () = (
   let dir = ./backups;
   let now = Clock.now ();

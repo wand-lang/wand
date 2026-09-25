@@ -56,11 +56,8 @@ let publish! () = (
 -- The lock is the operating system's, so a run killed mid-publish leaves
 -- nothing for the next one to reason about. There is no stale lock to
 -- break.
-let main! () =
-  with FS.lock guard as taken ->
-  match taken with
-  | Ok _ -> publish! ()
-  | Error (FS.Held) -> IO.println "another publish is running"
-  | Error (FS.Denied why) -> (IO.println_err "cannot take %{guard}: %{why}"; Proc.exit 1)
-
-main! ()
+with FS.lock guard as taken ->
+match taken with
+| Ok _ -> publish! ()
+| Error (FS.Held) -> IO.println "another publish is running"
+| Error (FS.Denied why) -> (IO.println_err "cannot take %{guard}: %{why}"; Proc.exit 1)

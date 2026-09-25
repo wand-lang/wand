@@ -97,6 +97,9 @@ let apply () = [
 let outcomes steps results =
   List.zip steps results |> List.map (fn (step, r) -> (step, outcome step r))
 
+-- The steps run in `main`: `test/wand/test_ports.wand` imports this file,
+-- and an import runs a file's bindings but not its bare expressions, so
+-- importing it provisions nothing.
 let main () = (
   let results = outcomes steps (apply ());
   results |> List.each (fn (step, o) -> IO.println (line step o));

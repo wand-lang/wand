@@ -48,10 +48,7 @@ let release! file = FS.delete! file
 
 let lock = Resource.make take! release!
 
-let main! () =
-  with lock as file -> (
-    IO.println "holding %{Path.to_string file}";
-    IO.println $(./import.sh)
-  )
-
-main! ()
+with lock as file -> (
+  IO.println "holding %{Path.to_string file}";
+  IO.println $(./import.sh)
+)

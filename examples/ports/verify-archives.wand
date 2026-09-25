@@ -75,6 +75,9 @@ let report! limit dir = (
   )
 )
 
+-- The checks run in `main!`: `test/wand/test_ports.wand` imports this file,
+-- and an import runs a file's bindings but not its bare expressions, so
+-- importing it spawns nothing.
 let main! () = report! 4 ./dist
 
 main! ()

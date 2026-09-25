@@ -46,17 +46,13 @@ let remove! (now: DateTime) (touched: DateTime) file = (
   FS.delete! file
 )
 
-let main! () = (
-  let age = 30d;
-  let pattern = *.tar.gz;
-  let found = stale age pattern ./build;
-  match found with
+let sweep! age pattern dir =
+  match stale age pattern dir with
   | [] -> IO.println "no %{Glob.to_string pattern} older than %{Duration.format age}"
-  | _ -> (
+  | found -> (
     let now = Clock.now ();
     found |> List.each (fn (file, touched) -> remove! now touched file);
     IO.println "%{List.length found} removed"
   )
-)
 
-main! ()
+sweep! 30d *.tar.gz ./build

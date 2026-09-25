@@ -40,9 +40,6 @@ let report path name =
     | [header :: body] -> column name header
     |> Result.map (fn i -> tally (List.tally (values i body))))
 
-let main () =
-  match report ./inventory.csv "owner" with
-  | Error why -> (IO.println_err why; Proc.exit 1)
-  | Ok counts -> counts |> List.each (fn (value, n) -> IO.println "%{n}\t%{value}")
-
-main ()
+match report ./inventory.csv "owner" with
+| Error why -> (IO.println_err why; Proc.exit 1)
+| Ok counts -> counts |> List.each (fn (value, n) -> IO.println "%{n}\t%{value}")

@@ -41,6 +41,9 @@ let check names =
   | [] -> IO.println "%{List.length names} variables, all set"
   | found -> (found |> List.each (fn gap -> IO.println_err (describe gap)); Proc.exit 1)
 
+-- The variables are read in `main`: `test/wand/test_ports.wand` imports
+-- this file, and an import runs a file's bindings but not its bare
+-- expressions, so nothing is read until this is called.
 let main () = check ["DATABASE_URL", "API_TOKEN", "DEPLOY_ENV"]
 
 main ()
