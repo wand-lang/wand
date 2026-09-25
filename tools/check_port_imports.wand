@@ -86,21 +86,25 @@ let faults! name =
   let missing =
     if has_entry_point? text then []
     else [
-      Fault(port = name, why = "no `main`, so an import runs whatever is at the top level")
+      Fault(
+        port = name,
+        why = "no entry point: the work sits at the top level, one binding away from running on import"
+      )
     ];
   let reached =
     offending! text
     |> List.map (fn (line, _) ->
-      Fault(port = name, why = "line %{line}: a top-level binding reaches the world"));
+      Fault(port = name, why = "line %{line}: this binding runs on import"));
   List.concat missing reached
 
 let report faults = (
-  IO.println_err "a port test_ports.wand imports runs work when it is imported:";
+  IO.println_err
+    "test_ports.wand imports these ports, and an import runs a file's bindings:";
   faults
   |> List.each (fn (f: Fault) -> IO.println_err "  examples/ports/%{f.port}.wand: %{f.why}");
   IO.println_err "";
-  IO.println_err "put the work behind `main` and call it in a bare expression;";
-  IO.println_err "an import runs a file's bindings and not its bare expressions.";
+  IO.println_err "put the work behind `main` and call it: a call is a bare";
+  IO.println_err "expression, and an import does not run those.";
   Proc.exit 1
 )
 
