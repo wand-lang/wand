@@ -135,6 +135,10 @@ So the runtime decides, from what an item does:
   with the other fibers. Split it into a pure `Par` call and an effect
   step to get the parallelism back.
 
+`--trace` lists effects only; where an item runs is not shown. An item
+that only computes prints nothing, and one that touches the world prints
+what it did.
+
 No effect is ever performed off the calling domain, so the core guarantee
 holds, and a helper that wraps `Par` loses nothing to open effects.
 
