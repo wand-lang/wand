@@ -34,7 +34,7 @@ let read_source () =
 (* A top-level entry in the builtin table: two spaces, then ("name",. Nested
    tuples sit deeper than that, so the anchor picks out exactly the entries. *)
 let entry_re  = Re.Pcre.re ~flags:[`MULTILINE] {|^  \("([a-z_0-9]+)",|}
-let perform_re = Re.Pcre.re {|WandEffect \("([^"]+)"|}
+let perform_re = Re.Pcre.re {|(?:WandEffect|perform_wand) \("([^"]+)"|}
 let performing_re = Re.Pcre.re {|performing "([^"]+)"|}
 
 let compile = Re.compile

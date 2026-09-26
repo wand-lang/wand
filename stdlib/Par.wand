@@ -14,13 +14,15 @@ import Result
 -- there is no unstructured concurrency to build out of them, and no
 -- function needs a different colour for being called from one.
 --
--- A worker is never outside a handler's reach. With nothing watching it
--- performs its own effects on its own domain, so twenty slow commands
--- really do overlap. With a handler in scope -- a mock, `--dry-run`,
--- `--trace` -- effects are carried back to the calling domain and taken one
--- at a time, because an effect cannot reach a handler on another domain.
--- So a test can never be bypassed by moving work into `Par`: being watched
--- costs the overlap, and nothing rehearses for speed.
+-- At the same time; in parallel when the work is pure. Every item starts
+-- on a pool of domains, one for each core. At its first effect, the rest
+-- of the item runs on the calling domain as a lightweight task, and tasks
+-- wait side by side: twenty slow commands overlap.
+--
+-- A worker is never outside a handler's reach. Every effect runs on the
+-- calling domain, inside the handlers the call is inside, so a mock,
+-- `--dry-run` and `--trace` see all of them, and a test can never be
+-- bypassed by moving work into `Par`.
 
 -- Apply `f` to every element, at most `limit` at a time, and collect the
 -- results in the list's own order. An element whose work raises comes back
@@ -65,16 +67,8 @@ let each limit f xs = par_each limit f xs
 -- quiet. A loser blocked in a subprocess finishes that subprocess; wrap it
 -- in `Shell.timeout` to bound that too.
 --
--- Refused inside a handler. An effect cannot reach a handler on another
--- domain, so the branches cannot run where they were written: the race
--- would answer with its first thunk and say nothing. Move the handler
--- inside each thunk:
---
--- Par.race [fn () -> with_shell mocks (fn () -> probe a),
---           fn () -> with_shell mocks (fn () -> probe b)]
---
--- A rehearsal and a trace still run it, left-biased: each reports what the
--- work would do, and the collapse costs the report nothing.
+-- Inside a handler every branch runs, and the handler answers the effects
+-- of each.
 --
 -- The first to finish wins, whether it succeeded or not.
 --
@@ -97,14 +91,14 @@ let race thunks = par_race thunks
 -- A `thunk` that raises comes back as `Error` too, as it does under
 -- `race`.
 --
--- Refused inside a handler, for the reason a race is: the sleeper is a
--- branch, and a branch cannot run where the handler is, so the deadline
--- would never fire. Put the handler inside the thunk instead:
+-- Refused under a handler for `Clock.sleep`, such as `Test.with_clock`:
+-- there the sleeper takes no time, and the deadline would pass before any
+-- real work finished. Put that handler inside the thunk instead:
 --
--- Par.timeout 200ms (fn () -> Test.with_shell mocks (fn () -> work ()))
+-- Par.timeout 200ms (fn () -> Test.with_clock (fn () -> work ()))
 --
--- The mock still stands and the deadline still fires. The wait is real,
--- so give it a length you are willing to wait for.
+-- Under any other handler the deadline stands. The wait is real, so give
+-- it a length you are willing to wait for.
 --
 -- >> Par.timeout 5s (fn () -> 1 + 1)
 -- Ok(2) : Result String Int

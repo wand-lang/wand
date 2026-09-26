@@ -6,6 +6,7 @@ import Clock
 import Par
 import List
 import Map
+import Result
 import FS
 import Path
 import String
@@ -99,4 +100,38 @@ test "only one worker takes a lock" (fn t -> (
   let outcomes = Par.map 4 attempt ["a", "b", "c", "d"];
   FS.delete_tree! (Path.of_string dir);
   t.eq 1 (List.length (List.filter (fn r -> r == Ok "took") outcomes))
+))
+
+-- ── Work with effects waits side by side ────────────────────────────────
+
+-- An item that performs an effect runs on the calling domain from then
+-- on, so a limit is not bounded by how many threads the machine has.
+test "a limit past the number of cores" (fn t ->
+  let (took, out) =
+    Clock.timed (fn () -> Par.map 300 (fn _ -> Clock.sleep 300ms) (List.range 1 300));
+  t.eq (300, true) (List.length (List.filter Result.ok? out), took < 3s))
+
+-- Under a handler each item's effects still reach it, and the waits still
+-- overlap rather than taking turns.
+test "waits overlap under a handler" (fn t ->
+  let (took, out) =
+    Clock.timed (fn () ->
+      Test.with_shell [("git", "mocked")] (fn () ->
+        Par.map 10 (fn _ -> (Clock.sleep 300ms; $(git describe))) (List.range 1 10)));
+  t.eq (List.map (fn _ -> Ok "mocked") (List.range 1 10), true) (out, took < 2s))
+
+-- Two workers on one domain are two holders: the second waits for the
+-- first to let go rather than being told it holds the lock already.
+test "a waiting worker takes the lock once it is free" (fn t -> (
+  let dir = with FS.temp_file "wand_par_wait_" "" as p -> Path.to_string p;
+  FS.mkdir! (Path.of_string dir);
+  let guard = Path.of_string "%{dir}/one.lock";
+  let attempt =
+    (fn _ -> with FS.lock_wait 3s guard as taken ->
+     match taken with
+     | Ok _ -> (Clock.sleep 150ms; "took")
+     | Error _ -> "held");
+  let outcomes = Par.map 2 attempt ["a", "b"];
+  FS.delete_tree! (Path.of_string dir);
+  t.eq [Ok "took", Ok "took"] outcomes
 ))

@@ -218,8 +218,8 @@ group "http-retry" (fn () -> [
 ])
 
 -- The deadline is real, so the durations are short. It cannot be virtual:
--- the sleeper is a branch of a race, and a race inside a handler is
--- refused. The probe is a thunk, so no socket is opened here.
+-- under a mocked clock the sleeper takes no time, so `Par.timeout` refuses
+-- one. The probe is a thunk, so no socket is opened here.
 group "wait-for-port" (fn () -> [
   test "a probe that answers returns at once" (fn t ->
     t.eq (Ok true) (wait_for 200ms 50ms (fn () -> true))),

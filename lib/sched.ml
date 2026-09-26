@@ -116,14 +116,18 @@ let take_interrupt s =
     true
   end else false
 
-let idle s =
+(* Move the waiters whose wait is over to the run queue. [block] says
+   whether to wait for one when none is. *)
+let check_waiting s ~block =
   if not (take_interrupt s) then begin
     let all = union (List.map fst s.waiting) in
     (* A scheduler inside a fiber waits by suspending that fiber. *)
     let ready =
-      match s.parent with
-      | Some _ -> suspend all; ready_fds all 0
-      | None -> ready_fds all (timeout_of all.until)
+      if not block then
+        (if all.reads = [] && all.writes = [] then [] else ready_fds all 0)
+      else match s.parent with
+        | Some _ -> suspend all; ready_fds all 0
+        | None -> ready_fds all (timeout_of all.until)
     in
     if not (take_interrupt s) then begin
       let now = elapsed_ms () in
@@ -136,12 +140,13 @@ let idle s =
     end
   end
 
-(* Run [bodies] as fibers and return when every one has finished. [save]
-   reads the running code's fiber-local state and [restore] installs one;
-   [states.(i)] is fiber [i]'s at its start. The first exception a body
-   raises is raised again once all have finished. *)
-let run ~(save : unit -> 's) ~(restore : 's -> unit)
-    (states : 's array) (bodies : (unit -> unit) array) =
+(* Run fibers until every one has finished. [save] reads the running
+   code's fiber-local state and [restore] installs one. [start] is given
+   [spawn st body], which adds a fiber starting from state [st]; a fiber may
+   call it too. The first exception a body raises is raised again once all
+   have finished. *)
+let run_with ~(save : unit -> 's) ~(restore : 's -> unit)
+    (start : ('s -> (unit -> unit) -> unit) -> unit) =
   let parent = Domain.DLS.get current in
   let s = { runq = Queue.create (); waiting = []; live = 0; failure = None;
             interrupt_seen = false; parent } in
@@ -177,19 +182,37 @@ let run ~(save : unit -> 's) ~(restore : 's -> unit)
               (w, fun () -> enter st; Effect.Deep.continue k ()) :: s.waiting)
         | _ -> None }
   in
-  Array.iteri (fun i body ->
+  let spawn st body =
     s.live <- s.live + 1;
     Queue.push (fun () ->
-      enter states.(i);
-      Effect.Deep.match_with body () handler) s.runq) bodies;
+      enter st;
+      Effect.Deep.match_with body () handler) s.runq
+  in
+  start spawn;
+  (* While fibers are runnable, waiters are looked at once a millisecond,
+     so a fiber that computes does not starve one whose wait is over. *)
+  let next_look = ref 0 in
   let rec loop () =
     match Queue.take_opt s.runq with
-    | Some f -> f (); loop ()
-    | None -> if s.live > 0 then (idle s; loop ())
+    | Some f ->
+      if s.waiting <> [] then begin
+        let now = elapsed_ms () in
+        if now >= !next_look then begin
+          next_look := now + 1;
+          check_waiting s ~block:false
+        end
+      end;
+      f (); loop ()
+    | None -> if s.live > 0 then (check_waiting s ~block:true; loop ())
   in
   Fun.protect ~finally:(fun () ->
     restore owner; Domain.DLS.set current parent) loop;
   match s.failure with Some e -> raise e | None -> ()
+
+(* [bodies] as fibers, [states.(i)] fiber [i]'s state at its start. *)
+let run ~save ~restore states bodies =
+  run_with ~save ~restore (fun spawn ->
+    Array.iteri (fun i body -> spawn states.(i) body) bodies)
 
 (* Wait about [ms]: a fiber suspends, anything else sleeps. May return
    early; callers look again. *)
@@ -226,3 +249,14 @@ let select reads writes timeout_ms =
       if List.mem fds.(i) writes then wr := fds.(i) :: !wr
     end) ready;
   (!r, !wr)
+
+(* Which scheduler the running code is in, for code that runs on a
+   handler's stack on behalf of a fiber. *)
+type place = t option
+let place () : place = Domain.DLS.get current
+let enter_place (p : place) = Domain.DLS.set current p
+let same_place (a : place) (b : place) =
+  match a, b with
+  | None, None -> true
+  | Some x, Some y -> x == y
+  | _ -> false

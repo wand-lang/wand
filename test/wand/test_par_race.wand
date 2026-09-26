@@ -55,16 +55,15 @@ test "a cancelled loser releases" (fn t ->
     t.eq false (FS.exists? held)
   ))
 
--- A branch cannot run where the handler is, so a race inside one would
--- answer with its first thunk and say nothing. Refused instead, whatever
--- the handler has to do with the work.
-test "a race inside a handler is refused" (fn t ->
-  t.raises (fn () ->
-    Test.with_shell [("anything", "x")] (fn () ->
-      Par.race [fn () -> "first", fn () -> "second"])))
+-- Every branch performs its effects where the race was written, so a
+-- handler around the race answers each of them, and the race still runs.
+test "a race inside a handler runs every branch" (fn t ->
+  t.eq
+    (Ok "mocked")
+    (Test.with_shell [("git", "mocked")] (fn () ->
+      Par.race [fn () -> (Clock.sleep 5s; "slept"), fn () -> $(git describe)])))
 
--- The handler belongs inside each thunk, where it stands for that branch
--- and the race still runs.
+-- A handler inside a thunk stands for that branch alone.
 test "a handler inside each thunk stands" (fn t ->
   t.eq
     (Ok "mocked")
@@ -76,8 +75,8 @@ test "a handler inside each thunk stands" (fn t ->
 -- ── A deadline on wand code ─────────────────────────────────────────────
 
 -- `Par.timeout` is a race between the work and a sleeper. The durations
--- here are short, because the wait is real: a deadline under a handler is
--- refused, for the reason the last test in this group states.
+-- here are short, because the wait is real: a deadline under a mocked
+-- clock is refused, for the reason the last tests in this group state.
 
 group "Par.timeout" (fn () -> [
   test "work that finishes in time" (fn t ->
@@ -90,13 +89,12 @@ group "Par.timeout" (fn () -> [
     match Par.timeout 5s (fn () -> $(sh -c 'exit 5')) with
     | Ok v -> t.fail "expected an Error, got %{v}"
     | Error why -> t.ok (String.contains? "code 5" why)),
-  -- The sleeper is a branch, so a deadline inside a handler never fires.
-  -- Work that only the deadline would have stopped then runs forever, which
-  -- is a test suite hanging with no message. Refused instead.
-  test "a deadline under a handler is refused" (fn t ->
+  -- Under a handler for `Clock.sleep` the sleeper takes no time, so the
+  -- deadline would pass before any real work finished. Refused instead.
+  test "a deadline under a mocked clock is refused" (fn t ->
     t.raises (fn () -> Test.with_clock (fn () -> Par.timeout 5s (fn () -> Clock.sleep 1s)))),
-  test "and under a handler that has nothing to do with clocks" (fn t ->
-    t.raises (fn () -> Test.with_shell [] (fn () -> Par.timeout 5s (fn () -> 1))))
+  test "and under any other handler it stands" (fn t ->
+    t.eq (Ok 1) (Test.with_shell [] (fn () -> Par.timeout 5s (fn () -> 1))))
 ])
 
 -- Work that is stopped gives back what it holds, as a losing racer does.

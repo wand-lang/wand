@@ -870,6 +870,14 @@ let regex_repeat_error pat =
 
 type _ Effect.t += WandEffect : string * value -> value Effect.t
 
+(* A handler that must not do the work where it stands -- on its own stack,
+   for a fiber that is waiting -- answers with the work, and the fiber does
+   it at the perform. *)
+exception Perform_here of (unit -> value)
+
+let perform_wand (name, v) =
+  try Effect.perform (WandEffect (name, v)) with Perform_here f -> f ()
+
 (* The Shell allowlist of the $()/$?() site currently being performed --
    the manifest bound of the file the site was written in, carried to the
    default handler out of band so the effect payload wand handlers match on
@@ -941,7 +949,7 @@ let perform_shell name allow payload =
   Domain.DLS.set ambient_shell_allow allow;
   Fun.protect
     ~finally:(fun () -> Domain.DLS.set ambient_shell_allow saved)
-    (fun () -> Effect.perform (WandEffect (name, payload)))
+    (fun () -> perform_wand (name, payload))
 
 (* Raised into a handled body that a handler case answered without resuming,
    so the body unwinds and releases whatever it was holding. Private, and
@@ -1020,11 +1028,28 @@ type loc_cell =
        reads as a line of the reader's own file and sends them to the wrong
        place entirely. *)
     mutable at_file : string;
-    mutable depth : int }
+    mutable depth : int;
+    (* Steps left before a fiber yields. *)
+    mutable budget : int;
+    (* Which task this is, for what a task holds: a lock. *)
+    task : int;
+    (* Every step writes a cell, and domains run side by side, so no two
+       cells may share a cache line: 128 bytes on Apple silicon. *)
+    q0 : int; q1 : int; q2 : int; q3 : int; q4 : int; q5 : int; q6 : int;
+    q7 : int; q8 : int; q9 : int; q10 : int; q11 : int; q12 : int;
+    q13 : int; q14 : int; q15 : int }
+
+let tasks = Atomic.make 0
+
+let new_loc_cell budget =
+  { at_line = 0; at_col = 0; at_file = ""; depth = 0; budget;
+    task = Atomic.fetch_and_add tasks 1;
+    q0 = 0; q1 = 0; q2 = 0; q3 = 0; q4 = 0; q5 = 0; q6 = 0; q7 = 0; q8 = 0;
+    q9 = 0; q10 = 0; q11 = 0; q12 = 0; q13 = 0; q14 = 0; q15 = 0 }
 
 let current_loc : loc_cell Domain.DLS.key =
   Domain.DLS.new_key (fun () ->
-    { at_line = 0; at_col = 0; at_file = ""; depth = 0 })
+    new_loc_cell 0)
 
 (* A call left with work to do after it returns keeps a frame; one in tail
    position does not. So this bounds `apply` and never `apply_tail`, and a
@@ -1136,10 +1161,9 @@ let cancelled : bool ref Domain.DLS.key = Domain.DLS.new_key (fun () -> ref fals
 
 let cancel_this_domain flag = Domain.DLS.set cancelled flag
 
-(* Races and fiber schedulers currently running. Nothing but a race cancels
-   a domain or a fiber, and only a scheduler asks the checkpoint to yield, so
-   while this is zero the checkpoint has nothing to find. Counted rather than
-   flagged, because a thunk in a race may itself race. *)
+(* Races currently running. Nothing but a race cancels a domain or a fiber,
+   so while this is zero the checkpoint has nothing to find. Counted rather
+   than flagged, because a thunk in a race may itself race. *)
 let checks_wanted = Atomic.make 0
 
 let with_race_running f =
@@ -1167,8 +1191,8 @@ let check_interrupt_now () =
    Both reasons to stop are announced globally before any domain can see
    them, so two atomic loads decide it. Whatever they cannot rule out is
    left to the full check, which is unchanged. *)
-(* Fiber schedulers running on any domain. While one is, the checkpoint
-   also counts steps and yields every [yield_every]. *)
+(* Fiber schedulers running on any domain. While one is, a fiber yields
+   every [yield_every] positions it passes. *)
 let fibers_running = Atomic.make 0
 
 let yield_every =
@@ -1178,28 +1202,25 @@ let yield_every =
                | _ -> 1000)
   | None -> 1000
 
-let yield_budget = ref yield_every
-
-let check_fiber () =
-  decr yield_budget;
-  if !yield_budget <= 0 then begin
-    yield_budget := yield_every;
-    Sched.yield ()
-  end
+let fiber_turn (c : loc_cell) =
+  c.budget <- yield_every;
+  if Atomic.get fibers_running <> 0 then Sched.yield ()
 
 let check_interrupt () =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0 then
-  begin
-    check_interrupt_now ();
-    if Atomic.get fibers_running <> 0 then check_fiber ()
-  end
+    check_interrupt_now ()
 
 let () = Sched.interrupt_pending := (fun () ->
   Atomic.get interrupt_requested <> 0)
 
 (* What a fiber carries of its own: every per-task value above. The regex
    cache stays per domain. *)
+(* Whether the running code is a `Par` item still on a pool domain, where
+   an effect is not performed but moves the item to the calling domain. *)
+let on_pool : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> false)
+
 type fiber_state = {
+  f_on_pool : bool;
   f_shell_allow : string list option;
   f_net_allow : string list option;
   f_file_net : string list option;
@@ -1211,6 +1232,7 @@ type fiber_state = {
 }
 
 let save_fiber () = {
+  f_on_pool = Domain.DLS.get on_pool;
   f_shell_allow = Domain.DLS.get ambient_shell_allow;
   f_net_allow = Domain.DLS.get ambient_net_allow;
   f_file_net = Domain.DLS.get ambient_file_net;
@@ -1222,6 +1244,7 @@ let save_fiber () = {
 }
 
 let restore_fiber st =
+  Domain.DLS.set on_pool st.f_on_pool;
   Domain.DLS.set ambient_shell_allow st.f_shell_allow;
   Domain.DLS.set ambient_net_allow st.f_net_allow;
   Domain.DLS.set ambient_file_net st.f_file_net;
@@ -1234,28 +1257,27 @@ let restore_fiber st =
 (* A fiber starts as a `Par` worker on a new domain does: the calling
    file's net bound, and nothing else. *)
 let fresh_fiber ?(cancel = ref false) () = {
+  f_on_pool = false;
   f_shell_allow = None;
   f_net_allow = None;
   f_file_net = Domain.DLS.get ambient_file_net;
   f_deadline = None;
-  f_loc = { at_line = 0; at_col = 0; at_file = ""; depth = 0 };
+  f_loc = new_loc_cell yield_every;
   f_cancelled = cancel;
   f_taken = ref false;
   f_deferred = ref 0;
 }
 
-(* Run [bodies] as fibers on this domain; return when all have finished. *)
-let run_fibers ?cancels (bodies : (unit -> unit) array) =
-  let states = Array.mapi (fun i _ ->
-    match cancels with
-    | Some c -> fresh_fiber ~cancel:c.(i) ()
-    | None -> fresh_fiber ()) bodies in
+(* Run fibers on this domain; return when all have finished. [start] is
+   given the function that adds one. *)
+let run_fibers_with start =
   Atomic.incr fibers_running;
-  Atomic.incr checks_wanted;
-  Fun.protect
-    ~finally:(fun () ->
-      Atomic.decr checks_wanted; Atomic.decr fibers_running) (fun () ->
-    Sched.run ~save:save_fiber ~restore:restore_fiber states bodies)
+  Fun.protect ~finally:(fun () -> Atomic.decr fibers_running) (fun () ->
+    Sched.run_with ~save:save_fiber ~restore:restore_fiber start)
+
+let run_fibers (bodies : (unit -> unit) array) =
+  run_fibers_with (fun spawn ->
+    Array.iter (fun body -> spawn (fresh_fiber ()) body) bodies)
 
 (* Structural comparison that a script can catch. OCaml's `=` and `compare`
    raise Invalid_argument when they reach a closure, and a value may carry one
@@ -1724,15 +1746,15 @@ let observed f =
   ignore (Atomic.fetch_and_add observers 1);
   Fun.protect ~finally:(fun () -> ignore (Atomic.fetch_and_add observers (-1))) f
 
-(* The observers that are a `handle` written in wand, which is the subset a
-   rehearsal and a trace are not. `Par.timeout` consults this: a rehearsal
-   collapsing a race still reports what the work would do, where a handler
-   collapsing it takes the deadline away and says nothing. *)
-let handlers = Atomic.make 0
+(* The handlers in scope that answer `Clock!sleep`. Under one, a sleep takes
+   no time, so a deadline would pass at once. *)
+let clock_handlers = Atomic.make 0
 
-let handled f =
-  ignore (Atomic.fetch_and_add handlers 1);
-  Fun.protect ~finally:(fun () -> ignore (Atomic.fetch_and_add handlers (-1))) f
+let clock_handled cases f =
+  if List.exists (fun (n, _, _, _) -> n = "Clock!sleep") cases then begin
+    Atomic.incr clock_handlers;
+    Fun.protect ~finally:(fun () -> Atomic.decr clock_handlers) f
+  end else f ()
 
 (* Installs the runtime's own handlers. Set by the runner, which owns them. *)
 let with_default_handler : ((unit -> value) -> value) ref = ref (fun f -> f ())
@@ -2343,7 +2365,33 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
       | Some (Ast.ReturnCase (p, b)) -> eval (bind_pat p v env) b
       | Some (Ast.EffectCase _) -> assert false
     in
-    observed (fun () -> handled (fun () ->
+    (* A case runs on this handler's stack. For an effect from a fiber that
+       started inside the body, it runs with the state the handler was
+       entered with, and the fiber gets its own back when it is resumed. *)
+    let entry_state = save_fiber () in
+    let entry_place = Sched.place () in
+    let as_handler () =
+      let here = Sched.place () in
+      if Sched.same_place here entry_place then None
+      else begin
+        let fiber = save_fiber () in
+        restore_fiber entry_state; Sched.enter_place entry_place;
+        Some (fiber, here)
+      end
+    in
+    let as_fiber = function
+      | None -> ()
+      | Some (fiber, here) -> restore_fiber fiber; Sched.enter_place here
+    in
+    let in_fiber saved f =
+      match saved with
+      | None -> f ()
+      | Some _ ->
+        as_fiber saved;
+        Fun.protect f ~finally:(fun () ->
+          restore_fiber entry_state; Sched.enter_place entry_place)
+    in
+    observed (fun () -> clock_handled effect_cases (fun () ->
     Effect.Deep.match_with (fun () -> eval env body_expr) ()
       { Effect.Deep.
           retc = apply_return;
@@ -2375,10 +2423,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
                            the unwinding produced; it is discarded, and the
                            case answers with its own. *)
                         let resumed = ref false in
+                        let saved = as_handler () in
                         let cont =
                           VBuiltin (fun v ->
                             resumed := true;
-                            Effect.Deep.continue k v)
+                            in_fiber saved (fun () -> Effect.Deep.continue k v))
                         in
                         let answer = eval ((cont_name, cont) :: env') case_body in
                         (* Resuming consumes the continuation, so only an case
@@ -2395,8 +2444,9 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
                            to the case rather than transferring away from
                            it. *)
                         if not !resumed then
-                          (try ignore (Effect.Deep.discontinue k Abandoned)
-                           with e when is_abandoned e -> ());
+                          in_fiber saved (fun () ->
+                            try ignore (Effect.Deep.discontinue k Abandoned)
+                            with e when is_abandoned e -> ());
                         answer)
               in
               try_cases effect_cases
@@ -2487,6 +2537,8 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
   | Annot (_, e) -> eval_at tail env e
   | Located (loc, e) ->
     let c = loc_cell () in
+    c.budget <- c.budget - 1;
+    if c.budget <= 0 then fiber_turn c;
     if tail then (mark_loc c loc; eval_tail env e)
     else begin
       let line = c.at_line and col = c.at_col in
@@ -2805,7 +2857,7 @@ let random_below n =
 
 let performing name f =
   Hashtbl.replace direct_impl name f;
-  VBuiltin (fun v -> Effect.perform (WandEffect (name, v)))
+  VBuiltin (fun v -> perform_wand (name, v))
 
 (* Read-only filesystem operations. They are named here and performed as
    effects below, so a trace can report what a script looked at, not only
@@ -3791,261 +3843,226 @@ let decode_lexed name build (j : Yojson.Basic.t) path =
 (* ── Par ─────────────────────────────────────────────────────────────────── *)
 
 (* Fork-join, and nothing else. Workers never outlive the call, there is no
-   handle to a running one, and these two functions are the only way to start
-   any -- so there is no unstructured concurrency to build out of them.
+   handle to a running one, and these are the only way to start any.
 
-   A worker does not handle its own effects. An effect performed on one
-   domain cannot reach a handler on another, and a handler is not a value
-   that can be copied there, so a worker hands each effect back to the
-   calling domain and waits while it is performed there, inside whatever
-   handlers the program already installed. Mocks, rehearsals and traces
-   therefore reach into a worker exactly as they do anywhere else, and
-   effects happen one at a time rather than racing.
+   Every item starts on a pool domain, so pure work runs in parallel. At its
+   first effect the item stops there, and the rest of it runs as a fiber on
+   the calling domain, inside whatever handlers the call is inside: an
+   effect is never performed anywhere else. `limit` caps the items in
+   progress on both sides. *)
+let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
+    (work : int -> value) (finish : int -> (value, exn) result -> unit) =
+  let n = Array.length cancels in
+  let m = Mutex.create () in
+  let room = Condition.create () in
+  let locked f = Mutex.lock m; Fun.protect ~finally:(fun () -> Mutex.unlock m) f in
+  let next = Atomic.make 0 and in_progress = Atomic.make 0 in
+  let stopping = Atomic.make false in
+  let moved : (fiber_state * (unit -> unit)) Queue.t = Queue.create () in
+  let (pipe_r, pipe_w) = Unix.pipe ~cloexec:true () in
+  Unix.set_nonblock pipe_r; Unix.set_nonblock pipe_w;
+  let signal () =
+    try ignore (Unix.single_write_substring pipe_w "x" 0 1)
+    with Unix.Unix_error _ -> ()
+  in
+  let pool = max 1 (min limit (min n (Domain.recommended_domain_count ()))) in
+  let workers_left = ref pool in
+  (* Under a handler, or inside an item still on the pool, the fiber leaves
+     its effects to whoever encloses the call. *)
+  let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
+  let file_net = Domain.DLS.get ambient_file_net in
+  let stop () =
+    Atomic.set stopping true;
+    locked (fun () -> Condition.broadcast room);
+    Array.iter (fun c -> c := true) cancels
+  in
+  let halted () = Atomic.get stopping || stopped () in
+  (* The calling domain hears of an item only when it has to act: the last
+     one in progress has finished, or the call is stopping. *)
+  let item_done i r =
+    finish i r;
+    let before = Atomic.fetch_and_add in_progress (-1) in
+    if before >= limit then locked (fun () -> Condition.broadcast room);
+    if before = 1 || stopped () then signal ()
+  in
+  (* Items that never move share their worker's state; one that moves
+     takes it along, and the worker starts another. *)
+  let pool_state () =
+    restore_fiber { (fresh_fiber ()) with f_on_pool = true; f_file_net = file_net }
+  in
+  let run_item i =
+    Domain.DLS.set cancelled cancels.(i);
+    (loc_cell ()).depth <- 0;
+    let migrated = ref false in
+    Effect.Deep.match_with (fun () -> work i) ()
+      { Effect.Deep.
+          retc = (fun v -> item_done i (Ok v));
+          exnc = (fun e -> item_done i (Error e));
+          effc = fun (type a) (eff : a Effect.t) ->
+            match eff with
+            | WandEffect (name, arg) when not !migrated ->
+              Some (fun (k : (a, unit) Effect.Deep.continuation) ->
+                migrated := true;
+                let st = { (save_fiber ()) with f_on_pool = false } in
+                let body () =
+                  let go () =
+                    (match perform_wand (name, arg) with
+                     | v -> Effect.Deep.continue k v
+                     | exception e -> Effect.Deep.discontinue k e);
+                    VUnit
+                  in
+                  ignore (if own_handler then !with_default_handler go else go ())
+                in
+                locked (fun () -> Queue.push (st, body) moved);
+                signal ();
+                pool_state ())
+            | _ -> None }
+  in
+  let worker () =
+    let rec take () =
+      if halted () || Atomic.get next >= n
+         || Atomic.get interrupt_requested <> 0 then None
+      else
+        let c = Atomic.get in_progress in
+        if c >= limit then begin
+          locked (fun () ->
+            while Atomic.get in_progress >= limit && not (halted ())
+                  && Atomic.get next < n do
+              Condition.wait room m
+            done);
+          take ()
+        end
+        else if not (Atomic.compare_and_set in_progress c (c + 1)) then take ()
+        else begin
+          let i = Atomic.fetch_and_add next 1 in
+          if i < n then Some i
+          else (ignore (Atomic.fetch_and_add in_progress (-1)); signal (); None)
+        end
+    in
+    let rec loop () =
+      match take () with
+      | None -> ()
+      | Some i -> run_item i; loop ()
+    in
+    pool_state ();
+    Fun.protect loop ~finally:(fun () ->
+      locked (fun () -> decr workers_left); signal ())
+  in
+  let receive spawn () =
+    let buf = Bytes.create 64 in
+    let woke = ref false in
+    let rec go () =
+      Sched.wait_readable pipe_r;
+      (try while Unix.read pipe_r buf 0 64 > 0 do () done
+       with Unix.Unix_error _ -> ());
+      let batch, finished, stopped =
+        locked (fun () ->
+          let b = List.of_seq (Queue.to_seq moved) in
+          Queue.clear moved;
+          (b, !workers_left = 0 && Atomic.get in_progress = 0, halted ()))
+      in
+      List.iter (fun (st, body) -> spawn st body) batch;
+      if stopped && not !woke then (woke := true; Sched.wake_all ());
+      if not finished then go ()
+    in
+    go ()
+  in
+  let close () =
+    (try Unix.close pipe_r with Unix.Unix_error _ -> ());
+    (try Unix.close pipe_w with Unix.Unix_error _ -> ())
+  in
+  (* Answering the pool and joining it is one stretch that has to finish:
+     see `defer_interrupts`. *)
+  defer_interrupts (fun () ->
+    let domains = List.init pool (fun _ -> Domain.spawn worker) in
+    let join () =
+      List.iter (fun d ->
+        match Domain.join d with
+        | () -> ()
+        | exception (Interrupted _ | Fun.Finally_raised (Interrupted _)) -> ())
+        domains;
+      close ()
+    in
+    match run_fibers_with (fun spawn -> spawn (fresh_fiber ()) (receive spawn)) with
+    | () -> join ()
+    | exception e -> stop (); join (); raise e)
 
-   This runs where it is called rather than through an effect of its own: an
-   effect would be caught by the outermost handler, and performing from
-   inside that handler is outside the very handlers the work should see. *)
+(* What went wrong in one item, as `try` would say it; anything that is not
+   a failure of the item's own is the call's. *)
+let item_error e =
+  match e with
+  | EvalError msg -> Some (VString (Util.strip_loc_prefix msg))
+  | _ -> None
+
+let settle fatal =
+  match !fatal with
+  | Some e when is_abandoned e -> raise e
+  | Some (Interrupted _ | Fun.Finally_raised (Interrupted _)) | None -> ()
+  | Some e -> raise e
+
 let par_run limit f items ~collect =
   let items = Array.of_list items in
   let n = Array.length items in
-  let results = Array.make (max n 1) VUnit in
-  let next = Atomic.make 0 in
-  let live = Atomic.make 0 in
-  let m = Mutex.create () in
-  let ready = Condition.create () in
-  let pending
-    : (string * value * string list option * string list option) option ref =
-    ref None in
-  let reply : (value, exn) result option ref = ref None in
-
-  (* One worker at a time may have a request outstanding. There is a single
-     request slot and a single reply slot, and a reply carries no idea of who
-     asked: with two workers waiting, either could take an answer meant for
-     the other, leaving the rightful one waiting for a reply that has already
-     been consumed. Held across the whole round trip, so a worker that has
-     asked is the only one that can be answered. *)
-  let speaking = Mutex.create () in
-  let forward name arg =
-    Mutex.lock speaking;
-    let r =
-      Fun.protect ~finally:(fun () -> Mutex.unlock speaking) (fun () ->
-        Mutex.lock m;
-        (* The worker's ambient allowlist rides along: the pump re-performs
-           on the main domain, where the worker's domain-local value is
-           invisible. *)
-        pending := Some (name, arg, Domain.DLS.get ambient_shell_allow,
-                         Domain.DLS.get ambient_net_allow);
-        Condition.broadcast ready;
-        while !reply = None do Condition.wait ready m done;
-        let answer = Option.get !reply in
-        reply := None;
-        Condition.broadcast ready;
-        Mutex.unlock m;
-        answer)
-    in
-    match r with Ok v -> v | Error e -> raise e
-  in
-
-  let record i outcome = results.(i) <- outcome in
-  let finish () =
-    Mutex.lock m;
-    ignore (Atomic.fetch_and_add live (-1));
-    Condition.broadcast ready;
-    Mutex.unlock m
-  in
-  let outcome_of run =
-    match run () with
-    | v -> if collect then VConstr (Ctor.Builtin "Ok", [v]) else VUnit
-    | exception EvalError msg ->
-      (* A failure becomes a value, so it says what went wrong rather than
-         where, exactly as `try` does. *)
-      if collect then VConstr (Ctor.Builtin "Error", [VString (Util.strip_loc_prefix msg)])
-      else VUnit
-  in
-  (* Effects go back to the calling domain, where the handlers are. *)
-  let worker_forwarding () =
-    let rec loop () =
-      let i = Atomic.fetch_and_add next 1 in
-      if i < n then begin
-        let run () =
-          Effect.Deep.match_with (fun () -> apply f items.(i)) ()
-            { Effect.Deep.
-                retc = (fun v -> v);
-                exnc = raise;
-                effc = fun (type a) (eff : a Effect.t) ->
-                  match eff with
-                  | WandEffect (name, arg) ->
-                    Some (fun (k : (a, value) Effect.Deep.continuation) ->
-                      match forward name arg with
-                      | v -> Effect.Deep.continue k v
-                      | exception (EvalError _ as e) ->
-                        Effect.Deep.discontinue k e)
-                  | _ -> None }
-        in
-        record i (outcome_of run);
-        loop ()
-      end
-    in
-    Fun.protect ~finally:finish loop
-  in
-  (* Nothing is watching: the worker performs its own effects. *)
-  let worker_direct () =
-    let rec loop () =
-      let i = Atomic.fetch_and_add next 1 in
-      if i < n then begin
-        record i (outcome_of (fun () -> apply f items.(i)));
-        loop ()
-      end
-    in
-    Fun.protect ~finally:finish loop
-  in
-
-  (* When nothing is watching, a worker performs its own effects on its own
-     domain and the work genuinely overlaps. When a handler is in scope -- a
-     mock, a rehearsal, a trace -- effects come back here instead, because a
-     handler cannot be reached from another domain. That costs the overlap,
-     and buys the guarantee that moving work into Par cannot escape whoever
-     is watching. Nobody rehearses for speed. *)
-  let watched = Atomic.get observers > 0 in
-  (* Domain-local state starts empty on a new domain, so the file bound
-     comes across by hand: a URL computed inside a worker is the calling
-     file's as much as one computed outside it. *)
-  let file_net = Domain.DLS.get ambient_file_net in
-  let worker () =
-    Domain.DLS.set ambient_file_net file_net;
-    if watched then worker_forwarding ()
-    else ignore (!with_default_handler (fun () -> worker_direct (); VUnit))
-  in
   if n = 0 then (if collect then VList [] else VUnit)
   else begin
-    let count = max 1 (min limit n) in
-    Atomic.set live count;
-    let domains = List.init count (fun _ -> Domain.spawn worker) in
-    let rec pump () =
-      Mutex.lock m;
-      while !pending = None && Atomic.get live > 0 do Condition.wait ready m done;
-      match !pending with
-      | None -> Mutex.unlock m
-      | Some (name, arg, allow, net_allow) ->
-        pending := None;
-        Mutex.unlock m;
-        (* Every exception becomes the worker's answer. One that escaped here
-           would leave the worker waiting on a reply that never comes, with
-           `speaking` held, and the domain never joined. *)
-        let answer =
-          let saved = Domain.DLS.get ambient_net_allow in
-          Domain.DLS.set ambient_net_allow net_allow;
-          match perform_shell name allow arg with
-          | v -> Domain.DLS.set ambient_net_allow saved; Ok v
-          | exception e -> Domain.DLS.set ambient_net_allow saved; Error e
-        in
-        Mutex.lock m;
-        reply := Some answer;
-        Condition.broadcast ready;
-        Mutex.unlock m;
-        pump ()
+    let results = Array.make n VUnit in
+    let fatal = ref None in
+    let cancels = Array.init n (fun _ -> ref false) in
+    let finish i r =
+      match r with
+      | Ok v -> if collect then results.(i) <- VConstr (Ctor.Builtin "Ok", [v])
+      | Error e ->
+        (match item_error e with
+         | Some msg ->
+           if collect then results.(i) <- VConstr (Ctor.Builtin "Error", [msg])
+         | None ->
+           if !fatal = None then fatal := Some e;
+           if is_abandoned e then Array.iter (fun c -> c := true) cancels)
     in
-    (* Answering workers and joining them is one stretch that has to finish:
-       see `defer_interrupts`. *)
-    defer_interrupts (fun () ->
-    pump ();
-    (* Every worker is joined before this returns, interrupted or not:
-       workers never outlive the call, and an interrupt is not an excuse to
-       leave one running. A worker that stopped because the program is
-       stopping has already released what it held; the calling domain
-       raises on its own next step, from its own stack. *)
-    List.iter (fun d ->
-      match Domain.join d with
-      | () -> ()
-      | exception (Interrupted _ | Fun.Finally_raised (Interrupted _)) -> ())
-      domains);
-    if collect then VList (Array.to_list (Array.sub results 0 n)) else VUnit
+    let stopped () = match !fatal with Some e -> is_abandoned e | None -> false in
+    par_go ~limit:(max 1 limit) ~cancels ~stopped
+      (fun i -> apply f items.(i)) finish;
+    settle fatal;
+    if collect then VList (Array.to_list results) else VUnit
   end
 
 (* Run every thunk at once and answer with the first to finish.
 
-   No worker limit, breaking `par_map`'s convention on purpose: the count is
-   the length of the list and is visible at the call site, so there is
-   nothing left for the caller to state. A race with a limit below the list
-   length would be a staged race, which nobody wants.
-
-   First to *finish*, not first to succeed. A loser that raises is
-   discarded. A winner that raises comes back as `Error`, the way `par_map`
-   puts a raise in the element's place rather than failing the call.
-
-   Cancellation is cooperative, and it is the machinery Ctrl-C already uses.
-   The winner's completion sets each loser's cancel flag; the loser raises
-   at its next checkpoint, releases what it holds, and is joined. Every
-   worker is joined before this returns -- workers never outlive the call,
-   which is the invariant that lets `Par` have no handles and nothing to
-   await. What a race bounds is when you get the answer, not when the
-   machine goes quiet: a loser blocked in a subprocess finishes that
-   subprocess. `Shell.timeout` inside the thunk is how to bound that.
-
-   Under a handler, refused. An effect cannot reach a handler on another
-   domain, so the branches cannot run where they were written; the race
-   would collapse to its first thunk and say nothing, and a test of racing
-   code would then test one branch and pass. `Par.timeout` refuses for the
-   same reason.
-
-   A rehearsal and a trace are observers as well, and are not refused: each
-   reports what the work would do, and the collapse costs the report
-   nothing. The race is then left-biased and deterministic -- the first
-   thunk is the one that finishes first. *)
+   First to *finish*, not first to succeed: a winner that raised comes back
+   as `Error`, and a loser that raised is discarded. The winner's finish
+   sets every other item's cancel flag; each raises at its next checkpoint,
+   releases what it holds, and is joined before this returns. A loser
+   blocked in a subprocess finishes that subprocess. *)
 let par_race thunks =
   let items = Array.of_list thunks in
   let n = Array.length items in
-  let outcome_of run =
-    match run () with
-    | v -> VConstr (Ctor.Builtin "Ok", [v])
-    | exception EvalError msg ->
-      VConstr (Ctor.Builtin "Error", [VString (Util.strip_loc_prefix msg)])
-  in
   if n = 0 then
     VConstr (Ctor.Builtin "Error", [VString "race: nothing to race"])
-  else if Atomic.get handlers > 0 then
-    raise (EvalError
-      "a race inside a handler runs its first thunk only. Move the handler \
-       inside each thunk, or take it off.")
-  else if Atomic.get observers > 0 then
-    outcome_of (fun () -> apply items.(0) VUnit)
   else with_race_running (fun () ->
-    let flags = Array.init n (fun _ -> ref false) in
+    let cancels = Array.init n (fun _ -> ref false) in
     let m = Mutex.create () in
-    let done_ = Condition.create () in
     let winner = ref None in
-    let file_net = Domain.DLS.get ambient_file_net in
-    let worker i () =
-      Domain.DLS.set ambient_file_net file_net;
-      cancel_this_domain flags.(i);
-      let result =
-        ignore (!with_default_handler (fun () ->
-          let o = outcome_of (fun () -> apply items.(i) VUnit) in
-          Mutex.lock m;
-          if !winner = None then winner := Some o;
-          Condition.broadcast done_;
-          Mutex.unlock m;
-          VUnit));
-        ()
+    let fatal = ref None in
+    let finish i r =
+      let o = match r with
+        | Ok v -> Some (VConstr (Ctor.Builtin "Ok", [v]))
+        | Error e ->
+          (match item_error e with
+           | Some msg -> Some (VConstr (Ctor.Builtin "Error", [msg]))
+           | None ->
+             if is_abandoned e && !fatal = None then fatal := Some e;
+             None)
       in
-      result
-    in
-    let domains = Array.to_list (Array.init n (fun i -> Domain.spawn (worker i))) in
-    (* Answering nothing and joining everything is one stretch that has to
-       finish, as it is in `par_run`. *)
-    defer_interrupts (fun () ->
       Mutex.lock m;
-      while !winner = None do Condition.wait done_ m done;
+      let first = !winner = None && (o <> None || !fatal <> None) in
+      if first then winner := o;
       Mutex.unlock m;
-      (* Whoever is still running has lost. *)
-      Array.iter (fun f -> f := true) flags;
-      List.iter (fun d ->
-        match Domain.join d with
-        | () -> ()
-        (* A loser stopped where it stood. `Fun.Finally_raised` is the same
-           thing seen through a bracket it was releasing. *)
-        | exception Interrupted _ -> ()
-        | exception Fun.Finally_raised (Interrupted _) -> ()) domains);
+      if first then
+        Array.iteri (fun j c -> if j <> i then c := true) cancels
+    in
+    let stopped () = !winner <> None || !fatal <> None in
+    par_go ~limit:n ~cancels ~stopped (fun i -> apply items.(i) VUnit) finish;
+    settle fatal;
     match !winner with
     | Some o -> o
     | None -> VConstr (Ctor.Builtin "Error", [VString "race: no thunk finished"]))
@@ -4114,13 +4131,13 @@ let rec stream_provider (src : stream_source)
      | _ -> raise (EvalError
          "Shell.stream: the handler must answer with a list of lines"))
   | SFile p ->
-    (match Effect.perform (WandEffect ("FS!stream_lines", VPath p)) with
+    (match perform_wand ("FS!stream_lines", VPath p) with
      | VLineSource ic -> of_channel ~close:true ic
      | VList vs -> of_vals vs
      | _ -> raise (EvalError
          "stream_lines: the handler must answer with a list of lines"))
   | SStdin ->
-    (match Effect.perform (WandEffect ("IO!stdin_lines", VUnit)) with
+    (match perform_wand ("IO!stdin_lines", VUnit) with
      | VLineSource ic ->
        (* The real stdin cannot be re-run; a mock can. The flag burns only
           on the real path, so tests replay freely. *)
@@ -4277,7 +4294,7 @@ let write_stream_to op path desc =
     | VPath p | VString p -> VPath p
     | _ -> raise (EvalError "expected a Path")
   in
-  match Effect.perform (WandEffect (op, target)) with
+  match perform_wand (op, target) with
   | VLineSink (write_line, commit, abort) ->
     (match run_stream_terminal desc ~on_item:(fun v -> write_line (to_text v)) with
      | () -> commit (); VUnit
@@ -4398,8 +4415,8 @@ let stream_builtins : env = [
 ]
 
 let stdlib_eval_env : env = [
-  ("io_print",   VBuiltin (fun v -> Effect.perform (WandEffect ("IO!print",   v))));
-  ("io_println", VBuiltin (fun v -> Effect.perform (WandEffect ("IO!println", v))));
+  ("io_print",   VBuiltin (fun v -> perform_wand ("IO!print",   v)));
+  ("io_println", VBuiltin (fun v -> perform_wand ("IO!println", v)));
   ("proc_exit",  performing "Proc!exit" (function VInt n -> raise (Interrupted n) | _ -> raise (EvalError "exit: expected Int")));
   (* Not `performing`: argv and the pid are fixed before the program starts,
      so there is no operation for a handler to intercept. *)
@@ -4473,17 +4490,17 @@ let stdlib_eval_env : env = [
   ("fail_exn", VBuiltin (function
     | VString why -> raise (EvalError why)
     | _ -> raise (EvalError "fail_exn: expected String")));
-  ("read_file",  VBuiltin (fun v -> Effect.perform (WandEffect ("FS!read_file",  v))));
+  ("read_file",  VBuiltin (fun v -> perform_wand ("FS!read_file",  v)));
   ("hash_file", VBuiltin (function
     | VString algo -> VBuiltin (fun path ->
-        Effect.perform (WandEffect ("Hash!file", VTuple [VString algo; path])))
+        perform_wand ("Hash!file", VTuple [VString algo; path]))
     | _ -> raise (EvalError "hash_file: expected String")));
   ("write_file", VBuiltin (fun path ->
     VBuiltin (fun content ->
-      Effect.perform (WandEffect ("FS!write_file", VTuple [path; content])))));
+      perform_wand ("FS!write_file", VTuple [path; content]))));
   ("write_atomic", VBuiltin (fun path ->
     VBuiltin (fun content ->
-      Effect.perform (WandEffect ("FS!write_atomic", VTuple [path; content])))));
+      perform_wand ("FS!write_atomic", VTuple [path; content]))));
   (* Result constructors *)
   ("Ok",    VPartialConstr (Ctor.Builtin "Ok",    1, []));
   ("Error", VPartialConstr (Ctor.Builtin "Error", 1, []));
@@ -5356,40 +5373,40 @@ let stdlib_eval_env : env = [
   ("fs_is_dir",  performing "FS!dir?" (function
     | VPath p -> VBool (Sys.file_exists p && Sys.is_directory p)
     | _ -> raise (EvalError "fs_is_dir: expected Path")));
-  ("fs_mkdir",   VBuiltin (fun v -> Effect.perform (WandEffect ("FS!mkdir", v))));
-  ("fs_ls",      VBuiltin (fun v -> Effect.perform (WandEffect ("FS!list_dir",      v))));
-  ("fs_remove",  VBuiltin (fun v -> Effect.perform (WandEffect ("FS!delete",  v))));
+  ("fs_mkdir",   VBuiltin (fun v -> perform_wand ("FS!mkdir", v)));
+  ("fs_ls",      VBuiltin (fun v -> perform_wand ("FS!list_dir",      v)));
+  ("fs_remove",  VBuiltin (fun v -> perform_wand ("FS!delete",  v)));
   ("fs_append",  VBuiltin (fun path ->
     VBuiltin (fun content ->
-      Effect.perform (WandEffect ("FS!append", VTuple [path; content])))));
-  ("fs_create",  VBuiltin (fun v -> Effect.perform (WandEffect ("FS!create_file",  v))));
+      perform_wand ("FS!append", VTuple [path; content]))));
+  ("fs_create",  VBuiltin (fun v -> perform_wand ("FS!create_file",  v)));
   ("fs_temp_file", VBuiltin (fun prefix ->
     VBuiltin (fun suffix ->
-      Effect.perform (WandEffect ("FS!temp_file", VTuple [prefix; suffix])))));
+      perform_wand ("FS!temp_file", VTuple [prefix; suffix]))));
   ("fs_temp_dir", VBuiltin (fun prefix ->
-    Effect.perform (WandEffect ("FS!temp_dir", prefix))));
-  ("fs_lock",   VBuiltin (fun v -> Effect.perform (WandEffect ("FS!lock", v))));
+    perform_wand ("FS!temp_dir", prefix)));
+  ("fs_lock",   VBuiltin (fun v -> perform_wand ("FS!lock", v)));
   ("fs_lock_wait", VBuiltin (fun budget ->
     VBuiltin (fun path ->
-      Effect.perform (WandEffect ("FS!lock_wait", VTuple [path; budget])))));
-  ("fs_unlock", VBuiltin (fun v -> Effect.perform (WandEffect ("FS!unlock", v))));
+      perform_wand ("FS!lock_wait", VTuple [path; budget]))));
+  ("fs_unlock", VBuiltin (fun v -> perform_wand ("FS!unlock", v)));
   ("fs_delete_tree", VBuiltin (fun v ->
-    Effect.perform (WandEffect ("FS!delete_tree", v))));
+    perform_wand ("FS!delete_tree", v)));
   ("fs_rename",  VBuiltin (fun old_ ->
     VBuiltin (fun new_ ->
-      Effect.perform (WandEffect ("FS!rename", VTuple [old_; new_])))));
+      perform_wand ("FS!rename", VTuple [old_; new_]))));
   ("fs_copy",    VBuiltin (fun src ->
     VBuiltin (fun dst ->
-      Effect.perform (WandEffect ("FS!copy", VTuple [src; dst])))));
+      perform_wand ("FS!copy", VTuple [src; dst]))));
   ("fs_copy_tree", VBuiltin (fun src ->
     VBuiltin (fun dst ->
-      Effect.perform (WandEffect ("FS!copy_tree", VTuple [src; dst])))));
-  ("fs_cwd",     VBuiltin (fun v -> Effect.perform (WandEffect ("FS!cwd", v))));
-  ("fs_mtime",   VBuiltin (fun v -> Effect.perform (WandEffect ("FS!mtime", v))));
-  ("fs_size",    VBuiltin (fun v -> Effect.perform (WandEffect ("FS!size", v))));
+      perform_wand ("FS!copy_tree", VTuple [src; dst]))));
+  ("fs_cwd",     VBuiltin (fun v -> perform_wand ("FS!cwd", v)));
+  ("fs_mtime",   VBuiltin (fun v -> perform_wand ("FS!mtime", v)));
+  ("fs_size",    VBuiltin (fun v -> perform_wand ("FS!size", v)));
   ("fs_glob",    VBuiltin (fun pattern ->
     VBuiltin (fun dir ->
-      Effect.perform (WandEffect ("FS!glob", VTuple [pattern; dir])))));
+      perform_wand ("FS!glob", VTuple [pattern; dir]))));
   ("fs_glob_impl", VBuiltin (function
     | VString pat | VGlob pat ->
       VBuiltin (function
@@ -5610,11 +5627,11 @@ let stdlib_eval_env : env = [
       VList (List.map (fun p -> VString p) parts)
     | _ -> raise (EvalError "path_components: expected Path")));
   (* IO primitives *)
-  ("io_print_err",   VBuiltin (fun v -> Effect.perform (WandEffect ("IO!print_err",   v))));
-  ("io_println_err", VBuiltin (fun v -> Effect.perform (WandEffect ("IO!println_err", v))));
-  ("io_read_line",   VBuiltin (fun v -> Effect.perform (WandEffect ("IO!read_line",   v))));
-  ("io_read_all",    VBuiltin (fun v -> Effect.perform (WandEffect ("IO!read_all",    v))));
-  ("io_flush",       VBuiltin (fun v -> Effect.perform (WandEffect ("IO!flush",       v))));
+  ("io_print_err",   VBuiltin (fun v -> perform_wand ("IO!print_err",   v)));
+  ("io_println_err", VBuiltin (fun v -> perform_wand ("IO!println_err", v)));
+  ("io_read_line",   VBuiltin (fun v -> perform_wand ("IO!read_line",   v)));
+  ("io_read_all",    VBuiltin (fun v -> perform_wand ("IO!read_all",    v)));
+  ("io_flush",       VBuiltin (fun v -> perform_wand ("IO!flush",       v)));
   (* Par primitives. *)
   ("par_map", VBuiltin (fun limit ->
     VBuiltin (fun f ->
@@ -5636,11 +5653,11 @@ let stdlib_eval_env : env = [
      is -- the signature says nothing about it because no wand code can
      answer it. *)
   ("par_deadline_guard", VBuiltin (fun _ ->
-    if Atomic.get handlers > 0 then
+    if Atomic.get clock_handlers > 0 then
       raise (EvalError
-        "a deadline inside a handler never fires. Move the handler inside \
-         the thunk -- `Par.timeout d (fn () -> with_clock (fn () -> ...))` \
-         -- or take it off.")
+        "a deadline under a handler for Clock.sleep passes at once. Move the \
+         handler inside the thunk -- `Par.timeout d (fn () -> with_clock \
+         (fn () -> ...))` -- or take it off.")
     else VUnit));
   ("par_race", VBuiltin (function
     | VList thunks -> par_race thunks
@@ -5671,7 +5688,7 @@ let stdlib_eval_env : env = [
     Domain.DLS.set ambient_net_allow allow;
     Fun.protect
       ~finally:(fun () -> Domain.DLS.set ambient_net_allow saved)
-      (fun () -> Effect.perform (WandEffect ("Net!http", payload)))));
+      (fun () -> perform_wand ("Net!http", payload))));
   ("net_download", VBuiltin (fun url ->
     VBuiltin (fun dest ->
       let allow = match url with VURL (_, a) -> a | _ -> None in
@@ -5680,7 +5697,7 @@ let stdlib_eval_env : env = [
       Fun.protect
         ~finally:(fun () -> Domain.DLS.set ambient_net_allow saved)
         (fun () ->
-          Effect.perform (WandEffect ("Net!download", VTuple [url; dest]))))));
+          perform_wand ("Net!download", VTuple [url; dest])))));
   ("shell_query", VBuiltin (function
     | VCommand (cmd, allow) -> perform_shell "Shell!capture" allow (VString cmd)
     | _ -> raise (EvalError "shell_query: expected a Command")));
@@ -5696,7 +5713,7 @@ let stdlib_eval_env : env = [
       (* Read through the same effect a plain read does, so a trace shows
          the file and a mock can substitute it. *)
       let src =
-        match Effect.perform (WandEffect ("FS!read_file", VString path)) with
+        match perform_wand ("FS!read_file", VString path) with
         | VString s -> s
         | _ -> raise (EvalError "env_load_file: expected file contents")
       in
@@ -5733,9 +5750,9 @@ let stdlib_eval_env : env = [
              "Env.set: %S holds '=', which separates a name from its value"
              n))
        | _ -> ());
-      Effect.perform (WandEffect ("Env!set", VTuple [name; value])))));
+      perform_wand ("Env!set", VTuple [name; value]))));
   ("env_clear", VBuiltin (fun name ->
-    Effect.perform (WandEffect ("Env!clear", name))));
+    perform_wand ("Env!clear", name)));
   ("env_all", performing "Env!all" (function
     | VUnit ->
       let pairs = Array.to_list (Unix.environment ()) |> List.filter_map (fun s ->

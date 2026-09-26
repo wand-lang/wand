@@ -781,7 +781,7 @@ let take_lock path =
     else
       match flock_try fd with
       | 0, _ ->
-        Hashtbl.replace held_locks key (fd, (Domain.self () :> int));
+        Hashtbl.replace held_locks key (fd, (Evaluator.loc_cell ()).Evaluator.task);
         Some key
       | 1, _ -> close (); None
       | _, why ->
@@ -816,7 +816,7 @@ let take_lock_wait path budget_ms =
     let self_held =
       with_held_locks (fun () ->
         match Hashtbl.find_opt held_locks (try Unix.realpath path with Unix.Unix_error _ -> path) with
-        | Some (_, owner) -> owner = (Domain.self () :> int)
+        | Some (_, owner) -> owner = (Evaluator.loc_cell ()).Evaluator.task
         | None -> false)
     in
     (* A wait on a lock this bracket already holds can never end, so it is
@@ -1278,13 +1278,13 @@ let unhandled_operation name =
   EvalError (Printf.sprintf
     "no handler for '%s' -- this is a bug in wand, not in the script" name)
 
-let run_with_default_handler (thunk : unit -> value) : value =
-  try
-  Effect.Deep.match_with thunk ()
-    { Effect.Deep.
-        retc = (fun v -> v);
-        exnc = raise;
-        effc = fun (type a) (eff : a Effect.t) ->
+let rec run_with_default_handler (thunk : unit -> value) : value =
+  (* An effect from a fiber that started inside [thunk] is answered with
+     the work itself, done by the fiber under a handler of its own, so its
+     waits suspend the fiber rather than block the domain. *)
+  let r_place = Sched.place () in
+  let handle_here : type a. a Effect.t ->
+      ((a, value) Effect.Deep.continuation -> value) option = fun eff ->
           match eff with
           | WandEffect ("IO!print", v) ->
             Some (fun (k : (a, value) Effect.Deep.continuation) ->
@@ -1751,6 +1751,23 @@ let run_with_default_handler (thunk : unit -> value) : value =
               | exception ((EvalError _ | Interrupted _) as e) ->
                 Effect.Deep.discontinue k e)
           | _ -> None
+  in
+  try
+  Effect.Deep.match_with thunk ()
+    { Effect.Deep.
+        retc = (fun v -> v);
+        exnc = raise;
+        effc = fun (type a) (eff : a Effect.t) ->
+          match eff with
+          | WandEffect (name, v) when not (Sched.same_place (Sched.place ()) r_place) ->
+            (match handle_here eff with
+             | None -> None
+             | Some _ ->
+               Some (fun (k : (a, value) Effect.Deep.continuation) ->
+                 Effect.Deep.discontinue k (Evaluator.Perform_here (fun () ->
+                   run_with_default_handler (fun () ->
+                     Evaluator.perform_wand (name, v))))))
+          | _ -> handle_here eff
     }
   with Effect.Unhandled (WandEffect (name, _)) ->
     raise (unhandled_operation name)
@@ -2971,7 +2988,7 @@ let run_in_mode mode (thunk : unit -> value) : value =
                     (* The non-waiting acquire, which is the same operation
                        with the budget spent down to nothing. *)
                     let path = match v with VTuple (p :: _) -> p | other -> other in
-                    (match (try Ok (Effect.perform (WandEffect ("FS!lock", path)))
+                    (match (try Ok (Evaluator.perform_wand ("FS!lock", path))
                             with EvalError m -> Error m) with
                      | Ok result -> Effect.Deep.continue k result
                      | Error m -> Effect.Deep.discontinue k (EvalError m))
@@ -2984,7 +3001,7 @@ let run_in_mode mode (thunk : unit -> value) : value =
                     | Some (Ok result) -> Effect.Deep.continue k result
                     | Some (Error m) -> Effect.Deep.discontinue k (EvalError m)
                     | None ->
-                    match (try Ok (Effect.perform (WandEffect (name, v)))
+                    match (try Ok (Evaluator.perform_wand (name, v))
                            with EvalError m -> Error m) with
                     | Ok result -> Effect.Deep.continue    k result
                     | Error m   -> Effect.Deep.discontinue k (EvalError m))

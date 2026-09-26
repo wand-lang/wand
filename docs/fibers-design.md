@@ -20,7 +20,7 @@ other. Erlang/BEAM does that better, and wand does not compete there.
 - [Fibers, hidden behind existing modules](#fibers-hidden-behind-existing-modules)
 - [Own scheduler; Eio as a reference only](#own-scheduler-eio-as-a-reference-only)
 - [Scheduler](#scheduler)
-- [Par: the effect type picks the runtime](#par-the-effect-type-picks-the-runtime)
+- [Par: an item moves at its first effect](#par-an-item-moves-at-its-first-effect)
 - [Questions](#questions)
 - [Order](#order)
 
@@ -92,9 +92,12 @@ If io_uring speed is needed later, look at Picos before Eio.
 - Internal effects: `Suspend` (wait on an fd, a timer or a child process)
   and `Yield`. Structures: run queue, timer heap, `poll` loop. When the run
   queue is empty, `poll` all waiting fds up to the nearest timer.
-- When a handler is watching, real I/O runs inside that handler, outside the
-  scheduler, so it blocks the domain. Mocks answer at once, so tests still
-  interleave. A trace of real I/O loses overlap, as `Par` does today.
+- A handler outside the scheduler answers a fiber's effect on its own
+  stack. A wand handler's case runs there with the state the handler was
+  entered with, not the fiber's, so a fiber's cancellation cannot unwind
+  the handler. The default handler does not do the work there at all: it
+  hands the work back, and the fiber does it at the perform under a
+  default handler of its own, so its waits suspend only the fiber.
 - **Fiber-local state.** The evaluator keeps state in `Domain.DLS`:
   `ambient_shell_allow`, `ambient_net_allow`, `ambient_file_net`,
   `shell_deadline`, `current_loc`, `cancelled`, `interrupt_taken`,
@@ -112,55 +115,50 @@ If io_uring speed is needed later, look at Picos before Eio.
   `Shell.stream`): wait on the pipes and the exit. Sleep: the timer heap.
   Regular files and DNS cannot use `poll` (see Questions).
 
-## Par: the effect type picks the runtime
+## Par: an item moves at its first effect
 
 `Par` keeps its name and API. Its doc becomes: *at the same time; in
 parallel when the work is pure.*
 
-- `f` performs no effects (pure computation): it runs on a **domain pool**,
-  in parallel. This is safe under handlers, because pure work has nothing
-  to forward.
-- `f` performs effects (shell, network, files, clock): it runs as **fibers
-  on the calling domain**, within reach of every handler.
+The evaluator never sees an inferred effect: the typechecker accepts or
+rejects a program, and a compile-cache hit skips inference for an import.
+So the runtime decides, from what an item does:
 
-Rules:
+- Every item starts on a **domain pool**, one domain per core at most, so
+  work that only computes runs in parallel.
+- At its first effect, the item stops on the pool. Its continuation moves
+  to the calling domain and runs there as a **fiber**, inside every
+  handler the call is inside. The pool domain takes the next item.
+- `limit` caps the items in progress, on the pool and as fibers together.
+- `Raise` is not an effect here: a raise stays on the pool.
+- An item that computes heavily *after* its first effect runs on one core
+  with the other fibers. Split it into a pure `Par` call and an effect
+  step to get the parallelism back.
 
-- **Open effects.** A generic helper's `f` may have `! 'e`. The typechecker
-  passes the concrete set from the call site, or the runtime checks it. If
-  it is still unknown, the default is fibers: always correct, possibly
-  slower.
-- **`Raise` counts as pure.** A function whose only effect is raising goes
-  to the pool.
-- **Pool size vs limit.** The pool is fixed near the core count. `limit`
-  still caps how many items are in progress; `Par.map 64` on pure work
-  runs at most core-count items at a time.
-- **Visibility.** `--trace` (and possibly `wand t`) shows which path each
-  `Par` call takes.
-- Work that computes heavily *and* does I/O runs as fibers on one core.
-  Split it into a pure step and an effect step to get parallelism.
+No effect is ever performed off the calling domain, so the core guarantee
+holds, and a helper that wraps `Par` loses nothing to open effects.
 
-Transition: keep the current domain-based `Par` until pool dispatch works,
-so no existing script gets slower in between (see `demos/09-fork-overhead`).
+Each position cell is padded to 128 bytes. Every evaluation step writes
+one, and two cells on one cache line made two pool domains each run at
+half speed.
 
 Later: M:N (fibers across several domains) for CPU-heavy services. Fibers
-on other domains are out of handlers' reach, so under a handler they fall
-back to today's forwarding.
+on other domains are out of handlers' reach, so under a handler they stay
+on the calling domain.
 
 ## Questions
 
 - Regular files and DNS under fibers: accept a short block, or use a helper
   thread.
 - The yield interval N. Measure it on the interpreter loop.
-- Where open effects become concrete: from the typechecker at the call
-  site, or a check at run time.
 
 ## Order
 
 1. Fiber scheduler in the evaluator: run queue, timer heap, `poll` loop,
    fiber-local state in place of `Domain.DLS`, per-fiber cancellation,
    yield every N steps.
-2. `Par` on the new rules: dispatch by effects between fibers and the
-   domain pool; `--trace` shows the path.
+2. `Par` on the new rules: items start on the domain pool and move to a
+   fiber at their first effect.
 3. Waiting versions of existing I/O: shell, `Shell.stream`, `HTTP` through
    `curl`, sleep.
 
