@@ -1136,16 +1136,15 @@ let cancelled : bool ref Domain.DLS.key = Domain.DLS.new_key (fun () -> ref fals
 
 let cancel_this_domain flag = Domain.DLS.set cancelled flag
 
-(* Races currently running. Nothing but a race cancels a domain, and it can
-   only cancel one it is still waiting on, so while this is zero no domain
-   is carrying a cancellation and there is nothing for the check below to
-   find. Counted rather than flagged, because a thunk in a race may itself
-   race. *)
-let races_running = Atomic.make 0
+(* Races and fiber schedulers currently running. Nothing but a race cancels
+   a domain or a fiber, and only a scheduler asks the checkpoint to yield, so
+   while this is zero the checkpoint has nothing to find. Counted rather than
+   flagged, because a thunk in a race may itself race. *)
+let checks_wanted = Atomic.make 0
 
 let with_race_running f =
-  Atomic.incr races_running;
-  Fun.protect ~finally:(fun () -> Atomic.decr races_running) f
+  Atomic.incr checks_wanted;
+  Fun.protect ~finally:(fun () -> Atomic.decr checks_wanted) f
 
 let check_interrupt_now () =
   (* Raised once, then cleared, for the reason the program-wide interrupt is
@@ -1168,9 +1167,95 @@ let check_interrupt_now () =
    Both reasons to stop are announced globally before any domain can see
    them, so two atomic loads decide it. Whatever they cannot rule out is
    left to the full check, which is unchanged. *)
+(* Fiber schedulers running on any domain. While one is, the checkpoint
+   also counts steps and yields every [yield_every]. *)
+let fibers_running = Atomic.make 0
+
+let yield_every =
+  match Sys.getenv_opt "WAND_YIELD_EVERY" with
+  | Some s -> (match int_of_string_opt s with
+               | Some n when n > 0 -> n
+               | _ -> 1000)
+  | None -> 1000
+
+let yield_budget = ref yield_every
+
+let check_fiber () =
+  decr yield_budget;
+  if !yield_budget <= 0 then begin
+    yield_budget := yield_every;
+    Sched.yield ()
+  end
+
 let check_interrupt () =
-  if Atomic.get interrupt_requested <> 0 || Atomic.get races_running <> 0 then
-    check_interrupt_now ()
+  if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0 then
+  begin
+    check_interrupt_now ();
+    if Atomic.get fibers_running <> 0 then check_fiber ()
+  end
+
+let () = Sched.interrupt_pending := (fun () ->
+  Atomic.get interrupt_requested <> 0)
+
+(* What a fiber carries of its own: every per-task value above. The regex
+   cache stays per domain. *)
+type fiber_state = {
+  f_shell_allow : string list option;
+  f_net_allow : string list option;
+  f_file_net : string list option;
+  f_deadline : int option;
+  f_loc : loc_cell;
+  f_cancelled : bool ref;
+  f_taken : bool ref;
+  f_deferred : int ref;
+}
+
+let save_fiber () = {
+  f_shell_allow = Domain.DLS.get ambient_shell_allow;
+  f_net_allow = Domain.DLS.get ambient_net_allow;
+  f_file_net = Domain.DLS.get ambient_file_net;
+  f_deadline = Domain.DLS.get shell_deadline;
+  f_loc = Domain.DLS.get current_loc;
+  f_cancelled = Domain.DLS.get cancelled;
+  f_taken = Domain.DLS.get interrupt_taken;
+  f_deferred = Domain.DLS.get interrupts_deferred;
+}
+
+let restore_fiber st =
+  Domain.DLS.set ambient_shell_allow st.f_shell_allow;
+  Domain.DLS.set ambient_net_allow st.f_net_allow;
+  Domain.DLS.set ambient_file_net st.f_file_net;
+  Domain.DLS.set shell_deadline st.f_deadline;
+  Domain.DLS.set current_loc st.f_loc;
+  Domain.DLS.set cancelled st.f_cancelled;
+  Domain.DLS.set interrupt_taken st.f_taken;
+  Domain.DLS.set interrupts_deferred st.f_deferred
+
+(* A fiber starts as a `Par` worker on a new domain does: the calling
+   file's net bound, and nothing else. *)
+let fresh_fiber ?(cancel = ref false) () = {
+  f_shell_allow = None;
+  f_net_allow = None;
+  f_file_net = Domain.DLS.get ambient_file_net;
+  f_deadline = None;
+  f_loc = { at_line = 0; at_col = 0; at_file = ""; depth = 0 };
+  f_cancelled = cancel;
+  f_taken = ref false;
+  f_deferred = ref 0;
+}
+
+(* Run [bodies] as fibers on this domain; return when all have finished. *)
+let run_fibers ?cancels (bodies : (unit -> unit) array) =
+  let states = Array.mapi (fun i _ ->
+    match cancels with
+    | Some c -> fresh_fiber ~cancel:c.(i) ()
+    | None -> fresh_fiber ()) bodies in
+  Atomic.incr fibers_running;
+  Atomic.incr checks_wanted;
+  Fun.protect
+    ~finally:(fun () ->
+      Atomic.decr checks_wanted; Atomic.decr fibers_running) (fun () ->
+    Sched.run ~save:save_fiber ~restore:restore_fiber states bodies)
 
 (* Structural comparison that a script can catch. OCaml's `=` and `compare`
    raise Invalid_argument when they reach a closure, and a value may carry one

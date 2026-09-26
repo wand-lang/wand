@@ -8,7 +8,7 @@
  (name wand)
  (foreign_stubs
   (language c)
-  (names clock dirfd env lock tempdir))
+  (names clock dirfd env lock poll tempdir))
  (libraries unix re re.pcre yojson toml yaml linenoise digestif.c eqaf))
 
 ; The standard library, compiled into the binary as source text. The glob is
