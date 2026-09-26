@@ -1,7 +1,19 @@
 # Shared state and long-lived branches
 
-The second of four records for services; `fibers-design.md` lists all four.
-It needs fibers: `Shared` work runs as fibers on one domain.
+wand will run a *service*: one process that handles many requests at the
+same time, such as an HTTP API, a worker or a long-running job. The work is
+in four records, each released once:
+
+1. Fibers: the scheduler, `Par` on it, and waiting versions of the I/O
+   that exists. Released in 0.81.0.
+2. `shared-design.md` (this record): `Shared`, `Par.all` and `Clock.every`.
+3. `server-design.md`: `Net.listen`, `Stream.each_par` and `HTTP.serve`.
+4. `child-process-design.md`: two-way child processes and stderr streams.
+
+Not a goal: distributed processes that talk over a network and restart each
+other. Erlang/BEAM does that better, and wand does not compete there.
+
+`Shared` work runs as fibers on the calling domain.
 
 - [Shared](#shared)
 - [Work next to the server](#work-next-to-the-server)

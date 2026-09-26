@@ -1,6 +1,6 @@
 # Server
 
-The third of four records for services; `fibers-design.md` lists all four.
+The third of four records for services; `shared-design.md` lists all four.
 It needs fibers and `Shared`.
 
 - [Server API](#server-api)
@@ -194,5 +194,6 @@ stay in 0.x minors until 1.0.
 2. `HTTP.serve`, with request limits, graceful shutdown, and line-atomic
    logging.
 3. Load-test a simple `HTTP.serve`. Include handlers that read files, and
-   confirm or revisit the short block a file operation takes under fibers
-   (`fibers-design.md`).
+   confirm or revisit the short block a file operation takes under fibers:
+   regular files cannot use `poll`, so a read or a write blocks the domain
+   for as long as the disk takes.

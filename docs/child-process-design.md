@@ -1,6 +1,6 @@
 # Child processes
 
-The fourth of four records for services; `fibers-design.md` lists all four.
+The fourth of four records for services; `shared-design.md` lists all four.
 Part of it waits on the load test in `server-design.md`.
 
 Reading a long-running command already exists: `Shell.stream` (stdout, one
