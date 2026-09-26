@@ -373,6 +373,15 @@ let exec_command cmd =
    even without one. A fiber waits for the descriptor rather than blocking
    the domain. A read that fails -- the child was killed and the pipe went
    with it -- is the end of the lines. *)
+(* A fiber can be woken before its input arrives -- a race it lost -- so
+   it reads only once the descriptor is ready, and looks at its checkpoint
+   each time it was woken early. *)
+let rec wait_for_input fd =
+  Sched.wait_readable fd;
+  match Sched.select [fd] [] 0 with
+  | (_ :: _, _) -> ()
+  | _ -> Evaluator.check_interrupt (); wait_for_input fd
+
 let line_reader fd =
   let buf = Buffer.create 4096 in
   let chunk = Bytes.create 65536 in
@@ -403,7 +412,7 @@ let line_reader fd =
            Some (take (Buffer.length buf) (Buffer.length buf))
          else None)
       else begin
-        if Sched.active () then Sched.wait_readable fd;
+        if Sched.active () then wait_for_input fd;
         (match Unix.read fd chunk 0 (Bytes.length chunk) with
          | 0 -> eof := true
          | n -> Buffer.add_subbytes buf chunk 0 n

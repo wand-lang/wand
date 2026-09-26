@@ -6,6 +6,8 @@ import FS
 import Par
 import Path
 import Resource
+import Shell
+import Stream
 import String
 import Test
 
@@ -123,6 +125,17 @@ group "Par.all!" (fn () -> [
       let _ = Par.all! [fn () -> with holder as _ -> Clock.sleep 10s, fn () -> ()];
       t.eq false (FS.exists? held)
     )),
+  -- The stream's command writes nothing, so the branch is waiting for a
+  -- line when the other ends. It stops there, and its command with it.
+  test "a branch waiting on a silent command stops" (fn t ->
+    t.eq
+      "stopped"
+      (Par.all! [
+        fn () -> Shell.stream $*(sh -c 'sleep 30')
+        |> Stream.each (fn _ -> ())
+        |> (fn _ -> "ended"),
+        fn () -> (Clock.sleep 200ms; "stopped")
+      ])),
   test "no branches is a failure" (fn t -> t.raises (fn () -> Par.all! [])),
   test "a handler around it answers every branch" (fn t ->
     t.eq
