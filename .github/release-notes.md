@@ -1,46 +1,74 @@
-## 0.81.0 - 2026-09-26
+## 0.82.0 - 2026-09-26
 
-`Par` runs pure work in parallel and waiting work concurrently, and it works
-the same way under a handler.
+State that changes, work that runs beside a service, and a fix for a race
+that could hang.
 
+### Added
 
-### Changed
-
-- **`Par` runs work in parallel and concurrently.** Work that only
-  computes runs in parallel, on one domain per core. Work that runs
-  commands, sleeps or reads streams runs concurrently on the calling
-  domain, and a wait holds no thread. So a limit is no longer bounded by
-  the number of cores.
+- **`Shared`: state that changes.** A `Shared` holds one value for the
+  length of a `with`, and changes only through `Shared.update`, given a
+  function from the old value to the new one. Updates happen one at a time,
+  so none is lost when many run at once.
 
   ```
-  Par.map 300 (fn host -> $(ssh %{host} uptime)) hosts
+  type Counts(hits: Int)
 
-  -- before    Error: failed to allocate domain
-  -- now       300 commands run concurrently
+  with Shared.make Counts(hits = 0) as counts -> (
+    Par.each 50 (fn _ -> Shared.update counts (fn c -> Counts(c, hits = c.hits + 1)))
+      (List.range 1 50);
+    (Shared.get counts).hits
+  )
+  -- 50
   ```
 
-  Eight items of pure work finish in half the time they did.
+  Reading and updating perform a new effect label, `Shared`, so a file that
+  keeps state says so in its manifest, and a handler can answer
+  `Shared!get` and `Shared!update`. The function given to `update` performs
+  nothing. Using a `Shared` after its `with` ends raises.
 
-- **A handler around `Par` no longer makes its work take turns.** Under a
-  mock, `--dry-run` or `--trace`, every item's effects still reach the
-  handler, and now their waits overlap.
-
-  ```
-  Test.with_shell mocks (fn () ->
-    Par.map 10 (fn h -> (Clock.sleep 300ms; probe h)) hosts)
-
-  -- before    3 seconds: one item at a time
-  -- now       300 milliseconds
-  ```
-
-- **`Par.race` and `Par.timeout` run inside a handler.** A race answers with its
-  real winner, and a deadline fires. `Par.timeout` is still refused under
-  `Test.with_clock`, where a sleep takes no time and the deadline would pass
-  at once.
+  A `Shared` cannot hold another `Shared`, in a list, a map, a record field
+  or anywhere else:
 
   ```
-  Test.with_shell mocks (fn () -> Par.race [fn () -> probe a, fn () -> probe b])
+  with Shared.make 0 as a -> with Shared.make [a] as b -> ...
+  -- type error: a Shared cannot hold another Shared, and this one holds
+  --             List (Shared Int)
+  ```
 
-  -- before    error: a race inside a handler runs its first thunk only
-  -- now       the first probe to finish
+- **`Par.all!`: run branches side by side until one ends.** For work that
+  runs for as long as a script does: when one branch ends, the others stop
+  and give back what they hold. A branch that raised makes `Par.all!` raise
+  the same failure, so a script whose work dies exits with an error instead
+  of going quiet.
+
+  ```
+  let watch! log = with Shared.make 0 as lines ->
+    Par.all! [
+      fn () -> Shell.stream $*(tail -f %{log})
+        |> Stream.each (fn _ -> Shared.update lines (fn n -> n + 1)),
+      fn () -> Clock.every 5min (fn () -> IO.println "%{Shared.get lines} lines so far")
+    ]
+  ```
+
+  `Par.race` still returns the first failure as a `Result`.
+
+- **`Clock.every`: run a function every period, forever.** The first run is
+  at once. Runs never overlap, and a run longer than the period skips the
+  ticks it missed instead of making the next runs catch up. A run that
+  raises ends `Clock.every` with that failure. To go on after a failed run,
+  catch it with `try` in the function.
+
+### Fixed
+
+- **A race could hang on a branch reading a silent command.** A branch
+  waiting on `Shell.stream` for a line that never came did not stop when
+  another branch won, so `Par.race` and `Par.timeout` never returned. It
+  now stops, and its command is killed.
+
+  ```
+  Par.timeout 200ms (fn () ->
+    Shell.stream $*(sh -c 'sleep 30') |> Stream.each (fn _ -> ()))
+
+  -- before    never returns
+  -- now       Error("timed out after 200ms")
   ```

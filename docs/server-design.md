@@ -1,7 +1,19 @@
 # Server
 
-The third of four records for services; `shared-design.md` lists all four.
-It needs fibers and `Shared`.
+wand will run a *service*: one process that handles many requests at the
+same time, such as an HTTP API, a worker or a long-running job. The work is
+in four records, each released once:
+
+1. Fibers: the scheduler, `Par` on it, and waiting versions of the I/O
+   that exists. Released in 0.81.0.
+2. Shared state: `Shared`, `Par.all!` and `Clock.every`. Released in
+   0.82.0.
+3. `server-design.md` (this record): `Net.listen`, `Stream.each_par` and
+   `HTTP.serve`.
+4. `child-process-design.md`: two-way child processes and stderr streams.
+
+Not a goal: distributed processes that talk over a network and restart each
+other. Erlang/BEAM does that better, and wand does not compete there.
 
 - [Server API](#server-api)
 - [Service needs](#service-needs)
