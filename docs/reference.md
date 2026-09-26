@@ -4751,6 +4751,11 @@ ok?      : HTTPResponse -> Bool
 header      : String -> HTTPResponse -> Option String
 header_list : String -> HTTPResponse -> List String
 decode   : Decoder 'a -> HTTPResponse -> Result String 'a
+serve!      : Port -> Int -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
+serve_with! : Limits -> Port -> Int -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
+reply       : Int -> String -> HTTPResponse
+incoming    : HTTPMethod -> String -> Incoming
+segments    : Incoming -> List String
 ```
 
 `HTTPRequest`, `HTTPResponse` and `HTTPMethod` are built in, so the types
@@ -4825,6 +4830,71 @@ that repeats one — `set-cookie` is the case that matters — is read with
 `Par.timeout`. A wrapper cannot differ per request inside a `Par.map` over a
 list of URLs, which is the case that wants a timeout most, and a field is
 visible at the call site where the reviewer is reading.
+
+#### Serving
+
+`serve!` answers HTTP on a port. A handler is a plain function from an
+`HTTP.Incoming` to a response, and routing is a `match` on the method and
+the path's segments:
+
+```ocaml
+uses {Clock, Net.Listen(:8080), Shared}
+
+type State(users: Map String)
+
+let route (state: Shared State) (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.GET, ["users", id]) -> (
+    match Map.get id (Shared.get state).users with
+    | Some name -> HTTP.reply 200 name
+    | None -> HTTP.reply 404 ""
+  )
+  | _ -> HTTP.reply 404 ""
+
+with Shared.make State(users = {}) as state -> HTTP.serve! :8080 256 (route state)
+```
+
+`HTTP.Incoming` is the request as a server receives it, and a type of its
+own rather than an `HTTPRequest`: it has a `path`, a `query`, `headers`, a
+`body` and the `peer` it came from, and no URL, so it cannot be sent back
+out by mistake. `segments` is the path split on `/` and decoded.
+
+At most `limit` requests are handled at once; past that, new clients wait
+in the system's queue. Each request is answered on its own:
+
+| When | The answer |
+|---|---|
+| the handler raises | 500, for that request only |
+| the handler takes longer than `deadline` | 503, and the handler is stopped |
+| the head does not arrive within `head_timeout` | 408 |
+| the body is larger than `max_body` | 413 |
+| the head is larger than `max_head` | 431 |
+| the method is not one `HTTP.Method` names | 501 |
+
+The limits are an `HTTP.Limits`, and `serve!` uses its defaults:
+`max_body = 1MB`, `max_head = 16KB`, `head_timeout = 10s`, `deadline = 30s`,
+`grace = 10s`. `serve_with!` takes others:
+
+```ocaml
+HTTP.serve_with! HTTP.Limits(max_body = 10MB, deadline = 5s) :8080 256 route
+```
+
+**On SIGTERM or Ctrl-C a server drains.** It stops accepting, gives the
+requests in progress `grace` to finish, then stops the rest and the commands
+they are waiting on, and returns. The process then exits as a stopped one
+does, 143 or 130. A second signal stops it at once.
+
+A handler is tested by calling it with a request made by `HTTP.incoming`,
+with no socket:
+
+```ocaml
+test "an unknown user is 404" (fn t ->
+  with Shared.make State(users = {}) as state ->
+    t.eq 404 (route state (HTTP.incoming HTTP.GET "/users/9")).status)
+```
+
+Each connection answers one request and closes. `serve!` raises when it
+cannot listen: the port is in use, or needs privilege.
 
 ### `Env`
 

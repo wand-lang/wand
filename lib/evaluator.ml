@@ -1340,7 +1340,9 @@ let fresh_fiber ?cancel () = {
   f_loc = new_loc_cell yield_every;
   f_cancelled = cancel_within ?own:cancel ();
   f_taken = ref false;
-  f_deferred = ref 0;
+  (* Shared with the task that started this one: work a draining server
+     holds back from an interrupt holds back the work it starts, too. *)
+  f_deferred = Domain.DLS.get interrupts_deferred;
 }
 
 (* Run fibers on this domain; return when all have finished. [start] is
@@ -4126,6 +4128,7 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   let file_net = Domain.DLS.get ambient_file_net in
   let file_listen = Domain.DLS.get ambient_file_listen in
   let caller_cancel = (Domain.DLS.get cancelled).flags in
+  let caller_deferred = Domain.DLS.get interrupts_deferred in
   let stop () =
     Atomic.set stopping true;
     locked (fun () -> Condition.broadcast room);
@@ -4149,6 +4152,7 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   let run_item i =
     Domain.DLS.set cancelled
       { flags = cancels.(i) :: caller_cancel; raised = false };
+    Domain.DLS.set interrupts_deferred caller_deferred;
     (loc_cell ()).depth <- 0;
     let migrated = ref false in
     Effect.Deep.match_with (fun () -> work i) ()
@@ -4228,21 +4232,18 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     (try Unix.close pipe_r with Unix.Unix_error _ -> ());
     (try Unix.close pipe_w with Unix.Unix_error _ -> ())
   in
-  (* Answering the pool and joining it is one stretch that has to finish:
-     see `defer_interrupts`. *)
-  defer_interrupts (fun () ->
-    let domains = List.init pool (fun _ -> Domain.spawn worker) in
-    let join () =
-      List.iter (fun d ->
-        match Domain.join d with
-        | () -> ()
-        | exception (Interrupted _ | Fun.Finally_raised (Interrupted _)) -> ())
-        domains;
-      close ()
-    in
-    match run_fibers_with (fun spawn -> spawn (fresh_fiber ()) (receive spawn)) with
-    | () -> join ()
-    | exception e -> stop (); join (); raise e)
+  let domains = List.init pool (fun _ -> Domain.spawn worker) in
+  let join () =
+    List.iter (fun d ->
+      match Domain.join d with
+      | () -> ()
+      | exception (Interrupted _ | Fun.Finally_raised (Interrupted _)) -> ())
+      domains;
+    close ()
+  in
+  match run_fibers_with (fun spawn -> spawn (fresh_fiber ()) (receive spawn)) with
+  | () -> join ()
+  | exception e -> stop (); join (); raise e
 
 (* What went wrong in one item, as `try` would say it; anything that is not
    a failure of the item's own is the call's. *)
@@ -4551,11 +4552,19 @@ let () = each_par_release := (function VConn c -> conn_close c | _ -> ())
 
 exception Each_par_stopped
 
+(* Servers draining on an interrupt, and how to stop the commands they are
+   waiting on once the grace ends. While one runs, a signal leaves the
+   commands to it. *)
+let drains_running = Atomic.make 0
+let stop_children_hook : (unit -> unit) ref = ref (fun () -> ())
+
 (* Read [desc] and run [f] on each item as a fiber, at most [limit] at a
    time; at the limit it stops reading until one ends. The first item that
    raises stops the rest and the read, and is raised. *)
-let stream_each_par limit f desc =
+let stream_each_par ?grace_ms limit f desc =
   let limit = max 1 limit in
+  let items : cancel list ref = ref [] in
+  let deferrals : int ref list ref = ref [] in
   let in_progress = ref 0 in
   let failure = ref None in
   let cancels = ref [] in
@@ -4571,7 +4580,10 @@ let stream_each_par limit f desc =
     end
   in
   let fail e = if !failure = None then failure := Some e; stop_all () in
-  Fun.protect ~finally:(fun () -> if !stopping then Atomic.decr checks_wanted)
+  if grace_ms <> None then Atomic.incr drains_running;
+  Fun.protect ~finally:(fun () ->
+      if !stopping then Atomic.decr checks_wanted;
+      if grace_ms <> None then Atomic.decr drains_running)
     (fun () ->
       run_fibers_with (fun spawn ->
         let driver_cancel = ref false in
@@ -4582,7 +4594,15 @@ let stream_each_par limit f desc =
           let cancel = ref false in
           cancels := cancel :: !cancels;
           incr in_progress;
-          spawn (fresh_fiber ~cancel ()) (fun () ->
+          let st = fresh_fiber ~cancel () in
+          let st = match grace_ms with
+            | None -> st
+            | Some _ ->
+              let d = ref 1 in
+              deferrals := d :: !deferrals;
+              items := st.f_cancelled :: !items;
+              { st with f_deferred = d } in
+          spawn st (fun () ->
             let body () = ignore (apply f x); VUnit in
             (match if own_handler then !with_default_handler body else body () with
              | _ -> ()
@@ -4591,11 +4611,37 @@ let stream_each_par limit f desc =
             !each_par_release x;
             Sched.unpark room)
         in
+        let driver_done = ref false in
         spawn (fresh_fiber ~cancel:driver_cancel ()) (fun () ->
-          match run_stream_terminal desc ~on_item:item with
-          | () -> ()
-          | exception (Each_par_stopped | Interrupted _) when !stopping -> ()
-          | exception e -> fail e)));
+          (match run_stream_terminal desc ~on_item:item with
+           | () -> ()
+           | exception (Each_par_stopped | Interrupted _) when !stopping -> ()
+           (* Draining: the read stops, and what is in progress goes on. *)
+           | exception Interrupted _ when grace_ms <> None -> ()
+           | exception e -> fail e);
+          driver_done := true);
+        (* On an interrupt, give the work in progress the grace to finish,
+           then stop it and the commands it is waiting on. *)
+        match grace_ms with
+        | None -> ()
+        | Some grace ->
+          spawn (fresh_fiber ()) (fun () ->
+            let finished () = !driver_done && !in_progress = 0 in
+            while not (finished () || Atomic.get interrupt_requested <> 0) do
+              Sched.pause 50
+            done;
+            if not (finished ()) then begin
+              let deadline = Sched.elapsed_ms () + grace in
+              while not (finished () || Sched.elapsed_ms () >= deadline) do
+                Sched.pause 20
+              done;
+              if not (finished ()) then begin
+                List.iter (fun d -> d := 0) !deferrals;
+                List.iter (fun (c : cancel) -> c.raised <- false) !items;
+                !stop_children_hook ();
+                stop_all ()
+              end
+            end)));
   match !failure with Some e -> raise e | None -> ()
 
 (* Open once, write each line, finish on the way out. The lines are the
@@ -4732,6 +4778,14 @@ let stream_builtins : env = [
        | VInt n -> stream_each_par n f d; VUnit
        | _ -> raise (EvalError "Stream.each_par: expected a limit"))
     | _ -> raise (EvalError "Stream.each_par: expected Stream")))));
+  ("stream_serve", VBuiltin (fun grace -> VBuiltin (fun limit ->
+    VBuiltin (fun f -> VBuiltin (function
+    | VStream d ->
+      (match grace, limit with
+       | VDuration g, VInt n ->
+         stream_each_par ~grace_ms:(parse_dur_ms g) n f d; VUnit
+       | _ -> raise (EvalError "HTTP.serve: expected a grace and a limit"))
+    | _ -> raise (EvalError "HTTP.serve: expected Stream"))))));
   ("stream_to_list", VBuiltin (function
     | VStream d ->
       let acc = ref [] in

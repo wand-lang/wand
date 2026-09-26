@@ -4587,6 +4587,13 @@ let stdlib_type_env : env = [
      (TInt @-> TFun (TFun (a, b, e),
                      TFun (TStream (e, a), TUnit, e),
                      Effect_set.pure)));
+  ("stream_serve",
+   let a = fresh () and b = fresh () in
+   let e = Effect_set.unknown () in
+   generalize []
+     (TDuration @-> (TInt @-> TFun (TFun (a, b, e),
+                                    TFun (TStream (e, a), TUnit, e),
+                                    Effect_set.pure))));
   ("stream_to_list",
    let a = fresh () in
    let e = Effect_set.unknown () in

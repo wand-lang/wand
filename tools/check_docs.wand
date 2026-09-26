@@ -65,6 +65,8 @@ let check name = $?(%{wand} d --test %{name})
 --   Net.write           the same
 --   Net.write!          the same
 --   Net.peer            the same
+--   HTTP.serve!         serves until it is stopped, and a check has no client
+--   HTTP.serve_with!    the same
 --
 -- The rest of `HTTP` has examples, because `Test.with_http` answers a
 -- request without one. These four do not, because the double answers with a
@@ -87,7 +89,9 @@ let exempt = [
   "Net.read",
   "Net.write",
   "Net.write!",
-  "Net.peer"
+  "Net.peer",
+  "HTTP.serve!",
+  "HTTP.serve_with!"
 ]
 
 -- `wand d` lists a module's members, one per line, as `Module.name : type`,

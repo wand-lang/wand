@@ -3106,6 +3106,8 @@ let run_string src =
    at all. *)
 let interrupting = Atomic.make false
 
+let () = Evaluator.stop_children_hook := (fun () -> stop_children Sys.sigterm)
+
 let install_signal_handlers () =
   let stop signal code (_ : int) =
     (* Taking the request also hands the signal back to the system, so a
@@ -3122,6 +3124,8 @@ let install_signal_handlers () =
     if not (Atomic.exchange interrupting true) then begin
       Sys.set_signal signal Sys.Signal_default;
       Evaluator.request_interrupt code;
+      (* A draining server stops these itself, once its grace ends. *)
+      if Atomic.get Evaluator.drains_running = 0 then
       (* Stop what we started. Until the commands wand is waiting on end, it
          is inside a read and cannot act on the request at all -- so the
          script's own cleanup is waiting on processes nobody is watching any

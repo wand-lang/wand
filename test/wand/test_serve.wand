@@ -1,0 +1,78 @@
+uses {Clock, Net.Listen(:18481), Shared, Shell(curl)}
+
+import Clock
+import HTTP
+import List
+import Map
+import Par
+import Shared
+import String
+import Test
+
+let {test, group} = import Test
+
+type State(users: Map String)
+
+-- A handler is a function from a request to a response, so a test calls it
+-- with a request it made, and needs no socket.
+let route! (state: Shared State) (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.GET, ["users", id]) -> (
+    match Map.get id (Shared.get state).users with
+    | Some name -> HTTP.reply 200 name
+    | None -> HTTP.reply 404 ""
+  )
+  | (HTTP.POST, ["users", id]) -> (
+    Shared.update state (fn s -> State(s, users = Map.set id req.body s.users));
+    HTTP.reply 201 ""
+  )
+  | (HTTP.GET, ["boom"]) -> HTTP.reply 200 (List.head! [])
+  | (HTTP.GET, ["slow"]) -> (Clock.sleep 3s; HTTP.reply 200 "late")
+  | _ -> HTTP.reply 404 ""
+
+group "a handler without a socket" (fn () -> [
+  test "an unknown user is 404" (fn t ->
+    with Shared.make State(users = {}) as state ->
+    t.eq 404 (route! state (HTTP.incoming HTTP.GET "/users/9")).status),
+  test "a stored user is found" (fn t ->
+    with Shared.make State(users = {}) as state -> (
+      let _ = route! state HTTP.Incoming(HTTP.incoming HTTP.POST "/users/9", body = "ada");
+      t.eq "ada" (route! state (HTTP.incoming HTTP.GET "/users/9")).body
+    )),
+  test "segments are decoded and the query is apart" (fn t ->
+    let req = HTTP.incoming HTTP.GET "/a%20b//c?x=1";
+    t.eq (["a b", "c"], "x=1") (HTTP.segments req, req.query))
+])
+
+let fmt = String.replace "(" "{" "%(http_code}"
+
+let status! verb data url =
+  $(curl -s -o /dev/null -w %{fmt} -X %{verb} --data-binary %{data} %{url})
+
+let body! url = $(curl -s %{url})
+
+-- The server and its client run as two branches of one call: when the
+-- client is done, the server stops.
+test "a server answers each request as its limits say" (fn t ->
+  t.eq
+    ["201", "ada", "404", "500", "503", "413", "501"]
+    (with Shared.make State(users = {}) as state ->
+    Par.all! [
+      fn () -> (
+        HTTP.serve_with! HTTP.Limits(deadline = 1s, max_body = 10B) :18481 16 (route! state);
+        []
+      ),
+      fn () -> (
+        Clock.sleep 200ms;
+        let url = "http://127.0.0.1:18481";
+        [
+          status! "POST" "ada" "%{url}/users/7",
+          body! "%{url}/users/7",
+          status! "GET" "" "%{url}/users/8",
+          status! "GET" "" "%{url}/boom",
+          status! "GET" "" "%{url}/slow",
+          status! "POST" "0123456789ABCDEF" "%{url}/users/9",
+          status! "OPTIONS" "" "%{url}/"
+        ]
+      )
+    ]))

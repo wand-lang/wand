@@ -214,6 +214,82 @@ let test_exit_releases () =
       (Printf.sprintf "exit %d released first" n) false present
   ) [0; 1; 3; 42]
 
+(* A server told to stop stops accepting, lets the request in progress
+   finish, and then exits as a stopped process does. The request is sent
+   from here, and the signal goes once the handler says it has started. *)
+let test_http_server_drains () =
+  if not (Sys.file_exists wand_binary) then
+    Alcotest.failf "wand binary not found at %s" wand_binary;
+  let port = 18000 + (Unix.getpid () mod 1000) in
+  let marker = Filename.temp_file "wand_drain" "" in
+  Sys.remove marker;
+  let src = Printf.sprintf
+    "uses {Clock, FS.Write, Net.Listen}\n\
+     import Clock\nimport FS\nimport HTTP\nimport Path\nimport String\n\
+     let route (req: HTTP.Incoming) = (\n\
+       FS.write_file! (Path.of_string %S) \"started\";\n\
+       Clock.sleep 1s;\n\
+       HTTP.reply 200 \"finished\"\n\
+     )\n\
+     HTTP.serve_with! HTTP.Limits(grace = 5s) (String.to_port! \":%d\") 4 route\n"
+    marker port in
+  let path = Filename.temp_file "wand_drain" ".wand" in
+  Out_channel.with_open_text path (fun oc -> output_string oc src);
+  let devnull = Unix.openfile "/dev/null" [Unix.O_WRONLY] 0o644 in
+  let pid = Unix.create_process wand_binary [| wand_binary; path |]
+              Unix.stdin devnull devnull in
+  let addr = Unix.ADDR_INET (Unix.inet_addr_loopback, port) in
+  let rec connect tries =
+    let fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+    match Unix.connect fd addr with
+    | () -> fd
+    | exception Unix.Unix_error _ when tries > 0 ->
+      Unix.close fd; ignore (Unix.select [] [] [] 0.05); connect (tries - 1)
+  in
+  let fd = connect 200 in
+  let req = "GET /slow HTTP/1.1\r\nHost: x\r\n\r\n" in
+  ignore (Unix.write_substring fd req 0 (String.length req));
+  let rec started tries =
+    if Sys.file_exists marker then true
+    else if tries = 0 then false
+    else (ignore (Unix.select [] [] [] 0.05); started (tries - 1))
+  in
+  let began = started 200 in
+  Unix.kill pid Sys.sigterm;
+  ignore (Unix.select [] [] [] 0.2);
+  let refused =
+    let fd2 = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+    let r = match Unix.connect fd2 addr with
+      | () -> false
+      | exception Unix.Unix_error _ -> true in
+    Unix.close fd2; r
+  in
+  let buf = Buffer.create 256 and chunk = Bytes.create 256 in
+  let rec drain () =
+    match Unix.read fd chunk 0 256 with
+    | 0 -> ()
+    | n -> Buffer.add_subbytes buf chunk 0 n; drain ()
+    | exception Unix.Unix_error _ -> ()
+  in
+  drain ();
+  Unix.close fd;
+  let (_, status) = Unix.waitpid [] pid in
+  Unix.close devnull;
+  (try Sys.remove path with _ -> ());
+  (try Sys.remove marker with _ -> ());
+  let answer = Buffer.contents buf in
+  let has sub =
+    let n = String.length sub and m = String.length answer in
+    let rec go i = i + n <= m && (String.sub answer i n = sub || go (i + 1)) in
+    go 0
+  in
+  Alcotest.(check bool) "the handler started before the signal" true began;
+  Alcotest.(check bool) "a new connection is refused" true refused;
+  Alcotest.(check bool) (Printf.sprintf "the request finished: %S" answer) true
+    (has "200 OK" && has "finished");
+  Alcotest.(check bool) "exits 143, as a stopped process does" true
+    (status = Unix.WEXITED 143)
+
 let () =
   Alcotest.run "Signals" [
     "a stopped script still releases", [
@@ -222,6 +298,7 @@ let () =
       Alcotest.test_case "exit n"  `Quick test_exit_releases;
       Alcotest.test_case "Par workers" `Quick test_par_workers_release;
       Alcotest.test_case "during acquire" `Quick test_interrupt_during_acquire_releases;
+      Alcotest.test_case "an HTTP server drains" `Quick test_http_server_drains;
     ];
     "the limit", [
       Alcotest.test_case "SIGKILL cannot" `Quick test_sigkill_cannot_release;

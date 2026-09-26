@@ -1,10 +1,15 @@
-uses {FS.Read, FS.Write, Net}
+uses {Clock, FS.Read, FS.Write, Net, Net.Listen}
 
 import FS
 import List
 import Map
+import Net
+import Par
+import Result
 import Shell
+import Size
 import String
+import URL
 
 -- Reaching a host over HTTP.
 --
@@ -148,3 +153,207 @@ let upload! url path = request! Request(url = url, method = POST, body = FS.read
 
 -- Send a file as the body of a request.
 let upload url path = try upload! url path
+
+-- ── Serving ─────────────────────────────────────────────────────────────
+
+-- A request as a server receives it: a path and a query rather than a URL,
+-- and where it came from. It is a type of its own, so one cannot be sent
+-- back out by mistake.
+type Incoming(
+  method: Method,
+  path: String,
+  query: String,
+  headers: Map String,
+  body: String,
+  peer: String = ""
+)
+
+-- What `serve!` allows a request, each with a default: the size of its body
+-- and of its head, how long its head may take to arrive, how long the
+-- handler may take, and how long a request in progress is given to finish
+-- when the server is told to stop.
+type Limits(
+  max_body: Size = 1MB,
+  max_head: Size = 16KB,
+  head_timeout: Duration = 10s,
+  deadline: Duration = 30s,
+  grace: Duration = 10s
+)
+
+-- A response with this status and body, and no headers.
+--
+-- >> (HTTP.reply 404 "no such user").status
+-- 404 : Int
+let reply status body = Response(status = status, headers = {}, body = body)
+
+let _split_target target =
+  match String.split "?" target with
+  | [] -> ("/", "")
+  | [path] -> (path, "")
+  | [path :: rest] -> (path, String.join "?" rest)
+
+-- A request made in a test, to give a handler without a socket.
+--
+-- >> (HTTP.incoming HTTP.GET "/users/9?full=1").query
+-- "full=1" : String
+let incoming method target =
+  let (path, query) = _split_target target;
+  Incoming(method = method, path = path, query = query, headers = {}, body = "")
+
+-- The parts of a request's path, decoded, without the empty ones the
+-- slashes leave. Routing is a `match` on these.
+--
+-- >> HTTP.segments (HTTP.incoming HTTP.GET "/users/john%20doe/")
+-- ["users", "john doe"] : List String
+let segments (req: Incoming) =
+  String.split "/" req.path
+  |> List.filter (fn s -> !(String.empty? s))
+  |> List.map (fn s -> Result.default s (URL.decode s))
+
+let _status_text code =
+  match code with
+  | 200 -> "OK"
+  | 201 -> "Created"
+  | 202 -> "Accepted"
+  | 204 -> "No Content"
+  | 301 -> "Moved Permanently"
+  | 302 -> "Found"
+  | 304 -> "Not Modified"
+  | 400 -> "Bad Request"
+  | 401 -> "Unauthorized"
+  | 403 -> "Forbidden"
+  | 404 -> "Not Found"
+  | 405 -> "Method Not Allowed"
+  | 408 -> "Request Timeout"
+  | 409 -> "Conflict"
+  | 413 -> "Content Too Large"
+  | 422 -> "Unprocessable Content"
+  | 431 -> "Request Header Fields Too Large"
+  | 500 -> "Internal Server Error"
+  | 501 -> "Not Implemented"
+  | 503 -> "Service Unavailable"
+  | _ -> "Status"
+
+let _method_of text =
+  match text with
+  | "GET" -> Some GET
+  | "POST" -> Some POST
+  | "PUT" -> Some PUT
+  | "PATCH" -> Some PATCH
+  | "DELETE" -> Some DELETE
+  | "HEAD" -> Some HEAD
+  | _ -> None
+
+-- The lines of a request's head, up to the blank one, within `max` bytes.
+let _read_head conn max =
+  let go lines used =
+    match Net.read_line conn with
+    | None -> Error (400, "the request ended before its head did")
+    | Some "" -> Ok (List.reverse lines)
+    | Some line -> if used + String.length line > max then
+        Error (431, "the request's head is larger than %{max} bytes")
+      else go (line :: lines) (used + String.length line + 2)
+  in
+  go [] 0
+
+let _parse_headers lines =
+  lines
+  |> List.filter_map (fn line ->
+    match String.split ":" line with
+    | [] -> None
+    | [_] -> None
+    | [name :: rest] -> Some (
+      String.lower (String.trim name),
+      String.trim (String.join ":" rest)
+    ))
+  |> Map.from_list
+
+-- Exactly `n` bytes of body, or fewer if the other end stops sending.
+let _read_body conn n =
+  let go parts got =
+    if got >= n then String.join "" (List.reverse parts)
+    else (
+      let part = Net.read (n - got) conn;
+      if String.empty? part then String.join "" (List.reverse parts)
+      else go (part :: parts) (got + String.length part)
+    );
+  go [] 0
+
+let _read_request (limits: Limits) conn =
+  match _read_head conn (Size.to_bytes limits.max_head) with
+  | Error refusal -> Error refusal
+  | Ok [] -> Error (400, "the request is empty")
+  | Ok [first :: rest] -> (
+    match String.split " " first with
+    | [verb, target, _] -> (
+      match _method_of verb with
+      | None -> Error (501, "")
+      | Some method -> (
+        let headers = _parse_headers rest;
+        let length =
+          (match Map.get "content-length" headers with
+           | Some n -> Result.default (0 - 1) (String.to_int n)
+           | None -> 0);
+        if length < 0 then Error (400, "the Content-Length is not a number")
+        else if length > Size.to_bytes limits.max_body then
+          Error (413, "the body is larger than %{limits.max_body}")
+        else (
+          let (path, query) = _split_target target;
+          Ok Incoming(
+            method = method,
+            path = path,
+            query = query,
+            headers = headers,
+            body = _read_body conn length,
+            peer = Net.peer conn
+          )
+        )
+      )
+    )
+    | _ -> Error (400, "the request line is not `METHOD target HTTP/version`")
+  )
+
+let _send (r: Response) conn =
+  let head =
+    Map.to_list r.headers |> List.map (fn (k, v) -> "%{k}: %{v}\r\n") |> String.join "";
+  let status = "HTTP/1.1 %{r.status} %{_status_text r.status}\r\n";
+  let fixed = "Content-Length: %{String.length r.body}\r\nConnection: close\r\n";
+  let _ = Net.write "%{status}%{fixed}%{head}\r\n%{r.body}" conn;
+  ()
+
+let _answer (limits: Limits) handler conn =
+  match Par.timeout limits.head_timeout (fn () -> _read_request limits conn) with
+  | Error _ -> _send (reply 408 "") conn
+  | Ok (Error(status, why)) -> _send (reply status why) conn
+  | Ok (Ok req) -> (
+    match Par.timeout limits.deadline (fn () -> handler req) with
+    | Ok response -> _send response conn
+    | Error why -> if String.starts_with? "timed out after" why then _send (reply 503 "") conn
+      else _send (reply 500 "") conn
+  )
+
+-- `serve!`, with limits other than the defaults:
+--
+-- HTTP.serve_with! HTTP.Limits(max_body = 10MB, deadline = 5s) :8080 256 handle
+let serve_with! (limits: Limits) port limit handler =
+  Net.listen port |> stream_serve limits.grace limit (_answer limits handler)
+
+-- Serve HTTP on `port`: at most `limit` requests at once, each given to
+-- `handler`, which answers with a response. Runs until the process is
+-- told to stop.
+--
+-- let handle (req: HTTP.Incoming) =
+--   match (req.method, HTTP.segments req) with
+--   | (HTTP.GET, ["health"]) -> HTTP.reply 200 "ok"
+--   | _ -> HTTP.reply 404 ""
+--
+-- HTTP.serve! :8080 256 handle
+--
+-- A handler that raises answers 500 for that request only. One that takes
+-- longer than the deadline is stopped and answers 503. A request whose
+-- head does not arrive in time answers 408, and one larger than the limits
+-- answers 413 or 431. `serve_with!` takes other `Limits`.
+--
+-- On SIGTERM or Ctrl-C it stops accepting, gives the requests in progress
+-- the grace to finish, then stops them, and returns.
+let serve! port limit handler = serve_with! Limits() port limit handler
