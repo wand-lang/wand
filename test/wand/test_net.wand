@@ -1,0 +1,57 @@
+uses {Clock, Net.Listen(:18471, :18472, :18473), Shell(curl)}
+
+import Clock
+import List
+import Net
+import Option
+import Par
+import Stream
+
+let {test, group} = import Test
+
+-- Read a request's lines up to the blank one that ends its head, and answer
+-- with the first of them.
+let answer! conn =
+  let first = Option.default "" (Net.read_line conn);
+  let skip n =
+    match Net.read_line conn with
+    | Some "" -> n
+    | None -> n
+    | Some _ -> skip (n + 1)
+  in
+  let _ = skip 0;
+  Net.write! "HTTP/1.0 200 OK\r\n\r\n%{first}" conn
+
+-- A server and its clients run as two branches: when the clients are done,
+-- the server stops, and its port with it.
+group "serving" (fn () -> [
+  test "every client is answered" (fn t ->
+    t.eq
+      (List.map (fn i -> Ok "GET /%{i} HTTP/1.1") (List.range 1 20))
+      (Par.all! [
+        fn () -> (Net.listen :18471 |> Stream.each_par 8 answer!; []),
+        fn () -> (
+          Clock.sleep 200ms;
+          Par.map 20 (fn i -> $(curl -s http://127.0.0.1:18471/%{i})) (List.range 1 20)
+        )
+      ])),
+  test "each connection is closed when its work ends" (fn t ->
+    t.eq
+      "GET /once HTTP/1.1"
+      (Par.all! [
+        fn () -> (Net.listen :18472 |> Stream.each_par 1 answer!; ""),
+        fn () -> (Clock.sleep 200ms; $(curl -s --max-time 5 http://127.0.0.1:18472/once))
+      ])),
+  test "a port the manifest does not name is refused" (fn t ->
+    t.raises (fn () -> Net.listen :18479 |> Stream.each_par 1 (fn _ -> ())))
+])
+
+-- Stopping a branch stops the work it started: here the server's own
+-- workers, and the read that waits for the next connection.
+test "stopping a branch stops the work inside it" (fn t ->
+  t.eq
+    "stopped"
+    (Par.all! [
+      fn () -> (Net.listen :18473 |> Stream.each_par 4 (fn _ -> ()); "server ended"),
+      fn () -> (Clock.sleep 200ms; "stopped")
+    ]))

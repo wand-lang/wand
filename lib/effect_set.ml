@@ -8,7 +8,7 @@
    it is given performs, so what it performs is a variable, not a fixed set.
 
    The effects are fixed and few on purpose. A script cannot define new
-   ones, so an effect set is always a subset of these eleven, and a reader of
+   ones, so an effect set is always a subset of these twelve, and a reader of
    a signature has a finite vocabulary to learn. One is added when something
    can actually perform it: network access reaches the outside world through
    a command today, and so reports as Shell. Waiting is not like that --
@@ -35,6 +35,7 @@ type eff =
   | FsWrite   (* creates, changes or removes something on disk *)
   | Env       (* reads or changes environment variables *)
   | Net       (* sends bytes to a host outside this machine *)
+  | NetListen (* accepts connections on a port of this machine *)
   | IO        (* reads or writes the program's own streams *)
   | Proc      (* ends the process; nothing catches this *)
   | Random    (* answers differently between runs; draws from entropy *)
@@ -47,8 +48,8 @@ type eff =
    manifest is always already in canonical form and a reader can predict
    where a label sits without knowing any convention beyond the
    alphabet. *)
-let all = [Clock; Env; FsRead; FsWrite; IO; Net; Proc; Raise; Random; Shared;
-           Shell]
+let all = [Clock; Env; FsRead; FsWrite; IO; Net; NetListen; Proc; Raise; Random;
+           Shared; Shell]
 
 let name_of = function
   | Clock   -> "Clock"
@@ -58,6 +59,7 @@ let name_of = function
   | Env     -> "Env"
   | IO      -> "IO"
   | Net     -> "Net"
+  | NetListen -> "Net.Listen"
   | Proc    -> "Proc"
   | Random  -> "Random"
   | Shared  -> "Shared"
@@ -78,6 +80,9 @@ let description = function
   | Net     -> "Sends bytes to a host outside this machine. \
                 `Net(api.github.com)` narrows it to the hosts named; bare \
                 `Net` admits any."
+  | NetListen -> "Accepts connections on a port of this machine. \
+                  `Net.Listen(:8080)` narrows it to the ports named; bare \
+                  `Net.Listen` admits any."
   | Proc    -> "Ends the process. Nothing catches this."
   | Random  -> "Draws from entropy: answers differently on two runs unless \
                 the seed is pinned."

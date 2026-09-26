@@ -19,7 +19,7 @@ examples. Most tasks need only one part.
 - `lib/` — the pipeline, one stage per module:
   - `token.ml`, `lexer.ml` — tokens and lexing, including domain literals (paths, globs, durations, sizes) and the string/command interpolation forms.
   - `parser.ml`, `ast.ml` — recursive-descent parser. A newline ends a statement unless the line below is indented past it, or opens with an operator; a bracket the statement opened suspends the rule until it closes. `stmt_col`/`stmt_depth` carry that anchor, and `clause_name` is what lets a function's next equation end the body above it.
-  - `typechecker.ml`, `effect_set.ml` — Hindley-Milner inference extended with effect sets (the eleven labels below); manifests are checked against inferred effects here.
+  - `typechecker.ml`, `effect_set.ml` — Hindley-Milner inference extended with effect sets (the twelve labels below); manifests are checked against inferred effects here.
   - `evaluator.ml` — tree-walking interpreter; effect handlers, `Par`, signals, shell execution.
   - `lint.ml`, `lint_rules.ml` — the `V-*`/`A-*` rules `wand t` reports.
   - `formatter.ml` — `wand f`; comments are never dropped or restyled.
@@ -207,8 +207,9 @@ The first line of a file that touches the world declares what it may do:
 uses {Env, FS.Read, FS.Write, IO, Shell(curl, git)}
 ```
 
-Those are five of the eleven effect labels: `Shell` (subprocesses),
-`FS.Read`, `FS.Write`, `Env`, `Net` (bytes to a host), `IO` (own streams),
+Those are five of the twelve effect labels: `Shell` (subprocesses),
+`FS.Read`, `FS.Write`, `Env`, `Net` (bytes to a host), `Net.Listen`
+(serves on a port), `IO` (own streams),
 `Proc` (exits), `Raise`, `Clock` (waits), `Random` (draws from entropy),
 `Shared` (state that changes).
 `Shell` covers naming a command as well as running one.
@@ -366,7 +367,7 @@ test `examples/ports/` without running any of them.
 Stdlib modules: List, String, Regex, Map, FS, Resource, Stream, Path, IO,
 Float, Int, Proc, Env, CSV, JSON, TOML, YAML, Duration, Size, Clock,
 DateTime, Par, Shell, Decode, Args, Test, Option, Result, Hash, Digest,
-Base64, HTTP, URL, Glob, IPv4, CIDR, Port, Version, Random, Shared. Every function
+Base64, HTTP, URL, Glob, IPv4, CIDR, Port, Version, Random, Shared, Net. Every function
 comes from a module: printing is
 `IO.println`, and a file that prints writes `import IO`.
 

@@ -2373,6 +2373,8 @@ let parse_manifest s =
          the language. The word is its text; nothing here is a `Glob`
          value. *)
       | Token.Star -> add_joined "*" floc
+      (* `Net.Listen(:8080)`: a port, spelled as its literal. *)
+      | Token.Port n -> add (":" ^ string_of_int n)
       (* A host may be an address, which lexes as itself. *)
       | Token.IPv4 w0 | Token.Ident w0 | Token.Path w0 | Token.Glob w0 ->
         (* `docker-compose` arrives as `docker`, `-`, `compose`, and

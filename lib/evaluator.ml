@@ -282,6 +282,9 @@ type value =
   (* State that changes, made by `Shared.make` and closed when its `with`
      ends. *)
   | VShared        of shared_cell
+  (* A connection a listening port accepted, and the socket listening. *)
+  | VConn          of conn
+  | VListener      of Unix.file_descr
   (* An index over the entries behind it. An environment is a list because
      that is what binding is -- push a name in front of what was there -- and
      lookup walks it, which is fine for the handful a script defines and not
@@ -293,6 +296,16 @@ type value =
      environment can be appended to, sliced, or carry several indexes without
      any of it having to know. *)
   | VEnvIndex      of (string, value) Hashtbl.t
+
+and conn = {
+  c_fd : Unix.file_descr;
+  c_buf : Buffer.t;          (* read and not yet taken, from [c_pos] *)
+  mutable c_pos : int;
+  mutable c_scan : int;      (* no newline before this *)
+  mutable c_eof : bool;
+  mutable c_closed : bool;
+  c_peer : string;
+}
 
 and shared_cell = {
   mutable s_value : value;
@@ -333,6 +346,9 @@ and stream_source =
      that `take` stops pulling, which no wand-level mock can observe under
      open-granularity effects. *)
   | SPull  of (unit -> value option)
+  (* Connections accepted on a port, one per pull, for as long as the read
+     goes on. *)
+  | SListen of int
 
 and stream_stage =
   | StMap       of value
@@ -730,6 +746,8 @@ let rec render ~quote v =
   | VLineSink _ -> "<line sink>"
   | VDecoder _  -> "<decoder>"
   | VShared _   -> "<shared>"
+  | VConn c     -> "<connection from " ^ c.c_peer ^ ">"
+  | VListener _ -> "<listener>"
   | VEnvIndex _ -> "<env index>"
   | VPartialConstr (n, _, _) -> Printf.sprintf "<%s>" (Ctor.name n)
   (* The bound is not part of what a request is; it shows as the record. *)
@@ -885,7 +903,14 @@ type _ Effect.t += WandEffect : string * value -> value Effect.t
    it at the perform. *)
 exception Perform_here of (unit -> value)
 
+(* The scheduler around the code that performed the effect a handler is
+   answering: set at the perform, so a handler on its own stack can tell
+   whether the performer is a fiber inside it. *)
+let performed_in : Sched.place Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> None)
+
 let perform_wand (name, v) =
+  Domain.DLS.set performed_in (Sched.place ());
   try Effect.perform (WandEffect (name, v)) with Perform_here f -> f ()
 
 (* The Shell allowlist of the $()/$?() site currently being performed --
@@ -924,6 +949,22 @@ let with_file_net allow f =
 let net_bound_of_manifest = function
   | Some (labels, _) -> Option.join (List.assoc_opt "Net" labels)
   | None -> None
+
+(* The `Net.Listen(...)` bound of the file whose top level is running, read
+   when a port is listened on. *)
+let ambient_file_listen : string list option Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> None)
+
+(* Run [f] under the bounds [manifest] declares. *)
+let with_file_bounds manifest f =
+  let listen = match manifest with
+    | Some (labels, _) -> Option.join (List.assoc_opt "Net.Listen" labels)
+    | None -> None
+  in
+  let saved = Domain.DLS.get ambient_file_listen in
+  Domain.DLS.set ambient_file_listen listen;
+  Fun.protect ~finally:(fun () -> Domain.DLS.set ambient_file_listen saved)
+    (fun () -> with_file_net (net_bound_of_manifest manifest) f)
 
 (* A URL the run computed. It keeps the bound of the URL it was made from,
    and a URL made from text takes the running file's. *)
@@ -1167,9 +1208,24 @@ let clear_interrupt () =
    Domain-local and separate from the program-wide interrupt: one lost race
    is not the program stopping, and a loser must not look like Ctrl-C to
    anything else. *)
-let cancelled : bool ref Domain.DLS.key = Domain.DLS.new_key (fun () -> ref false)
+(* A task is stopped when its own flag is set or when the flag of any task
+   that started it is, so stopping a branch stops the work inside it. It is
+   raised once: the releases after it are ordinary evaluation. *)
+type cancel = { flags : bool ref list; mutable raised : bool }
 
-let cancel_this_domain flag = Domain.DLS.set cancelled flag
+let cancelled : cancel Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> { flags = []; raised = false })
+
+(* A task started here, stopped by [own] or by whatever stops this one. *)
+let cancel_within ?own () =
+  let flags = (Domain.DLS.get cancelled).flags in
+  { flags = (match own with Some f -> f :: flags | None -> flags);
+    raised = false }
+
+let is_cancelled () =
+  List.exists (fun f -> !f) (Domain.DLS.get cancelled).flags
+
+let () = Sched.owner_cancelled := is_cancelled
 
 (* Races currently running. Nothing but a race cancels a domain or a fiber,
    so while this is zero the checkpoint has nothing to find. Counted rather
@@ -1186,7 +1242,10 @@ let check_interrupt_now () =
      stood would raise again on the first step of the cleanup, so nothing
      the loser held would be given back. *)
   let cancel = Domain.DLS.get cancelled in
-  if !cancel then begin cancel := false; raise (Interrupted 0) end;
+  if (not cancel.raised) && List.exists (fun f -> !f) cancel.flags then begin
+    cancel.raised <- true;
+    raise (Interrupted 0)
+  end;
   let code = Atomic.get interrupt_requested in
   if code <> 0 && !(Domain.DLS.get interrupts_deferred) = 0 then begin
     let taken = Domain.DLS.get interrupt_taken in
@@ -1212,9 +1271,14 @@ let yield_every =
                | _ -> 1000)
   | None -> 1000
 
+(* Whether the running code is a `Par` item still on a pool domain, where
+   an effect is not performed but moves the item to the calling domain. *)
+let on_pool : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> false)
+
 let fiber_turn (c : loc_cell) =
   c.budget <- yield_every;
-  if Atomic.get fibers_running <> 0 then Sched.yield ()
+  if Atomic.get fibers_running <> 0 && not (Domain.DLS.get on_pool) then
+    Sched.yield ()
 
 let check_interrupt () =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0 then
@@ -1225,18 +1289,16 @@ let () = Sched.interrupt_pending := (fun () ->
 
 (* What a fiber carries of its own: every per-task value above. The regex
    cache stays per domain. *)
-(* Whether the running code is a `Par` item still on a pool domain, where
-   an effect is not performed but moves the item to the calling domain. *)
-let on_pool : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> false)
 
 type fiber_state = {
   f_on_pool : bool;
   f_shell_allow : string list option;
   f_net_allow : string list option;
   f_file_net : string list option;
+  f_file_listen : string list option;
   f_deadline : int option;
   f_loc : loc_cell;
-  f_cancelled : bool ref;
+  f_cancelled : cancel;
   f_taken : bool ref;
   f_deferred : int ref;
 }
@@ -1246,6 +1308,7 @@ let save_fiber () = {
   f_shell_allow = Domain.DLS.get ambient_shell_allow;
   f_net_allow = Domain.DLS.get ambient_net_allow;
   f_file_net = Domain.DLS.get ambient_file_net;
+  f_file_listen = Domain.DLS.get ambient_file_listen;
   f_deadline = Domain.DLS.get shell_deadline;
   f_loc = Domain.DLS.get current_loc;
   f_cancelled = Domain.DLS.get cancelled;
@@ -1258,6 +1321,7 @@ let restore_fiber st =
   Domain.DLS.set ambient_shell_allow st.f_shell_allow;
   Domain.DLS.set ambient_net_allow st.f_net_allow;
   Domain.DLS.set ambient_file_net st.f_file_net;
+  Domain.DLS.set ambient_file_listen st.f_file_listen;
   Domain.DLS.set shell_deadline st.f_deadline;
   Domain.DLS.set current_loc st.f_loc;
   Domain.DLS.set cancelled st.f_cancelled;
@@ -1266,14 +1330,15 @@ let restore_fiber st =
 
 (* A fiber starts as a `Par` worker on a new domain does: the calling
    file's net bound, and nothing else. *)
-let fresh_fiber ?(cancel = ref false) () = {
+let fresh_fiber ?cancel () = {
   f_on_pool = false;
   f_shell_allow = None;
   f_net_allow = None;
   f_file_net = Domain.DLS.get ambient_file_net;
+  f_file_listen = Domain.DLS.get ambient_file_listen;
   f_deadline = None;
   f_loc = new_loc_cell yield_every;
-  f_cancelled = cancel;
+  f_cancelled = cancel_within ?own:cancel ();
   f_taken = ref false;
   f_deferred = ref 0;
 }
@@ -1617,6 +1682,7 @@ let rec wand_equal a b =
      an account of where they were written, not part of what they are. *)
   | VRequest (a, _), b | a, VRequest (b, _) -> wand_equal a b
   | VShared x, VShared y -> x == y
+  | VConn x, VConn y -> x == y
   | VConstr (n1, xs), VConstr (n2, ys) ->
     n1 = n2 && List.length xs = List.length ys && List.for_all2 wand_equal xs ys
   (* Entry for entry in insertion order, which is what comparing the two
@@ -2382,25 +2448,19 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     let entry_state = save_fiber () in
     let entry_place = Sched.place () in
     let as_handler () =
-      let here = Sched.place () in
-      if Sched.same_place here entry_place then None
+      if Sched.same_place (Domain.DLS.get performed_in) entry_place then None
       else begin
         let fiber = save_fiber () in
-        restore_fiber entry_state; Sched.enter_place entry_place;
-        Some (fiber, here)
+        restore_fiber entry_state;
+        Some fiber
       end
-    in
-    let as_fiber = function
-      | None -> ()
-      | Some (fiber, here) -> restore_fiber fiber; Sched.enter_place here
     in
     let in_fiber saved f =
       match saved with
       | None -> f ()
-      | Some _ ->
-        as_fiber saved;
-        Fun.protect f ~finally:(fun () ->
-          restore_fiber entry_state; Sched.enter_place entry_place)
+      | Some fiber ->
+        restore_fiber fiber;
+        Fun.protect f ~finally:(fun () -> restore_fiber entry_state)
     in
     observed (fun () -> clock_handled effect_cases (fun () ->
     Effect.Deep.match_with (fun () -> eval env body_expr) ()
@@ -2898,6 +2958,159 @@ let () = Hashtbl.replace direct_impl "Shared!update" (function
     c.s_value <- v;
     VUnit
   | _ -> raise (EvalError "Shared.update: expected a Shared and a function"))
+
+(* ── Serving ───────────────────────────────────────────────────────────── *)
+
+(* Wait until [fd] is ready, then look at the checkpoint: a fiber that was
+   woken because its work is being stopped stops here. *)
+let socket_wait ~write fd =
+  if Sched.active () then
+    (if write then Sched.wait_writable fd else Sched.wait_readable fd)
+  else
+    (try ignore (if write then Unix.select [] [fd] [] (-1.0)
+                 else Unix.select [fd] [] [] (-1.0))
+     with Unix.Unix_error (Unix.EINTR, _, _) -> ());
+  check_interrupt ()
+
+let net_listen_impl = function
+  | VPort port ->
+    (match Domain.DLS.get ambient_file_listen with
+     | Some allow when
+         not (Narrow.allowed ~rule:Narrow.port ~allow (":" ^ string_of_int port)) ->
+       raise (EvalError (Printf.sprintf
+         "listening on :%d, which Net.Listen(%s) does not allow" port
+         (String.concat ", " allow)))
+     | _ -> ());
+    let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+    (try
+       Unix.setsockopt fd Unix.SO_REUSEADDR true;
+       Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_any, port));
+       Unix.listen fd 128;
+       Unix.set_nonblock fd
+     with Unix.Unix_error (e, _, _) ->
+       (try Unix.close fd with Unix.Unix_error _ -> ());
+       raise (EvalError (match e with
+         | Unix.EADDRINUSE -> Printf.sprintf
+             "port :%d is in use -- another process is listening on it" port
+         | Unix.EACCES -> Printf.sprintf
+             "port :%d needs more privilege than this process has -- use a \
+              port above 1023" port
+         | e -> Printf.sprintf "listen on :%d: %s" port (Unix.error_message e))));
+    VListener fd
+  | _ -> raise (EvalError "Net.listen: expected a Port")
+
+let peer_string = function
+  | Unix.ADDR_INET (a, p) ->
+    Printf.sprintf "%s:%d" (Unix.string_of_inet_addr a) p
+  | Unix.ADDR_UNIX p -> p
+
+let rec net_accept_impl = function
+  | VListener fd as l ->
+    (match Unix.accept ~cloexec:true fd with
+     | (c, addr) ->
+       Unix.set_nonblock c;
+       VConn { c_fd = c; c_buf = Buffer.create 4096; c_pos = 0; c_scan = 0;
+               c_eof = false; c_closed = false; c_peer = peer_string addr }
+     | exception Unix.Unix_error
+         ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.EINTR | Unix.ECONNABORTED), _, _) ->
+       socket_wait ~write:false fd; net_accept_impl l)
+  | _ -> raise (EvalError "Net.listen: expected a listener")
+
+let conn_chunk = Bytes.create 65536
+
+(* Read more into the buffer; false once the other end has finished. *)
+let rec conn_fill c =
+  if c.c_eof || c.c_closed then false
+  else
+    match Unix.read c.c_fd conn_chunk 0 (Bytes.length conn_chunk) with
+    | 0 -> c.c_eof <- true; false
+    | n -> Buffer.add_subbytes c.c_buf conn_chunk 0 n; true
+    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+      socket_wait ~write:false c.c_fd; conn_fill c
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> conn_fill c
+    | exception Unix.Unix_error _ -> c.c_eof <- true; false
+
+let conn_take c n =
+  let s = Buffer.sub c.c_buf c.c_pos n in
+  c.c_pos <- c.c_pos + n;
+  if c.c_scan < c.c_pos then c.c_scan <- c.c_pos;
+  if c.c_pos > 65536 then begin
+    let rest = Buffer.sub c.c_buf c.c_pos (Buffer.length c.c_buf - c.c_pos) in
+    Buffer.clear c.c_buf; Buffer.add_string c.c_buf rest;
+    c.c_scan <- c.c_scan - c.c_pos; c.c_pos <- 0
+  end;
+  s
+
+let conn_of = function
+  | VConn c -> c
+  | _ -> raise (EvalError "expected a Connection")
+
+(* The next line, without its line ending; None once the other end has
+   finished and nothing is left. *)
+let net_read_line_impl v =
+  let c = conn_of v in
+  let rec go () =
+    let len = Buffer.length c.c_buf in
+    let rec find i = if i >= len then None
+      else if Buffer.nth c.c_buf i = '\n' then Some i else find (i + 1) in
+    match find c.c_scan with
+    | Some i ->
+      let line = conn_take c (i - c.c_pos) in
+      ignore (conn_take c 1);
+      let n = String.length line in
+      Some (if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1)
+            else line)
+    | None ->
+      c.c_scan <- len;
+      if conn_fill c then go ()
+      else if len > c.c_pos then Some (conn_take c (len - c.c_pos))
+      else None
+  in
+  match go () with
+  | Some l -> VConstr (Ctor.Builtin "Some", [VString l])
+  | None -> VConstr (Ctor.Builtin "None", [])
+
+let net_read_impl = function
+  | VTuple [v; VInt n] ->
+    let c = conn_of v in
+    let n = max 0 n in
+    if Buffer.length c.c_buf - c.c_pos = 0 then ignore (conn_fill c);
+    VString (conn_take c (min n (Buffer.length c.c_buf - c.c_pos)))
+  | _ -> raise (EvalError "Net.read: expected a Connection and a count")
+
+let net_write_impl = function
+  | VTuple [v; VString s] ->
+    let c = conn_of v in
+    let total = String.length s in
+    let rec go off =
+      if off >= total then Ok ()
+      else if c.c_closed then Error "the connection is closed"
+      else
+        match Unix.single_write_substring c.c_fd s off (total - off) with
+        | n -> go (off + n)
+        | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+          socket_wait ~write:true c.c_fd; go off
+        | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
+        | exception Unix.Unix_error ((Unix.EPIPE | Unix.ECONNRESET), _, _) ->
+          Error "the other end closed the connection"
+        | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
+    in
+    (match go 0 with
+     | Ok () -> VConstr (Ctor.Builtin "Ok", [VUnit])
+     | Error why -> VConstr (Ctor.Builtin "Error", [VString why]))
+  | _ -> raise (EvalError "Net.write: expected a Connection and a String")
+
+let conn_close c =
+  if not c.c_closed then begin
+    c.c_closed <- true;
+    (try Unix.close c.c_fd with Unix.Unix_error _ -> ())
+  end
+
+let () =
+  List.iter (fun (n, f) -> Hashtbl.replace direct_impl n f)
+    [ "Net!listen", net_listen_impl; "Net!accept", net_accept_impl;
+      "Net!read_line", net_read_line_impl; "Net!read", net_read_impl;
+      "Net!write", net_write_impl ]
 
 (* Read-only filesystem operations. They are named here and performed as
    effects below, so a trace can report what a script looked at, not only
@@ -3911,6 +4124,8 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
      its effects to whoever encloses the call. *)
   let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
   let file_net = Domain.DLS.get ambient_file_net in
+  let file_listen = Domain.DLS.get ambient_file_listen in
+  let caller_cancel = (Domain.DLS.get cancelled).flags in
   let stop () =
     Atomic.set stopping true;
     locked (fun () -> Condition.broadcast room);
@@ -3928,10 +4143,12 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   (* Items that never move share their worker's state; one that moves
      takes it along, and the worker starts another. *)
   let pool_state () =
-    restore_fiber { (fresh_fiber ()) with f_on_pool = true; f_file_net = file_net }
+    restore_fiber { (fresh_fiber ()) with f_on_pool = true; f_file_net = file_net;
+                                           f_file_listen = file_listen }
   in
   let run_item i =
-    Domain.DLS.set cancelled cancels.(i);
+    Domain.DLS.set cancelled
+      { flags = cancels.(i) :: caller_cancel; raised = false };
     (loc_cell ()).depth <- 0;
     let migrated = ref false in
     Effect.Deep.match_with (fun () -> work i) ()
@@ -4139,6 +4356,14 @@ let rec stream_provider (src : stream_source)
   match src with
   | SVals vs -> of_vals vs
   | SPull f -> (f, fun ~early:_ -> ())
+  | SListen port ->
+    (match perform_wand ("Net!listen", VPort port) with
+     | VListener fd as l ->
+       ((fun () -> Some (perform_wand ("Net!accept", l))),
+        fun ~early:_ -> (try Unix.close fd with Unix.Unix_error _ -> ()))
+     | VList vs -> of_vals vs
+     | _ -> raise (EvalError
+         "Net.listen: the handler must answer with a list of connections"))
   | SFiles paths ->
     (* One open per file, each through the same operation a single file
        goes through, so a trace shows every file and a mock answers per
@@ -4318,6 +4543,61 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     if !exhausted then flush_from stages;
     finish ~early:(not !exhausted))
 
+(* What an item of `each_par` gives back when its work ends: a connection
+   is closed. Set where connections are made. *)
+let each_par_release : (value -> unit) ref = ref (fun _ -> ())
+
+let () = each_par_release := (function VConn c -> conn_close c | _ -> ())
+
+exception Each_par_stopped
+
+(* Read [desc] and run [f] on each item as a fiber, at most [limit] at a
+   time; at the limit it stops reading until one ends. The first item that
+   raises stops the rest and the read, and is raised. *)
+let stream_each_par limit f desc =
+  let limit = max 1 limit in
+  let in_progress = ref 0 in
+  let failure = ref None in
+  let cancels = ref [] in
+  let room = Sched.parking () in
+  let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
+  let stopping = ref false in
+  let stop_all () =
+    if not !stopping then begin
+      stopping := true;
+      Atomic.incr checks_wanted;
+      List.iter (fun c -> c := true) !cancels;
+      Sched.wake_all ()
+    end
+  in
+  let fail e = if !failure = None then failure := Some e; stop_all () in
+  Fun.protect ~finally:(fun () -> if !stopping then Atomic.decr checks_wanted)
+    (fun () ->
+      run_fibers_with (fun spawn ->
+        let driver_cancel = ref false in
+        cancels := [driver_cancel];
+        let item x =
+          while !in_progress >= limit && not !stopping do Sched.park room done;
+          if !stopping then raise Each_par_stopped;
+          let cancel = ref false in
+          cancels := cancel :: !cancels;
+          incr in_progress;
+          spawn (fresh_fiber ~cancel ()) (fun () ->
+            let body () = ignore (apply f x); VUnit in
+            (match if own_handler then !with_default_handler body else body () with
+             | _ -> ()
+             | exception e -> if not !stopping then fail e);
+            decr in_progress;
+            !each_par_release x;
+            Sched.unpark room)
+        in
+        spawn (fresh_fiber ~cancel:driver_cancel ()) (fun () ->
+          match run_stream_terminal desc ~on_item:item with
+          | () -> ()
+          | exception (Each_par_stopped | Interrupted _) when !stopping -> ()
+          | exception e -> fail e)));
+  match !failure with Some e -> raise e | None -> ()
+
 (* Open once, write each line, finish on the way out. The lines are the
    stream's own, so a source that fails or a stage that raises arrives here
    as an ordinary raise -- and which of the sink's two endings that takes is
@@ -4446,6 +4726,12 @@ let stream_builtins : env = [
       run_stream_terminal d ~on_item:(fun x -> ignore (apply f x));
       VUnit
     | _ -> raise (EvalError "Stream.each: expected Stream"))));
+  ("stream_each_par", VBuiltin (fun limit -> VBuiltin (fun f -> VBuiltin (function
+    | VStream d ->
+      (match limit with
+       | VInt n -> stream_each_par n f d; VUnit
+       | _ -> raise (EvalError "Stream.each_par: expected a limit"))
+    | _ -> raise (EvalError "Stream.each_par: expected Stream")))));
   ("stream_to_list", VBuiltin (function
     | VStream d ->
       let acc = ref [] in
@@ -4520,6 +4806,15 @@ let stdlib_eval_env : env = [
     | _ -> raise (EvalError "Shared.get: expected a Shared")));
   ("shared_update", VBuiltin (fun sh -> VBuiltin (fun f ->
     perform_wand ("Shared!update", VTuple [sh; f]))));
+  ("net_listen", VBuiltin (function
+    | VPort p -> VStream { s_source = SListen p; s_stages = [] }
+    | _ -> raise (EvalError "Net.listen: expected a Port")));
+  ("net_read_line", VBuiltin (fun c -> perform_wand ("Net!read_line", c)));
+  ("net_read", VBuiltin (fun c -> VBuiltin (fun n ->
+    perform_wand ("Net!read", VTuple [c; n]))));
+  ("net_write", VBuiltin (fun c -> VBuiltin (fun s ->
+    perform_wand ("Net!write", VTuple [c; s]))));
+  ("net_peer", VBuiltin (fun c -> VString (conn_of c).c_peer));
   ("random_below", performing "Random!int" (function
     | VInt n -> VInt (random_below n)
     | _ -> raise (EvalError "Random: expected Int")));

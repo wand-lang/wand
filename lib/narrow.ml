@@ -30,12 +30,16 @@ let binary = { sep = '/'; basename = true }
 
 let host = { sep = '.'; basename = false }
 
+(* A port is written `:8080`, and has no parts for `*` to stop at. *)
+let port = { sep = ':'; basename = false }
+
 (* Which labels take a word list. The manifest parser asks this, so a label
    that is not here rejects `(...)` with a message rather than parsing
    something that means nothing. *)
 let rule_of_label = function
   | "Shell" -> Some binary
   | "Net" -> Some host
+  | "Net.Listen" -> Some port
   | _ -> None
 
 let narrowable name = rule_of_label name <> None

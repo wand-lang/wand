@@ -61,6 +61,23 @@ let fold_left f acc s = stream_fold f acc s
 -- b
 let each f s = stream_each f s
 
+-- Read the source and run `f` on each element, at most `limit` at a time,
+-- side by side. At the limit it stops reading until one finishes, so a
+-- source that waits -- a port accepting connections -- waits too.
+--
+-- The elements run on the calling domain, as `Par` items do once they
+-- perform an effect. It runs until the source ends. An element whose `f`
+-- raises stops the others and the read, and the failure is raised; to go on
+-- past a failed element, catch it in `f`.
+--
+-- An element that is a connection is closed when `f` ends.
+--
+-- >> Stream.of_list [1, 2, 3] |> Stream.each_par 2 (fn x -> IO.println "%{x}")
+-- 1
+-- 2
+-- 3
+let each_par limit f s = stream_each_par limit f s
+
 -- Read the source and keep everything -- the memory cost is the point of
 -- saying it explicitly.
 --

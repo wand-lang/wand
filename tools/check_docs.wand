@@ -59,6 +59,12 @@ let check name = $?(%{wand} d --test %{name})
 --   HTTP.download!      the same
 --   HTTP.upload         reads a file to a host, and there is no host
 --   HTTP.upload!        the same
+--   Net.listen          waits for a client, and a check has none
+--   Net.read_line       needs a connection, and only a client makes one
+--   Net.read            the same
+--   Net.write           the same
+--   Net.write!          the same
+--   Net.peer            the same
 --
 -- The rest of `HTTP` has examples, because `Test.with_http` answers a
 -- request without one. These four do not, because the double answers with a
@@ -75,7 +81,13 @@ let exempt = [
   "HTTP.download",
   "HTTP.download!",
   "HTTP.upload",
-  "HTTP.upload!"
+  "HTTP.upload!",
+  "Net.listen",
+  "Net.read_line",
+  "Net.read",
+  "Net.write",
+  "Net.write!",
+  "Net.peer"
 ]
 
 -- `wand d` lists a module's members, one per line, as `Module.name : type`,

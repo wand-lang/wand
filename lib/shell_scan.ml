@@ -273,6 +273,8 @@ let render_entry w =
   let reads_back () =
     match Lexer.tokenize w with
     | exception _ -> false
+    | [(Token.Port n, _); (Token.EOF, _)] | [(Token.Port n, _)] ->
+      ":" ^ string_of_int n = w
     | ((Token.Ident w0 | Token.Path w0 | Token.Glob w0), loc0) :: rest
       when loc0.Token.offset = 0 ->
       let rec go acc end_ = function

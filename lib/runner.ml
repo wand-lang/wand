@@ -1766,7 +1766,9 @@ let rec run_with_default_handler (thunk : unit -> value) : value =
         exnc = raise;
         effc = fun (type a) (eff : a Effect.t) ->
           match eff with
-          | WandEffect (name, v) when not (Sched.same_place (Sched.place ()) r_place) ->
+          | WandEffect (name, v)
+            when not (Sched.same_place (Domain.DLS.get Evaluator.performed_in)
+                        r_place) ->
             (match handle_here eff with
              | None -> None
              | Some _ ->
@@ -2398,7 +2400,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
               module may do; this decides only that it is asked. *)
            let out = ref base in
            ignore (run_with_default_handler (fun () ->
-             with_file_net (net_bound_of_manifest prog.Ast.manifest) (fun () ->
+             with_file_bounds prog.Ast.manifest (fun () ->
                out := fold_items (run_item ~modul:path) base prog.Ast.items);
              VUnit));
            !out
@@ -3010,7 +3012,8 @@ let run_in_mode mode (thunk : unit -> value) : value =
                     | Some (Error m) -> Effect.Deep.discontinue k (EvalError m)
                     | None ->
                     (* A fiber that started inside does the work itself. *)
-                    if not (Sched.same_place (Sched.place ()) t_place) then
+                    if not (Sched.same_place
+                              (Domain.DLS.get Evaluator.performed_in) t_place) then
                       Effect.Deep.discontinue k (Evaluator.Perform_here (fun () ->
                         run_with_default_handler (fun () ->
                           Evaluator.perform_wand (name, v))))
@@ -3051,7 +3054,7 @@ let run_program ?(mode = Normal) ~base_dir prog =
    | Error msg -> Error ("type error: " ^ msg)
    | Ok _ ->
      let result = run_in_mode mode (fun () ->
-       with_file_net (net_bound_of_manifest prog.Ast.manifest) (fun () ->
+       with_file_bounds prog.Ast.manifest (fun () ->
        let ((_, last), _) = List.fold_left (fun ((env, last), since) item ->
          (* Each statement starts without a position, so a failure before it
             reaches one is not reported against the statement before it. *)
@@ -3213,7 +3216,7 @@ let run_test_program ~base_dir ?(item_locs = []) prog
     (* Nothing is discarded, so the outcomes below are the whole verdict. *)
     let outcomes = ref [] in
     ignore (run_with_default_handler (fun () ->
-      with_file_net (net_bound_of_manifest prog.Ast.manifest) (fun () ->
+      with_file_bounds prog.Ast.manifest (fun () ->
       ignore (List.fold_left (fun env item ->
         Evaluator.forget_loc ();
         match item with
@@ -3734,7 +3737,7 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
         let env_ref  = ref base_eval in
         let last_ref = ref VUnit in
         ignore (run_with_default_handler (fun () ->
-          with_file_net (net_bound_of_manifest prog.Ast.manifest) (fun () ->
+          with_file_bounds prog.Ast.manifest (fun () ->
           List.iter (fun item ->
             Evaluator.forget_loc ();
             match item with

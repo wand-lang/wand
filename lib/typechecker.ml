@@ -11,7 +11,8 @@ let stdlib_module_names =
     "Regex"; "JSON"; "TOML"; "CSV"; "Option"; "Par"; "Resource"; "Stream";
     "Proc"; "Decode"; "Shell"; "Test"; "Args"; "Clock"; "Size"; "Port";
     "DateTime"; "Result"; "URL"; "Version"; "Glob"; "IPv4"; "CIDR";
-    "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML"; "Shared" ]
+    "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML"; "Shared";
+    "Net" ]
 
 (* A module that was one and is not. The name is not unknown to anyone
    holding a script from an earlier release, so the error says what to write
@@ -49,6 +50,9 @@ type typ =
      its words were written -- there is no function from a String to one,
      which is what makes a function taking one safe. *)
   | TCommand
+  (* A connection a listening port accepted, open for the length of the
+     work `Stream.each_par` gives it. *)
+  | TConnection
   (* A resource: how to acquire an 'a and give it back, and what doing
      either performs. The effects are carried rather than hidden -- a bracket
      that concealed its own effects would let a file take a lock and
@@ -405,10 +409,8 @@ let operations : operation list =
        sealed and not be. `HTTP.get`, `HTTP.post` and the rest are written
        in wand over this one, so one handler case covers the module.
 
-       Named for the protocol rather than for the label, so a listening
-       socket or a raw read is a second operation under the same label
-       rather than an eleventh label. `Net` is the reach; the operation says
-       how. *)
+       Named for the protocol rather than for the label. `Net` is the reach
+       outward; listening on a port is `Net.Listen`, below. *)
     { op_name = "Net!http"; op_effect = Net;
       op_types = t (TName "HTTPRequest") (TName "HTTPResponse");
       op_performers = ["HTTP.request"; "HTTP.get"; "HTTP.post";
@@ -418,6 +420,24 @@ let operations : operation list =
        the thing `HTTP.download` exists to avoid, and one operation cannot
        both answer with a body and write one. Both are `Net`, and the
        doubles answer both, so a test that seals one seals the module. *)
+    (* Serving. A port is listened on and connections are accepted from it,
+       and a connection is read and written. *)
+    { op_name = "Net!listen"; op_effect = NetListen;
+      op_types = (fun () -> None);
+      op_performers = ["Net.listen"] };
+    { op_name = "Net!accept"; op_effect = NetListen;
+      op_types = (fun () -> None);
+      op_performers = ["Net.listen"] };
+    { op_name = "Net!read_line"; op_effect = NetListen;
+      op_types = t TConnection (TApp (TName "Option", TString));
+      op_performers = ["Net.read_line"] };
+    { op_name = "Net!read"; op_effect = NetListen;
+      op_types = t (TTuple [TConnection; TInt]) TString;
+      op_performers = ["Net.read"] };
+    { op_name = "Net!write"; op_effect = NetListen;
+      op_types = t (TTuple [TConnection; TString])
+                   (TResult (TString, TUnit));
+      op_performers = ["Net.write"; "Net.write!"] };
     { op_name = "Net!download"; op_effect = Net;
       op_types = t (TTuple [TURL; TPath]) TUnit;
       op_performers = ["HTTP.download"; "HTTP.download!"] };
@@ -696,6 +716,7 @@ let string_of_typ t =
     | TPort     -> "Port"     | TVersion  -> "Version"  | TSize     -> "Size"
     | TRegex    -> "Regex"
     | TCommand  -> "Command"
+    | TConnection -> "Connection"
     | TJson     -> "JSON"
     | TToml     -> "TOML"
     | TYaml     -> "YAML"
@@ -879,6 +900,7 @@ let rec unify_ t1 t2 =
   | TToml,     TToml     -> ()
   | TYaml,     TYaml     -> ()
   | TCommand,  TCommand  -> ()
+  | TConnection, TConnection -> ()
   | TName n1, TName n2 when n1 = n2 -> ()
   | TVar tv1, TVar tv2 when tv1 == tv2 -> ()
   (* Two variables: link so that the narrower constraint survives on
@@ -1398,7 +1420,7 @@ let known_type_arities : (string * int) list ref = ref []
 let builtin_type_names =
   [ "Int"; "Float"; "String"; "Bool"; "Unit"; "Path"; "Glob";
     "DateTime"; "Duration"; "URL"; "IPv4"; "CIDR";
-    "Port"; "Version"; "Size"; "JSON"; "TOML"; "YAML"; "Command";
+    "Port"; "Version"; "Size"; "JSON"; "TOML"; "YAML"; "Command"; "Connection";
     "List"; "Map"; "Result"; "Option"; "Decoder"; "Shared" ]
 
 let builtin_type_name n = List.mem n builtin_type_names
@@ -1789,6 +1811,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
        | "TOML"     -> TToml
        | "YAML"     -> TYaml
        | "Command"  -> TCommand
+       | "Connection" -> TConnection
        (* A canonical name resolves to itself: it is not something a file
           writes, it is what a declaration that travelled says. *)
        | n when String.contains n '#' -> TName n
@@ -2686,7 +2709,8 @@ let rec ctors_of_type tenv (ctor_env : env) (t : typ) : (string * typ list) list
   | TVar _ -> []  (* still unresolved -- shape unknown, can't check, never flagged *)
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
-  | TRegex | TJson | TToml | TYaml | TCommand | TFun _ | TResource _ | TStream _
+  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TFun _
+  | TResource _ | TStream _
   | TDecoder _ | TShared _ | TIface _ | TModule _ ->
     []  (* infinite/opaque domains: only a wildcard row can cover these *)
 
@@ -2696,7 +2720,8 @@ let is_infinite_domain t =
   | TVar _ -> false  (* unresolved -- handled as "unchecked" via ctors_of_type = [] *)
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
-  | TRegex | TJson | TToml | TYaml | TCommand | TFun _ | TApp _ | TResource _
+  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TFun _ | TApp _
+  | TResource _
   | TStream _ | TDecoder _ | TShared _ -> true
   | _ -> false
 
@@ -4392,6 +4417,20 @@ let stdlib_type_env : env = [
   (* Streaming a command. Like the other two sources this is inert until a
      terminal operation runs it, so building one performs nothing and the
      `Shell` is in the stream's own set, paid at the fold. *)
+  ("net_listen",
+   let r = Effect_set.Set
+       (Effect_set.EffSet.of_list [Effect_set.NetListen; Effect_set.Raise],
+        Some (Effect_set.fresh_var ())) in
+   generalize [] (TFun (TPort, TStream (r, TConnection), Effect_set.pure)));
+  ("net_read_line",
+   generalize [] (effs [Effect_set.NetListen] TConnection
+                    (TApp (TName "Option", TString))));
+  ("net_read",
+   generalize [] (TConnection @-> effs [Effect_set.NetListen] TInt TString));
+  ("net_write",
+   generalize [] (TConnection @-> effs [Effect_set.NetListen] TString
+                                     (TResult (TString, TUnit))));
+  ("net_peer", generalize [] (TConnection @-> TString));
   ("shell_stream",
    let r = Effect_set.Set
        (Effect_set.EffSet.of_list [Effect_set.Shell; Effect_set.Raise],
@@ -4541,6 +4580,13 @@ let stdlib_type_env : env = [
      (TFun (TFun (a, b, e),
             TFun (TStream (e, a), TUnit, e),
             Effect_set.pure)));
+  ("stream_each_par",
+   let a = fresh () and b = fresh () in
+   let e = Effect_set.unknown () in
+   generalize []
+     (TInt @-> TFun (TFun (a, b, e),
+                     TFun (TStream (e, a), TUnit, e),
+                     Effect_set.pure)));
   ("stream_to_list",
    let a = fresh () in
    let e = Effect_set.unknown () in

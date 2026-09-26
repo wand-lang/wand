@@ -38,7 +38,7 @@ For what wand is and why, see the [README](../README.md).
 - [Imports](#imports)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
-  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
+  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
 - [Testing](#testing)
 - [Comments](#comments)
 - [Style for scripts](#style-for-scripts)
@@ -1427,13 +1427,14 @@ Everywhere else, write no effects and let wand infer them.
 
 ### The labels
 
-Eleven, and a script cannot define more:
+Twelve, and a script cannot define more:
 
 | Label | Means |
 |---|---|
 | `Clock` | waits; how long the call takes depends on wall-clock time |
 | `Shell` | runs a subprocess, or names one with `$*(...)` |
 | `Net` | sends bytes to a host outside this machine |
+| `Net.Listen` | accepts connections on a port of this machine |
 | `FS.Read` | reads from the filesystem |
 | `FS.Write` | creates, changes or removes something on disk |
 | `Env` | reads or changes environment variables |
@@ -1444,16 +1445,16 @@ Eleven, and a script cannot define more:
 | `Raise` | can raise instead of returning |
 
 A label answers one question: what can this touch? So a label is coarse. It
-must fit in a signature, and you must be able to hold all eleven in your
+must fit in a signature, and you must be able to hold all twelve in your
 head.
 
 ### What earns a label
 
-Three things justify one, and the eleven divide between them:
+Three things justify one, and the twelve divide between them:
 
 | Justification | Labels |
 |---|---|
-| Reach — the call touches something outside the program | `Shell`, `Net`, `FS.Read`, `FS.Write`, `Env`, `IO`, `Proc` |
+| Reach — the call touches something outside the program | `Shell`, `Net`, `Net.Listen`, `FS.Read`, `FS.Write`, `Env`, `IO`, `Proc` |
 | Non-determinism inside one run — two calls can disagree | `Clock`, `Random`, `Shared` |
 | Control flow | `Raise` |
 
@@ -1679,9 +1680,9 @@ can reach.
 
 ### A subprocess is outside every label
 
-The eleven labels describe what this file's wand code does. `Shell` says a
+The twelve labels describe what this file's wand code does. `Shell` says a
 subprocess starts, and names which binary. What that binary then does is
-outside all eleven, `Shell` included:
+outside all twelve, `Shell` included:
 
 | the file declares | the subprocess can | the label not declared |
 |---|---|---|
@@ -1864,6 +1865,20 @@ body to a host nobody wrote down. A host the run decides is checked when the
 request is made rather than at `wand t`; `V-NET1` reports a request built
 that way, as `V-SHELL1` reports a command word decided the same way.
 
+### Naming the ports: `Net.Listen(:8080)`
+
+`Net.Listen` says that the file accepts connections on a port of this
+machine. It is apart from `Net`, so a manifest shows where a file sends and
+where it serves as two things. Bare `Net.Listen` admits any port, and the
+manifest can name the ones the file may listen on:
+
+```ocaml
+uses {Net.Listen(:8080, :8443)}
+```
+
+A port the run listens on that the list does not name raises when the
+listening begins.
+
 > **The transport runs `curl`.** wand has no TLS of its own yet, so bytes
 > reach a host through a subprocess. That subprocess is not bounded by a
 > narrowed `Shell`: `Shell(git)` means only `git` runs *from this script*,
@@ -1977,7 +1992,7 @@ there is nothing extra to remember.
 |---|---|
 | `Shell` | `command`, `run`, `stream`, `run_quiet`, `capture`, `exit_code` |
 | `FS` | `read_file`, `stream_lines`, `write_file`, `write_atomic`, `write_lines`, `write_lines_atomic`, `append_lines`, `append`, `create_file`, `delete`, `delete_tree`, `copy`, `copy_tree`, `rename`, `mkdir`, `list_dir`, `glob`, `exists?`, `file?`, `dir?`, `size`, `mtime`, `cwd`, `temp_file`, `temp_dir`, `lock`, `lock_wait`, `unlock` |
-| `Net` | `http`, `download` |
+| `Net` | `http`, `download`, `listen`, `accept`, `read_line`, `read`, `write` |
 | `Hash` | `file` |
 | `Env` | `get`, `set`, `clear`, `all`, `home`, `user`, `read` |
 | `IO` | `print`, `println`, `print_err`, `println_err`, `read_line`, `read_all`, `flush`, `stdin_lines` |
@@ -4281,6 +4296,7 @@ chunks     : Int -> Stream {..} 'a -> Stream {..} (List 'a)
 unique     : Stream {..} 'a -> Stream {..} 'a
 fold_left : ('a -> 'b -> 'a ! 'e) -> 'a -> Stream {..} 'b -> 'a ! 'e
 each      : ('a -> 'b ! 'e) -> Stream {..} 'a -> Unit ! 'e
+each_par  : Int -> ('a -> 'b ! 'e) -> Stream {..} 'a -> Unit ! 'e
 to_list   : Stream {..} 'a -> List 'a ! 'e
 count     : Stream {..} 'a -> Int ! 'e
 last      : Stream {..} 'a -> Option 'a ! 'e
@@ -4309,6 +4325,13 @@ FS.stream_lines /var/log/app.log
 
 `take n` stops the read after n elements. The memory and the reading are
 both bounded. `to_list` reads everything. Its name says so.
+
+`each_par limit f` runs `f` on each element side by side, at most `limit` at
+a time, on the calling domain. At the limit it stops reading until one ends,
+so a source that waits, such as a port accepting connections, waits too. An
+element whose `f` raises stops the others and the read, and the failure is
+raised; to go on past one, catch it in `f`. An element that is a connection
+is closed when its `f` ends.
 
 `take_while` is the same gate with a predicate: it stops at the first
 element the predicate refuses. `drop` and `drop_while` skip from the front,
@@ -4672,6 +4695,44 @@ and never change, so reading either reaches nothing and answers the same
 twice — see [What earns a label](#what-earns-a-label). A `Par` worker runs
 in wand's own process rather than a second one, so every branch reads one
 pid.
+
+### `Net`
+
+```ocaml
+listen    : Port -> Stream {Net.Listen, Raise | ..} Connection
+read_line : Connection -> Option String ! {Net.Listen}
+read      : Int -> Connection -> String ! {Net.Listen}
+write     : String -> Connection -> Result String Unit ! {Net.Listen}
+write!    : String -> Connection -> Unit ! {Net.Listen, Raise}
+peer      : Connection -> String
+```
+
+Listening on a port, and reading and writing the connections it accepts.
+`listen` is a stream of connections, and nothing listens until a
+terminal operation reads it. `Stream.each_par` is the one that serves: it
+gives each connection to a function, side by side, and closes it when that
+function ends.
+
+```ocaml
+uses {Net.Listen(:9000)}
+
+let echo! conn =
+  match Net.read_line conn with
+  | Some line -> Net.write! "%{line}\n" conn
+  | None -> ()
+
+Net.listen :9000 |> Stream.each_par 64 echo!
+```
+
+`read_line` answers the next line without its line ending, and `None` once
+the other end has finished. `read n` answers up to `n` bytes, waiting for
+some if none has arrived. `write` answers `Error` when the text cannot go,
+most often because the other end has closed. `peer` says where the
+connection came from, as `203.0.113.7:51234`.
+
+A port another process holds, or one below 1024 without the privilege for
+it, raises when the read begins. The effects are `Net.Listen`; see
+[Naming the ports](#naming-the-ports-netlisten8080).
 
 ### `HTTP`
 

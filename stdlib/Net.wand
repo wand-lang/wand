@@ -1,0 +1,42 @@
+uses {Net.Listen}
+
+-- Serving: listening on a port, and reading and writing the connections it
+-- accepts.
+--
+-- A file that listens declares `Net.Listen`, apart from `Net`, which is
+-- sending bytes out. `Net.Listen(:8080)` narrows it to the ports named:
+--
+-- uses {Net.Listen(:8080), IO}
+--
+-- A connection is open for the length of the work `Stream.each_par` gives
+-- it, and closed when that work ends.
+
+-- The connections accepted on `port`, one at a time, for as long as the
+-- stream is read. Nothing listens until a terminal operation reads it.
+--
+-- Net.listen :8080 |> Stream.each_par 256 (fn conn -> serve conn)
+--
+-- A port another process holds, or one below 1024 without the privilege
+-- for it, raises when the read begins.
+let listen port = net_listen port
+
+-- The next line from `conn`, without its line ending, or `None` once the
+-- other end has finished and nothing is left.
+let read_line conn = net_read_line conn
+
+-- Up to `n` bytes from `conn`: what has arrived, waiting for some if none
+-- has. `""` once the other end has finished.
+let read n conn = net_read conn n
+
+-- Send `text` on `conn`. `Error` says why it could not go, which is most
+-- often that the other end has closed.
+let write text conn = net_write conn text
+
+-- Send `text` on `conn`, raising if it cannot go.
+let write! text conn =
+  match write text conn with
+  | Ok _ -> ()
+  | Error why -> fail_exn why
+
+-- Where `conn` came from: an address and a port, as `203.0.113.7:51234`.
+let peer conn = net_peer conn

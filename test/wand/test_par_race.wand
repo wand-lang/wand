@@ -136,6 +136,15 @@ group "Par.all!" (fn () -> [
         |> (fn _ -> "ended"),
         fn () -> (Clock.sleep 200ms; "stopped")
       ])),
+  -- The loser's own workers are stopped with it, not left to finish.
+  test "a stopped branch stops the Par inside it" (fn t ->
+    let (took, _) =
+      Clock.timed (fn () ->
+        Par.all! [
+          fn () -> (Par.each 4 (fn _ -> Clock.sleep 10s) [1, 2, 3, 4]; "slept"),
+          fn () -> "fast"
+        ]);
+    t.ok (took < 3s)),
   test "no branches is a failure" (fn t -> t.raises (fn () -> Par.all! [])),
   test "a handler around it answers every branch" (fn t ->
     t.eq

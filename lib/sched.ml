@@ -23,15 +23,25 @@ type t = {
   mutable live : int;
   mutable failure : exn option;
   mutable interrupt_seen : bool;
-  parent : t option;
+  mutable cancel_seen : bool;
 }
 
-let current : t option Domain.DLS.key = Domain.DLS.new_key (fun () -> None)
+(* Which scheduler encloses the running code, answered by the nearest one on
+   the stack. Asked rather than remembered, because a fiber's continuation
+   can move between domains, and a remembered answer would move with it. *)
+type _ Effect.t += Where : t option Effect.t
 
-let active () = Option.is_some (Domain.DLS.get current)
+let where () = try Effect.perform Where with Effect.Unhandled _ -> None
+
+let active () = Option.is_some (where ())
 
 (* Checked on every idle turn; set by the evaluator. *)
 let interrupt_pending : (unit -> bool) ref = ref (fun () -> false)
+
+(* Whether the code that runs a scheduler has been told to stop, read in
+   that code's own state. A scheduler inside a stopped fiber wakes its
+   fibers once, so each sees it. *)
+let owner_cancelled : (unit -> bool) ref = ref (fun () -> false)
 
 (* The longest one idle turn blocks. *)
 let slice_ms = 50
@@ -78,13 +88,9 @@ let touches w fds =
 let block_directly w = ignore (ready_fds w (timeout_of w.until))
 
 let suspend w =
-  if active () then
-    (try Effect.perform (Suspend w) with Effect.Unhandled _ -> block_directly w)
-  else block_directly w
+  try Effect.perform (Suspend w) with Effect.Unhandled _ -> block_directly w
 
-let yield () =
-  if active () then
-    (try Effect.perform Yield with Effect.Unhandled _ -> ())
+let yield () = try Effect.perform Yield with Effect.Unhandled _ -> ()
 
 let wait_readable fd = suspend { reads = [fd]; writes = []; until = None }
 let wait_writable fd = suspend { reads = []; writes = [fd]; until = None }
@@ -97,7 +103,7 @@ let wake_all_in s =
   s.waiting <- []
 
 let wake_all () =
-  match Domain.DLS.get current with Some s -> wake_all_in s | None -> ()
+  match where () with Some s -> wake_all_in s | None -> ()
 
 let union ws =
   { reads = List.concat_map (fun w -> w.reads) ws;
@@ -113,6 +119,10 @@ let take_interrupt s =
     s.interrupt_seen <- true;
     wake_all_in s;
     true
+  end else if (not s.cancel_seen) && !owner_cancelled () then begin
+    s.cancel_seen <- true;
+    wake_all_in s;
+    true
   end else false
 
 (* Move the waiters whose wait is over to the run queue. [block] says
@@ -124,9 +134,10 @@ let check_waiting s ~block =
     let ready =
       if not block then
         (if all.reads = [] && all.writes = [] then [] else ready_fds all 0)
-      else match s.parent with
-        | Some _ -> suspend all; ready_fds all 0
-        | None -> ready_fds all (timeout_of all.until)
+      else
+        match Effect.perform (Suspend all) with
+        | () -> ready_fds all 0
+        | exception Effect.Unhandled _ -> ready_fds all (timeout_of all.until)
     in
     if not (take_interrupt s) then begin
       let now = elapsed_ms () in
@@ -146,15 +157,13 @@ let check_waiting s ~block =
    have finished. *)
 let run_with ~(save : unit -> 's) ~(restore : 's -> unit)
     (start : ('s -> (unit -> unit) -> unit) -> unit) =
-  let parent = Domain.DLS.get current in
   let s = { runq = Queue.create (); waiting = []; live = 0; failure = None;
-            interrupt_seen = false; parent } in
+            interrupt_seen = false; cancel_seen = false } in
   let owner = save () in
-  let enter st = restore st; Domain.DLS.set current (Some s) in
+  let enter st = restore st in
   let leave () =
     let st = save () in
     restore owner;
-    Domain.DLS.set current parent;
     st
   in
   let finish () =
@@ -173,12 +182,15 @@ let run_with ~(save : unit -> 's) ~(restore : 's -> unit)
           Some (fun (k : (a, unit) Effect.Deep.continuation) ->
             let st = leave () in
             Queue.push (fun () -> enter st; Effect.Deep.continue k ()) s.runq;
-            if parent <> None then yield ())
+            yield ())
         | Suspend w ->
           Some (fun (k : (a, unit) Effect.Deep.continuation) ->
             let st = leave () in
             s.waiting <-
               (w, fun () -> enter st; Effect.Deep.continue k ()) :: s.waiting)
+        | Where ->
+          Some (fun (k : (a, unit) Effect.Deep.continuation) ->
+            Effect.Deep.continue k (Some s))
         | _ -> None }
   in
   let spawn st body =
@@ -203,8 +215,7 @@ let run_with ~(save : unit -> 's) ~(restore : 's -> unit)
       f (); loop ()
     | None -> if s.live > 0 then (check_waiting s ~block:true; loop ())
   in
-  Fun.protect ~finally:(fun () ->
-    restore owner; Domain.DLS.set current parent) loop;
+  Fun.protect ~finally:(fun () -> restore owner) loop;
   match s.failure with Some e -> raise e | None -> ()
 
 (* [bodies] as fibers, [states.(i)] fiber [i]'s state at its start. *)
@@ -251,10 +262,25 @@ let select reads writes timeout_ms =
 (* Which scheduler the running code is in, for code that runs on a
    handler's stack on behalf of a fiber. *)
 type place = t option
-let place () : place = Domain.DLS.get current
-let enter_place (p : place) = Domain.DLS.set current p
+let place () : place = where ()
 let same_place (a : place) (b : place) =
   match a, b with
   | None, None -> true
   | Some x, Some y -> x == y
   | _ -> false
+
+(* A place for a fiber to wait until another wakes it. *)
+type parking = wait
+
+let parking () : parking = { reads = []; writes = []; until = None }
+
+(* Wait at [p] until [unpark p]. May return early; callers look again. *)
+let park (p : parking) = suspend p
+
+let unpark (p : parking) =
+  match where () with
+  | None -> ()
+  | Some s ->
+    let woken, still = List.partition (fun (w, _) -> w == p) s.waiting in
+    s.waiting <- still;
+    List.iter (fun (_, resume) -> Queue.push resume s.runq) (List.rev woken)
