@@ -37,9 +37,10 @@ let close_noerr fd = try Unix.close fd with Unix.Unix_error _ -> ()
 (* A signal arriving mid-call is a reason to look again, not to give up on
    output the child has already written. A timeout of -1 waits for as long
    as it takes; a deadline supplies a slice instead. *)
-let rec select_ready ?(timeout = -1.0) reads writes =
-  try Unix.select reads writes [] timeout
-  with Unix.Unix_error (Unix.EINTR, _, _) -> select_ready ~timeout reads writes
+let select_ready ?(timeout = -1.0) reads writes =
+  let ms = if timeout < 0.0 then -1 else int_of_float (timeout *. 1000.) in
+  let (r, w) = Sched.select reads writes ms in
+  (r, w, [])
 
 let rec read_chunk fd buf =
   try Unix.read fd buf 0 (Bytes.length buf)
@@ -262,9 +263,19 @@ let rec reap_or pid reaped =
 (* Called once the pipes are drained and closed, so the child is not waiting
    on a reader that has gone away. *)
 and reap pid =
-  match Unix.waitpid [] pid with
+  if Sched.active () then reap_waiting pid 1
+  else
+    match Unix.waitpid [] pid with
+    | (_, status) -> forget pid; status
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
+
+(* A fiber does not block the domain on a child: it looks, and pauses a
+   little longer each time up to a slice. *)
+and reap_waiting pid ms =
+  match Unix.waitpid [Unix.WNOHANG] pid with
+  | (0, _) -> Sched.pause ms; reap_waiting pid (min 50 (ms * 2))
   | (_, status) -> forget pid; status
-  | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
+  | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap_waiting pid ms
 
 (* OCaml numbers signals with its own negative constants, so the raw value
    in a message means nothing to anyone reading it. *)
@@ -359,6 +370,52 @@ let exec_command cmd =
   | Unix.WSIGNALED n -> command_signalled cmd n
   | Unix.WSTOPPED  n -> raise (EvalError (Printf.sprintf "command stopped by signal %d: %s" n cmd))
 
+(* Lines from [fd], each without its newline; the last one is returned
+   even without one. A fiber waits for the descriptor rather than blocking
+   the domain. A read that fails -- the child was killed and the pipe went
+   with it -- is the end of the lines. *)
+let line_reader fd =
+  let buf = Buffer.create 4096 in
+  let chunk = Bytes.create 65536 in
+  let eof = ref false in
+  let start = ref 0 in
+  let scanned = ref 0 in
+  let take upto next =
+    let line = Buffer.sub buf !start (upto - !start) in
+    start := next;
+    if !start > 65536 then begin
+      let rest = Buffer.sub buf !start (Buffer.length buf - !start) in
+      Buffer.clear buf; Buffer.add_string buf rest; start := 0; scanned := 0
+    end;
+    line
+  in
+  let rec find i =
+    if i >= Buffer.length buf then None
+    else if Buffer.nth buf i = '\n' then Some i
+    else find (i + 1)
+  in
+  let rec next () =
+    match find (max !start !scanned) with
+    | Some i -> scanned := i + 1; Some (take i (i + 1))
+    | None ->
+      scanned := Buffer.length buf;
+      if !eof then
+        (if !start < Buffer.length buf then
+           Some (take (Buffer.length buf) (Buffer.length buf))
+         else None)
+      else begin
+        if Sched.active () then Sched.wait_readable fd;
+        (match Unix.read fd chunk 0 (Bytes.length chunk) with
+         | 0 -> eof := true
+         | n -> Buffer.add_subbytes buf chunk 0 n
+         | exception Unix.Unix_error (Unix.EINTR, _, _) -> ()
+         | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> ()
+         | exception Unix.Unix_error _ -> eof := true);
+        next ()
+      end
+  in
+  next
+
 (* A command read as it goes, for `Shell.stream`. What the caller gets back
    is a puller over the child's stdout and a stop; the child outlives
    neither.
@@ -376,19 +433,16 @@ let exec_command cmd =
    it would turn the ordinary early stop into an error. *)
 let stream_command cmd =
   let (pid, out_r) = spawn_in cmd in
-  let ic = Unix.in_channel_of_descr out_r in
+  let next_line = line_reader out_r in
   let pull () =
-    match In_channel.input_line ic with
+    match next_line () with
     | Some line -> Some (Evaluator.VString line)
     | None -> None
-    (* The child was killed and the pipe went with it. That is the early
-       stop arriving from the other end, not a line. *)
-    | exception Sys_error _ -> None
   in
   let waited = ref false in
   let wait_for_it () =
-    match Unix.waitpid [] pid with
-    | (_, status) -> forget pid; Some status
+    match reap pid with
+    | status -> Some status
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> None
     | exception Unix.Unix_error _ -> forget pid; None
   in
@@ -396,9 +450,7 @@ let stream_command cmd =
     match Unix.waitpid [Unix.WNOHANG] pid with
     | (0, _) ->
       if Unix.gettimeofday () < deadline then begin
-        (* Nothing to read and nothing to write: this is a sleep spelled
-           with what is already imported. *)
-        (try ignore (Unix.select [] [] [] 0.02) with Unix.Unix_error _ -> ());
+        Sched.pause 20;
         wait_until deadline
       end else begin
         (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
@@ -411,7 +463,7 @@ let stream_command cmd =
   let finish early =
     if not !waited then begin
       waited := true;
-      close_in_noerr ic;
+      close_noerr out_r;
       if early then begin
         (try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
         wait_until (Unix.gettimeofday () +. timeout_grace)
@@ -778,7 +830,7 @@ let take_lock_wait path budget_ms =
         let left = deadline -. Unix.gettimeofday () in
         if left <= 0. then None
         else begin
-          ignore (Unix.select [] [] [] (min (float_of_int poll_ms /. 1000.) left));
+          Sched.pause (min poll_ms (int_of_float (left *. 1000.) + 1));
           attempt ()
         end
   in
@@ -1047,34 +1099,8 @@ let spawn_argv argv stdin_text =
   in
   Unix.close out_w; Unix.close err_w; Unix.close in_r;
   remember pid;
-  let write_stdin () =
-    (try
-       let n = String.length stdin_text in
-       let rec go off =
-         if off < n then
-           let k = Unix.write_substring in_w stdin_text off (n - off) in
-           if k > 0 then go (off + k)
-       in
-       go 0
-     with Unix.Unix_error _ -> ());
-    try Unix.close in_w with Unix.Unix_error _ -> ()
-  in
-  write_stdin ();
-  let read fd =
-    let buf = Buffer.create 4096 in
-    let chunk = Bytes.create 65536 in
-    let rec go () =
-      match Unix.read fd chunk 0 (Bytes.length chunk) with
-      | 0 -> ()
-      | n -> Buffer.add_subbytes buf chunk 0 n; go ()
-      | exception Unix.Unix_error (Unix.EINTR, _, _) -> go ()
-    in
-    go (); Buffer.contents buf
-  in
-  let out = read out_r in
-  let err = read err_r in
-  (try Unix.close out_r with Unix.Unix_error _ -> ());
-  (try Unix.close err_r with Unix.Unix_error _ -> ());
+  let (out, err, _) =
+    pump ~stdin:stdin_text ~out:out_r ~err:err_r ~into:in_w () in
   let status = reap pid in
   (out, err, status)
 

@@ -190,3 +190,39 @@ let run ~(save : unit -> 's) ~(restore : 's -> unit)
   Fun.protect ~finally:(fun () ->
     restore owner; Domain.DLS.set current parent) loop;
   match s.failure with Some e -> raise e | None -> ()
+
+(* Wait about [ms]: a fiber suspends, anything else sleeps. May return
+   early; callers look again. *)
+let pause ms =
+  if active () then sleep_until (elapsed_ms () + ms)
+  else
+    try Unix.sleepf (float_of_int ms /. 1000.)
+    with Unix.Unix_error (Unix.EINTR, _, _) -> ()
+
+(* The descriptors of [reads] and [writes] that are ready, waiting at most
+   [timeout_ms] (-1: until one is). A fiber suspends for the wait. *)
+let select reads writes timeout_ms =
+  let until = if timeout_ms < 0 then None
+              else Some (elapsed_ms () + timeout_ms) in
+  let w = { reads; writes; until } in
+  let fds, evs = events_of w in
+  let rec go () =
+    let wait_ms =
+      if active () then (suspend w; 0)
+      else match until with
+        | None -> -1
+        | Some t -> max 0 (t - elapsed_ms ())
+    in
+    let ready = poll_fds fds evs wait_ms in
+    if Array.exists Fun.id ready || due w (elapsed_ms ())
+       || !interrupt_pending () then ready
+    else go ()
+  in
+  let ready = go () in
+  let r = ref [] and wr = ref [] in
+  Array.iteri (fun i ok ->
+    if ok then begin
+      if List.mem fds.(i) reads then r := fds.(i) :: !r;
+      if List.mem fds.(i) writes then wr := fds.(i) :: !wr
+    end) ready;
+  (!r, !wr)

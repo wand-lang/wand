@@ -103,6 +103,51 @@ let test_evaluator_fiber_state () =
     (Domain.DLS.get Evaluator.shell_deadline);
   Domain.DLS.set Evaluator.shell_deadline None
 
+let timed f =
+  let start = now () in
+  f ();
+  now () - start
+
+let test_commands_overlap () =
+  let outs = Array.make 4 "" in
+  let took = timed (fun () ->
+    Evaluator.run_fibers (Array.init 4 (fun i () ->
+      outs.(i) <- Runner.exec_command (Printf.sprintf "sleep 0.3; echo %d" i))))
+  in
+  Alcotest.(check (array string)) "each its own output"
+    [| "0"; "1"; "2"; "3" |] outs;
+  Alcotest.(check bool) (Printf.sprintf "four 300ms commands in %dms" took)
+    true (took < 900)
+
+let test_capture_overlaps () =
+  let took = timed (fun () ->
+    Evaluator.run_fibers (Array.init 3 (fun _ () ->
+      ignore (Runner.capture ~stdin:"x" "cat >/dev/null; sleep 0.3; echo out; echo err >&2")))) in
+  Alcotest.(check bool) (Printf.sprintf "three captures in %dms" took)
+    true (took < 800)
+
+let test_stream_lines_in_fibers () =
+  let got = Array.make 2 [] in
+  let took = timed (fun () ->
+    Evaluator.run_fibers (Array.init 2 (fun i () ->
+      let (pull, finish) =
+        Runner.stream_command "for n in 1 2 3; do echo $n; sleep 0.1; done" in
+      let rec go acc = match pull () with
+        | Some (Evaluator.VString l) -> go (l :: acc)
+        | _ -> List.rev acc in
+      got.(i) <- go [];
+      finish false))) in
+  Alcotest.(check (list string)) "first" ["1"; "2"; "3"] got.(0);
+  Alcotest.(check (list string)) "second" ["1"; "2"; "3"] got.(1);
+  Alcotest.(check bool) (Printf.sprintf "two streams in %dms" took)
+    true (took < 550)
+
+let test_sleep_in_fibers () =
+  let took = timed (fun () ->
+    Evaluator.run_fibers (Array.init 5 (fun _ () -> Evaluator.sleep_ms 200))) in
+  Alcotest.(check bool) (Printf.sprintf "five sleeps in %dms" took)
+    true (took < 600)
+
 let () =
   Alcotest.run "sched" [
     "sched", [
@@ -116,5 +161,11 @@ let () =
       Alcotest.test_case "outside a scheduler" `Quick test_outside_a_scheduler;
       Alcotest.test_case "evaluator fiber state" `Quick
         test_evaluator_fiber_state;
+    ];
+    "waiting", [
+      Alcotest.test_case "commands overlap" `Quick test_commands_overlap;
+      Alcotest.test_case "captures overlap" `Quick test_capture_overlaps;
+      Alcotest.test_case "streams overlap" `Quick test_stream_lines_in_fibers;
+      Alcotest.test_case "sleeps overlap" `Quick test_sleep_in_fibers;
     ];
   ]

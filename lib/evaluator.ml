@@ -2760,6 +2760,13 @@ let direct_impl : (string, value -> value) Hashtbl.t = Hashtbl.create 32
 let sleep_ms ms =
   let slice = 0.05 in
   let remaining = ref (float_of_int ms /. 1000.) in
+  if Sched.active () then begin
+    let until = Sched.elapsed_ms () + ms in
+    while Sched.elapsed_ms () < until do
+      check_interrupt ();
+      Sched.sleep_until until
+    done
+  end else
   while !remaining > 0.0 do
     check_interrupt ();
     let this = if !remaining < slice then !remaining else slice in
