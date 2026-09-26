@@ -108,8 +108,10 @@ If io_uring speed is needed later, look at Picos before Eio.
 - **Cancellation per fiber.** The checkpoint checks the current fiber's
   flag. A suspended fiber is woken so it sees the cancel and runs its
   `with` releases.
-- **Starvation.** A fiber that only computes never waits. A counter in the
-  existing checkpoint yields every N steps.
+- **Starvation.** A fiber that only computes never waits. It yields every
+  1000 positions it passes (`WAND_YIELD_EVERY`). Measured from 10 to
+  1,000,000: throughput is flat from 300 to 100,000, and a waiting fiber
+  wakes on time up to 3000 and late past 10,000.
 - **Blocking calls need waiting versions.** Sockets and pipes: non-blocking
   fds plus `poll`. Child processes (including `curl` for `HTTP`, and
   `Shell.stream`): wait on the pipes and the exit. Sleep: the timer heap.
@@ -154,7 +156,6 @@ on the calling domain.
 
 - Regular files and DNS under fibers: accept a short block, or use a helper
   thread.
-- The yield interval N. Measure it on the interpreter loop.
 
 ## Order
 
