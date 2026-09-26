@@ -279,6 +279,9 @@ type value =
      backend presents its input in JSON's shape, so one set of combinators
      serves all of them. *)
   | VDecoder       of (Yojson.Basic.t -> string list -> (value, string) result)
+  (* State that changes, made by `Shared.make` and closed when its `with`
+     ends. *)
+  | VShared        of shared_cell
   (* An index over the entries behind it. An environment is a list because
      that is what binding is -- push a name in front of what was there -- and
      lookup walks it, which is fine for the handful a script defines and not
@@ -290,6 +293,12 @@ type value =
      environment can be appended to, sliced, or carry several indexes without
      any of it having to know. *)
   | VEnvIndex      of (string, value) Hashtbl.t
+
+and shared_cell = {
+  mutable s_value : value;
+  mutable s_open : bool;
+  mutable s_busy : bool;
+}
 
 (* `m_entries` maps a key to when it was first added and what it holds;
    `m_next` is the number the next new key takes. A delete leaves a gap in
@@ -720,6 +729,7 @@ let rec render ~quote v =
   | VProcSource _ -> "<command source>"
   | VLineSink _ -> "<line sink>"
   | VDecoder _  -> "<decoder>"
+  | VShared _   -> "<shared>"
   | VEnvIndex _ -> "<env index>"
   | VPartialConstr (n, _, _) -> Printf.sprintf "<%s>" (Ctor.name n)
   (* The bound is not part of what a request is; it shows as the record. *)
@@ -1606,6 +1616,7 @@ let rec wand_equal a b =
   (* Two requests are equal when they ask for the same thing. The bound is
      an account of where they were written, not part of what they are. *)
   | VRequest (a, _), b | a, VRequest (b, _) -> wand_equal a b
+  | VShared x, VShared y -> x == y
   | VConstr (n1, xs), VConstr (n2, ys) ->
     n1 = n2 && List.length xs = List.length ys && List.for_all2 wand_equal xs ys
   (* Entry for entry in insertion order, which is what comparing the two
@@ -2855,9 +2866,38 @@ let random_below n =
   random_ready ();
   if n < 1 then 0 else Stdlib.Random.int n
 
+let shared_open c =
+  if not c.s_open then
+    raise (EvalError
+      "this Shared is used after the `with` that made it ended. Use it \
+       inside that `with`, or pass out the value it holds")
+
 let performing name f =
   Hashtbl.replace direct_impl name f;
   VBuiltin (fun v -> perform_wand (name, v))
+
+(* One update at a time: the function runs without yielding, and a second
+   update of the same Shared that starts while it runs is refused. *)
+let () = Hashtbl.replace direct_impl "Shared!update" (function
+  | VTuple [VShared c; f] ->
+    shared_open c;
+    if c.s_busy then
+      raise (EvalError
+        "this Shared was updated while another update of it was running. \
+         Do the work outside the update, and pass the update only the \
+         change");
+    c.s_busy <- true;
+    let cell = loc_cell () in
+    let budget = cell.budget in
+    cell.budget <- max_int;
+    let v =
+      Fun.protect (fun () -> apply f c.s_value) ~finally:(fun () ->
+        cell.budget <- budget;
+        c.s_busy <- false)
+    in
+    c.s_value <- v;
+    VUnit
+  | _ -> raise (EvalError "Shared.update: expected a Shared and a function"))
 
 (* Read-only filesystem operations. They are named here and performed as
    effects below, so a trace can report what a script looked at, not only
@@ -4470,6 +4510,16 @@ let stdlib_eval_env : env = [
   (* Drawing is an effect for the same reason reading the clock is: what it
      answers is not in the program, so a caller has to be told, and a
      handler can answer it instead. *)
+  ("shared_new", VBuiltin (fun v ->
+    VShared { s_value = v; s_open = true; s_busy = false }));
+  ("shared_close", VBuiltin (function
+    | VShared c -> c.s_open <- false; VUnit
+    | _ -> raise (EvalError "Shared: expected a Shared")));
+  ("shared_get", performing "Shared!get" (function
+    | VShared c -> shared_open c; c.s_value
+    | _ -> raise (EvalError "Shared.get: expected a Shared")));
+  ("shared_update", VBuiltin (fun sh -> VBuiltin (fun f ->
+    perform_wand ("Shared!update", VTuple [sh; f]))));
   ("random_below", performing "Random!int" (function
     | VInt n -> VInt (random_below n)
     | _ -> raise (EvalError "Random: expected Int")));

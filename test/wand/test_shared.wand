@@ -1,0 +1,61 @@
+uses {Clock, Shared}
+
+import Clock
+import List
+import Par
+import Shared
+import Test
+
+let {test, group} = import Test
+
+type Counts(hits: Int, names: List String)
+
+group "a value that changes" (fn () -> [
+  test "get answers what make was given" (fn t ->
+    t.eq 3 (with Shared.make 3 as n -> Shared.get n)),
+  test "update answers the next get" (fn t ->
+    t.eq 4 (with Shared.make 3 as n -> (Shared.update n (fn x -> x + 1); Shared.get n))),
+  test "a value read earlier does not change under you" (fn t ->
+    t.eq
+      (3, 4)
+      (with Shared.make 3 as n -> (
+        let before = Shared.get n;
+        Shared.update n (fn x -> x + 1);
+        (before, Shared.get n)
+      ))),
+  test "a record changes in one step" (fn t ->
+    t.eq
+      Counts(hits = 1, names = ["a"])
+      (with Shared.make Counts(hits = 0, names = []) as c -> (
+        Shared.update c (fn s -> Counts(s, hits = s.hits + 1, names = "a" :: s.names));
+        Shared.get c
+      )))
+])
+
+-- Many workers updating at once lose nothing. Each one waits between its
+-- updates, so the workers run side by side and their updates interleave.
+test "no update is lost when many run at once" (fn t ->
+  t.eq
+    1000
+    (with Shared.make 0 as n -> (
+      Par.each
+        50
+        (fn _ -> List.each
+          (fn _ -> (Clock.sleep 1ms; Shared.update n (fn x -> x + 1)))
+          (List.range 1 20))
+        (List.range 1 50);
+      Shared.get n
+    )))
+
+test "using one after its with raises" (fn t ->
+  let leaked = with Shared.make 0 as n -> n;
+  t.raises (fn () -> Shared.get leaked))
+
+-- Reading and updating are operations, so a handler can answer them.
+test "a handler answers a read" (fn t ->
+  t.eq
+    42
+    (with Shared.make 1 as n ->
+    handle Shared.get n + 1 with
+    | Shared!get _ k -> k 41
+    ))

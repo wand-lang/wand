@@ -11,7 +11,7 @@ let stdlib_module_names =
     "Regex"; "JSON"; "TOML"; "CSV"; "Option"; "Par"; "Resource"; "Stream";
     "Proc"; "Decode"; "Shell"; "Test"; "Args"; "Clock"; "Size"; "Port";
     "DateTime"; "Result"; "URL"; "Version"; "Glob"; "IPv4"; "CIDR";
-    "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML" ]
+    "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML"; "Shared" ]
 
 (* A module that was one and is not. The name is not unknown to anyone
    holding a script from an earlier release, so the error says what to write
@@ -62,6 +62,9 @@ type typ =
      a function from something already read, so a decoder that could perform
      effects would be a second way to run a script's I/O. *)
   | TDecoder of typ
+  (* State that changes, held by a `with Shared.make` and read or updated
+     through the `Shared` operations. *)
+  | TShared of typ
   | TJson
   | TToml
   | TYaml
@@ -531,6 +534,14 @@ let operations : operation list =
     { op_name = "Random!seed"; op_effect = Random;
       op_types = t TInt TUnit;
       op_performers = ["Random.seed"] };
+    { op_name = "Shared!get"; op_effect = Shared;
+      op_types = (fun () -> let a = fresh () in Some (TShared a, a));
+      op_performers = ["Shared.get"] };
+    { op_name = "Shared!update"; op_effect = Shared;
+      op_types = (fun () ->
+        let a = fresh () in
+        Some (TTuple [TShared a; TFun (a, a, Effect_set.pure)], TUnit));
+      op_performers = ["Shared.update"] };
   ]
 
 let operation_index : (string, operation) Hashtbl.t = Hashtbl.create 64
@@ -593,7 +604,7 @@ let rec collect_evars t =
   | TResult (e, t) -> collect_evars e @ collect_evars t
   | TResource (r, t) -> Effect_set.free_vars r @ collect_evars t
   | TStream (r, t) -> Effect_set.free_vars r @ collect_evars t
-  | TDecoder t  -> collect_evars t
+  | TDecoder t | TShared t -> collect_evars t
   | TMap t      -> collect_evars t
   | TApp (f, a) -> collect_evars f @ collect_evars a
   | TIface (_, args) -> List.concat_map collect_evars args
@@ -613,7 +624,7 @@ let rec collect_evars t =
    reads as an argument. A tuple brings its own brackets and needs none. *)
 let needs_brackets = function
   | TFun _ | TList _ | TResult _ | TMap _ | TApp _
-  | TDecoder _ | TStream _ | TResource _ -> true
+  | TDecoder _ | TShared _ | TStream _ | TResource _ -> true
   | _ -> false
 
 let string_of_typ t =
@@ -765,6 +776,9 @@ let string_of_typ t =
     | TDecoder t ->
       let s = if wants_brackets (repr t) then "(" ^ go t ^ ")" else go t in
       "Decoder " ^ s
+    | TShared t ->
+      let s = if wants_brackets (repr t) then "(" ^ go t ^ ")" else go t in
+      "Shared " ^ s
     | TMap t ->
       let s = if wants_brackets (repr t) then "(" ^ go t ^ ")" else go t in
       "Map " ^ s
@@ -802,7 +816,7 @@ let rec occurs (tv : tv) t =
   | TResult (e, t) -> occurs tv e || occurs tv t
   | TResource (_, t) -> occurs tv t
   | TStream (_, t) -> occurs tv t
-  | TDecoder t  -> occurs tv t
+  | TDecoder t | TShared t -> occurs tv t
   | TMap t      -> occurs tv t
   | TApp (f, a) -> occurs tv f || occurs tv a
   | TIface (_, args) -> List.exists (occurs tv) args
@@ -926,6 +940,7 @@ let rec unify_ t1 t2 =
     Effect_set.unify r1 r2;
     unify_ t1 t2
   | TDecoder t1, TDecoder t2 -> unify_ t1 t2
+  | TShared t1, TShared t2 -> unify_ t1 t2
   | TMap t1,    TMap t2    -> unify_ t1 t2
   | TApp (f1, a1), TApp (f2, a2) -> unify_ f1 f2; unify_ a1 a2
   | TIface (n1, a1), TIface (n2, a2)
@@ -1135,6 +1150,10 @@ let unbound_seen : (string, unit) Hashtbl.t = Hashtbl.create 8
    recorded one never leaves, so it reads the position here. *)
 let cur_loc : Token.loc option ref = ref None
 
+(* Every `Shared` type a use instantiated, and where, checked once the file
+   is inferred and the types are known. *)
+let shared_uses : (typ * Token.loc option) list ref = ref []
+
 let forget_unbound () =
   unbound_names := [];
   Hashtbl.reset unbound_seen;
@@ -1161,7 +1180,7 @@ let rec free_tvars t =
   | TResult (e, t) -> free_tvars e @ free_tvars t
   | TResource (_, t) -> free_tvars t
   | TStream (_, t) -> free_tvars t
-  | TDecoder t  -> free_tvars t
+  | TDecoder t | TShared t -> free_tvars t
   | TMap t      -> free_tvars t
   | TApp (f, a) -> free_tvars f @ free_tvars a
   | TIface (_, args) -> List.concat_map free_tvars args
@@ -1177,7 +1196,7 @@ let rec free_evars_typ t =
   | TResult (e, t) -> free_evars_typ e @ free_evars_typ t
   | TResource (r, t) -> Effect_set.free_vars r @ free_evars_typ t
   | TStream (r, t) -> Effect_set.free_vars r @ free_evars_typ t
-  | TDecoder t  -> free_evars_typ t
+  | TDecoder t | TShared t -> free_evars_typ t
   | TMap t      -> free_evars_typ t
   | TApp (f, a) -> free_evars_typ f @ free_evars_typ a
   | TIface (_, args) -> List.concat_map free_evars_typ args
@@ -1262,6 +1281,7 @@ let refresh_scheme (sch : scheme) : scheme =
     | TResource (r, t) -> TResource (effects r, go t)
     | TStream (r, t) -> TStream (effects r, go t)
     | TDecoder t -> TDecoder (go t)
+    | TShared t -> TShared (go t)
     | TMap t -> TMap (go t)
     | TApp (f, a) -> TApp (go f, go a)
     | TIface (n, args) -> TIface (n, List.map go args)
@@ -1324,6 +1344,10 @@ let instantiate = function
       | TResource (r, t) -> TResource (Effect_set.subst evar_subst r, inst t)
       | TStream (r, t) -> TStream (Effect_set.subst evar_subst r, inst t)
       | TDecoder t  -> TDecoder (inst t)
+      | TShared t   ->
+        let r = TShared (inst t) in
+        shared_uses := (r, !cur_loc) :: !shared_uses;
+        r
       | TMap t      -> TMap (inst t)
       | TApp (f, a) -> TApp (inst f, inst a)
       (* An interface's arguments are types like any other, and a module's
@@ -1375,7 +1399,7 @@ let builtin_type_names =
   [ "Int"; "Float"; "String"; "Bool"; "Unit"; "Path"; "Glob";
     "DateTime"; "Duration"; "URL"; "IPv4"; "CIDR";
     "Port"; "Version"; "Size"; "JSON"; "TOML"; "YAML"; "Command";
-    "List"; "Map"; "Result"; "Option"; "Decoder" ]
+    "List"; "Map"; "Result"; "Option"; "Decoder"; "Shared" ]
 
 let builtin_type_name n = List.mem n builtin_type_names
 
@@ -1384,7 +1408,7 @@ let builtin_type_name n = List.mem n builtin_type_names
    String` and gets the same answer. `Num`, `Add` and `Ord` are written in
    signatures without being declared anywhere, so they are named here too. *)
 let builtin_type_arity = function
-  | "List" | "Map" | "Option" | "Decoder" -> Some 1
+  | "List" | "Map" | "Option" | "Decoder" | "Shared" -> Some 1
   | "Result"                              -> Some 2
   | "Num" | "Add" | "Ord"                 -> Some 0
   | n when builtin_type_name n            -> Some 0
@@ -1864,6 +1888,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
       apply_alias name args
     | TEApp (TEName "List", arg)   -> TList   (go arg)
     | TEApp (TEName "Decoder", arg) -> TDecoder (go arg)
+    | TEApp (TEName "Shared", arg) -> TShared (go arg)
     | TEApp (TEApp (TEName "Result", e), a) -> TResult (go e, go a)
     | TEApp (TEName "Result", _) ->
       raise (TypeError "Result now takes two type arguments: Result <ErrorType> <ValueType>")
@@ -1989,6 +2014,7 @@ let ctor_schemes ?key (tdef : type_def) : (string * scheme) list =
          `type D(decoder: Decoder Pod)` could not be built from
          `Pod.decoder`. *)
       | TEApp (TEName "Decoder", arg) -> TDecoder (conv_ arg)
+      | TEApp (TEName "Shared", arg) -> TShared (conv_ arg)
       | TEApp (TEApp (TEName "Result", e), a) -> TResult (conv_ e, conv_ a)
       | TEApp (TEName "Result", _) ->
         raise (TypeError "Result now takes two type arguments: Result <ErrorType> <ValueType>")
@@ -2661,7 +2687,7 @@ let rec ctors_of_type tenv (ctor_env : env) (t : typ) : (string * typ list) list
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
   | TRegex | TJson | TToml | TYaml | TCommand | TFun _ | TResource _ | TStream _
-  | TDecoder _ | TIface _ | TModule _ ->
+  | TDecoder _ | TShared _ | TIface _ | TModule _ ->
     []  (* infinite/opaque domains: only a wildcard row can cover these *)
 
 let is_infinite_domain t =
@@ -2671,7 +2697,7 @@ let is_infinite_domain t =
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
   | TRegex | TJson | TToml | TYaml | TCommand | TFun _ | TApp _ | TResource _
-  | TStream _ | TDecoder _ -> true
+  | TStream _ | TDecoder _ | TShared _ -> true
   | _ -> false
 
 (* Does pattern p match constructor `name` (of the given arity)? Returns
@@ -4213,6 +4239,14 @@ let stdlib_type_env : env = [
   ("random_below", generalize [] (effs [Effect_set.Random] (TInt) (TInt)));
   ("random_float", generalize [] (effs [Effect_set.Random] (TUnit) (TFloat)));
   ("random_seed", generalize [] (effs [Effect_set.Random] (TInt) (TUnit)));
+  ("shared_new", let a = fresh () in generalize [] (a @-> TShared a));
+  ("shared_close", let a = fresh () in generalize [] (TShared a @-> TUnit));
+  ("shared_get",
+   let a = fresh () in generalize [] (effs [Effect_set.Shared] (TShared a) a));
+  ("shared_update",
+   let a = fresh () in
+   generalize []
+     (TShared a @-> effs [Effect_set.Shared] (TFun (a, a, Effect_set.pure)) TUnit));
   ("option_get_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TUnit) (a)));
   ("fail_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TString) (a)));
   (* A file is named by a Path, like every other filesystem operation. These
@@ -4994,7 +5028,7 @@ let rec labels_of_typ ?(demanded = false) t =
     Effect_set.EffSet.union (Effect_set.labels_of r) (self t)
   | TStream (r, t) ->
     Effect_set.EffSet.union (Effect_set.labels_of r) (self t)
-  | TDecoder t -> self t
+  | TDecoder t | TShared t -> self t
   | TApp (f, a) -> Effect_set.EffSet.union (self f) (self a)
   | TIface (_, args) ->
     List.fold_left (fun acc a -> Effect_set.EffSet.union acc (self a))
@@ -5300,6 +5334,63 @@ let settle_aliases ?(init_tenv=[]) (prog : program) : program =
   in
   { prog with items = List.map settle prog.items }
 
+(* Whether a value of type [t] can hold a `Shared`: through its arguments,
+   and through the fields of the types it names. *)
+let rec holds_shared (tenv : typedef_env) seen t =
+  match repr t with
+  | TShared _ -> true
+  | TList t | TMap t -> holds_shared tenv seen t
+  | TTuple ts -> List.exists (holds_shared tenv seen) ts
+  | TResult (e, a) -> holds_shared tenv seen e || holds_shared tenv seen a
+  | TAlias (_, _, t) -> holds_shared tenv seen t
+  | (TName _ | TApp _) as t ->
+    let rec head args t =
+      match repr t with
+      | TApp (f, a) -> head (a :: args) f
+      | TName n -> Some (n, args)
+      | _ -> None
+    in
+    (match head [] t with
+     | Some (n, args) ->
+       List.exists (holds_shared tenv seen) args
+       || named_holds_shared tenv seen n
+     | None -> false)
+  | _ -> false
+
+and named_holds_shared tenv seen n =
+  if List.mem n seen then false
+  else
+    let seen = n :: seen in
+    match List.assoc_opt n tenv with
+    | Some (Ast.Variants (_, _, ctors)) ->
+      List.exists (fun (c : Ast.ctor_def) ->
+        List.exists (fun (_, te) -> te_holds_shared tenv seen te) c.fields)
+        ctors
+    | Some (Ast.Alias (_, _, te)) -> te_holds_shared tenv seen te
+    | None -> false
+
+and te_holds_shared tenv seen = function
+  | Ast.TEApp (Ast.TEName "Shared", _) -> true
+  | Ast.TEApp (f, a) -> te_holds_shared tenv seen f || te_holds_shared tenv seen a
+  | Ast.TETuple ts -> List.exists (te_holds_shared tenv seen) ts
+  | Ast.TEName n -> named_holds_shared tenv seen n
+  | Ast.TEQual (_, n) -> named_holds_shared tenv seen n
+  | Ast.TEVar _ | Ast.TEFun _ -> false
+
+let check_shared_nesting tenv =
+  List.iter (fun (t, loc) ->
+    match repr t with
+    | TShared inner when holds_shared tenv [] inner ->
+      let msg = Printf.sprintf
+        "a Shared cannot hold another Shared, and this one holds %s. Keep \
+         the inner state in the outer value, or make two Shared values side \
+         by side"
+        (string_of_typ inner) in
+      (match loc with
+       | Some l -> raise (TypeErrorAt (l, msg))
+       | None -> raise (TypeError msg))
+    | _ -> ()) (List.rev !shared_uses)
+
 let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[])
     ?(init_ifaces=[]) ?(init_effects=Effect_set.EffSet.empty)
     (prog : program) : typedef_env * env * env * typ =
@@ -5311,6 +5402,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   List.iter (fun (n, i) -> Hashtbl.replace iface_defs n i) init_ifaces;
   expr_item_types := [];
   expr_item_effects := [];
+  shared_uses := [];
   local_binders := [];
   current_item := -1;
   seq_discard_types := [];
@@ -5728,6 +5820,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     if claims = [] then own_env
     else (implements_key, Mono (TModule claims)) :: own_env
   in
+  check_shared_nesting tenv;
   check_manifest prog own_env;
   (tenv, env, own_env, last_t)))
 

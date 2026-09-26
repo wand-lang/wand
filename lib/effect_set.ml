@@ -8,7 +8,7 @@
    it is given performs, so what it performs is a variable, not a fixed set.
 
    The effects are fixed and few on purpose. A script cannot define new
-   ones, so an effect set is always a subset of these nine, and a reader of
+   ones, so an effect set is always a subset of these eleven, and a reader of
    a signature has a finite vocabulary to learn. One is added when something
    can actually perform it: network access reaches the outside world through
    a command today, and so reports as Shell. Waiting is not like that --
@@ -38,6 +38,7 @@ type eff =
   | IO        (* reads or writes the program's own streams *)
   | Proc      (* ends the process; nothing catches this *)
   | Random    (* answers differently between runs; draws from entropy *)
+  | Shared    (* keeps state that changes, in a `Shared` *)
   | Raise     (* can raise instead of returning *)
 
 (* Alphabetical by rendered name. This list is the one definition of
@@ -46,7 +47,8 @@ type eff =
    manifest is always already in canonical form and a reader can predict
    where a label sits without knowing any convention beyond the
    alphabet. *)
-let all = [Clock; Env; FsRead; FsWrite; IO; Net; Proc; Raise; Random; Shell]
+let all = [Clock; Env; FsRead; FsWrite; IO; Net; Proc; Raise; Random; Shared;
+           Shell]
 
 let name_of = function
   | Clock   -> "Clock"
@@ -58,6 +60,7 @@ let name_of = function
   | Net     -> "Net"
   | Proc    -> "Proc"
   | Random  -> "Random"
+  | Shared  -> "Shared"
   | Raise   -> "Raise"
 
 (* What a label admits, one sentence each, for a reader who hovers a
@@ -78,6 +81,8 @@ let description = function
   | Proc    -> "Ends the process. Nothing catches this."
   | Random  -> "Draws from entropy: answers differently on two runs unless \
                 the seed is pinned."
+  | Shared  -> "Keeps state that changes: makes, reads or updates a \
+                `Shared`."
   | Raise   -> "Can raise instead of returning."
 
 (* The inverse of `name_of`, derived from it rather than written out again:

@@ -1,0 +1,51 @@
+uses {Shared}
+
+import Resource
+
+-- State that changes.
+--
+-- A `Shared` holds one value, and the only way to change it is to give
+-- `Shared.update` a function from the old value to the new one. It is how a
+-- service keeps state between requests: usually one record with everything
+-- in it.
+--
+-- A `Shared` exists only inside the `with` that made it, and a function
+-- uses one only if it is passed one, so there is no global state to find:
+--
+-- with Shared.make Counts(hits = 0) as counts ->
+--   HTTP.serve :8080 256 (handle counts)
+--
+-- Reading and updating perform `Shared`, so a file that keeps state says so
+-- in its manifest, and a handler can answer both.
+--
+-- A `Shared` cannot hold another `Shared`, inside a record or a list or
+-- anywhere else: an update is one step, and an inner `Shared` would make it
+-- two. Keep the inner state in the outer value, or make two side by side.
+
+-- Make a `Shared` that starts as `init`, for the length of a `with`.
+--
+-- Once the `with` ends, using it raises.
+--
+-- >> with Shared.make 1 as n -> Shared.get n
+-- 1 : Int
+let make init = Resource.make (fn () -> shared_new init) (fn s -> shared_close s)
+
+-- The value a `Shared` holds now.
+--
+-- It is a value like any other, so it does not change under you: read it
+-- again to see an update made since.
+--
+-- >> with Shared.make [1, 2] as xs -> Shared.get xs
+-- [1, 2] : List Int
+let get s = shared_get s
+
+-- Change the value a `Shared` holds: `f` gets the value now and answers
+-- the new one.
+--
+-- Updates happen one at a time, so none is lost when many run at once, and
+-- a change to several fields of a record is one step. `f` performs nothing,
+-- and a second update of the same `Shared` cannot start inside it.
+--
+-- >> with Shared.make 1 as n -> (Shared.update n (fn x -> x + 1); Shared.get n)
+-- 2 : Int
+let update s f = shared_update s f

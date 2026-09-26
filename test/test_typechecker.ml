@@ -724,6 +724,37 @@ let rejects label src =
   | Ok t -> Alcotest.failf "%s: expected a type error, got %s" label t
 
 
+
+(* A Shared holds state that one update changes in one step, so it cannot
+   hold another Shared: through its own argument, a list, or a field. *)
+let test_a_shared_holds_no_shared () =
+  let nests = "a Shared cannot hold another Shared" in
+  err_contains "directly"
+    "import Shared\nwith Shared.make 0 as a -> with Shared.make a as b -> 1" nests;
+  err_contains "in a list"
+    "import Shared\nwith Shared.make 0 as a -> with Shared.make [a] as b -> 1" nests;
+  err_contains "in a field"
+    "import Shared\ntype Box(inner: Shared Int)\n\
+     with Shared.make 0 as a -> with Shared.make Box(inner = a) as b -> 1" nests;
+  ok "state beside state"
+    "import Shared\nwith Shared.make 0 as a -> with Shared.make 1 as b -> \
+     Shared.get a + Shared.get b" "1"
+
+let test_an_update_performs_nothing () =
+  err_contains "an update that prints"
+    "import IO\nimport Shared\n\
+     with Shared.make 0 as a -> Shared.update a (fn x -> (IO.println \"hi\"; x))"
+    "performs IO";
+  ok "an update that computes"
+    "import Shared\n\
+     with Shared.make 1 as a -> (Shared.update a (fn x -> x * 5); Shared.get a)" "5"
+
+let test_state_is_declared () =
+  err_contains "a manifest without Shared"
+    "uses {IO}\nimport IO\nimport Shared\n\
+     with Shared.make 0 as a -> IO.println \"%{Shared.get a}\""
+    "performs Shared"
+
 let test_primitive_literals () =
   expr_is "int" "42" "Int";
   expr_is "float" "3.14" "Float";
@@ -2139,6 +2170,11 @@ let test_a_member_cannot_leave_its_effects_open () =
 
 let () =
   Alcotest.run "Typechecker" [
+    "shared", [
+      Alcotest.test_case "a Shared holds no Shared" `Quick test_a_shared_holds_no_shared;
+      Alcotest.test_case "an update performs nothing" `Quick test_an_update_performs_nothing;
+      Alcotest.test_case "state is declared" `Quick test_state_is_declared;
+    ];
     "interfaces", [
       Alcotest.test_case "an implementation is checked" `Quick test_an_implementation_is_checked;
       Alcotest.test_case "every member answered for"    `Quick test_every_member_is_answered_for;

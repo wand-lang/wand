@@ -38,7 +38,7 @@ For what wand is and why, see the [README](../README.md).
 - [Imports](#imports)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
-  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
+  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
 - [Testing](#testing)
 - [Comments](#comments)
 - [Style for scripts](#style-for-scripts)
@@ -1427,7 +1427,7 @@ Everywhere else, write no effects and let wand infer them.
 
 ### The labels
 
-Ten, and a script cannot define more:
+Eleven, and a script cannot define more:
 
 | Label | Means |
 |---|---|
@@ -1440,20 +1440,21 @@ Ten, and a script cannot define more:
 | `IO` | reads or writes the program's own streams |
 | `Proc` | ends the process; nothing catches this |
 | `Random` | draws from entropy; will not answer the same twice unless the seed is pinned |
+| `Shared` | reads or updates state that changes, held in a `Shared` |
 | `Raise` | can raise instead of returning |
 
 A label answers one question: what can this touch? So a label is coarse. It
-must fit in a signature, and you must be able to hold all ten in your
+must fit in a signature, and you must be able to hold all eleven in your
 head.
 
 ### What earns a label
 
-Three things justify one, and the ten divide between them:
+Three things justify one, and the eleven divide between them:
 
 | Justification | Labels |
 |---|---|
 | Reach — the call touches something outside the program | `Shell`, `Net`, `FS.Read`, `FS.Write`, `Env`, `IO`, `Proc` |
-| Non-determinism inside one run — two calls can disagree | `Clock`, `Random` |
+| Non-determinism inside one run — two calls can disagree | `Clock`, `Random`, `Shared` |
 | Control flow | `Raise` |
 
 The third row is why `Raise` appears in a signature and never in a manifest.
@@ -1678,9 +1679,9 @@ can reach.
 
 ### A subprocess is outside every label
 
-The ten labels describe what this file's wand code does. `Shell` says a
+The eleven labels describe what this file's wand code does. `Shell` says a
 subprocess starts, and names which binary. What that binary then does is
-outside all ten, `Shell` included:
+outside all eleven, `Shell` included:
 
 | the file declares | the subprocess can | the label not declared |
 |---|---|---|
@@ -1983,6 +1984,7 @@ there is nothing extra to remember.
 | `Proc` | `exit` |
 | `Clock` | `sleep`, `now`, `timed` |
 | `Random` | `int`, `float`, `seed` |
+| `Shared` | `get`, `update` |
 
 The family is usually the effect's own name, and `Hash` is the exception:
 `Hash.file` reads a file, so it carries `FS.Read` and is intercepted as
@@ -5559,6 +5561,63 @@ domain with the other tasks, on one core. To get the parallelism back, do
 the computing in its own `Par` call, before or after the effects.
 
 ---
+
+### `Shared`
+
+```ocaml
+make   : 'a -> Resource {..} (Shared 'a)
+get    : Shared 'a -> 'a ! {Shared}
+update : Shared 'a -> ('a -> 'a) -> Unit ! {Shared}
+```
+
+State that changes. A `Shared` holds one value, and the only way to change
+it is to give `update` a function from the old value to the new one. It is
+how a service keeps state between requests, usually one record with
+everything in it:
+
+```ocaml
+type Counts(hits: Int, names: List String)
+
+with Shared.make Counts(hits = 0, names = []) as counts ->
+  Par.each 64 (fn name ->
+    Shared.update counts (fn c -> Counts(c, hits = c.hits + 1, names = name :: c.names)))
+    names
+```
+
+**Updates happen one at a time.** None is lost when many run at once, and a
+change to several fields of a record is one step. The function given to
+`update` performs nothing, and it runs without being interrupted by other
+work. A second update of the same `Shared` that starts inside it raises.
+
+**A `Shared` exists only inside its `with`.** When the `with` ends, a `get`
+or an `update` raises. A function uses one only if it is passed one, so
+there is no global state to find.
+
+**A `Shared` cannot hold another `Shared`**, through a list, a map, a
+record field or anything else. An update is one step, and an inner `Shared`
+would make it two. The typechecker refuses it:
+
+```ocaml
+with Shared.make 0 as a -> with Shared.make [a] as b -> ...
+-- type error: a Shared cannot hold another Shared, and this one holds
+--             List (Shared Int)
+```
+
+Keep the inner state in the outer value, or make two side by side.
+
+`get` returns a value like any other, so it does not change under you. Read
+again to see an update made since. Reading and updating perform `Shared`:
+two reads can disagree, so a file that keeps state says so in its manifest.
+Both are operations, `Shared!get` and `Shared!update`, so a handler can
+answer them:
+
+```ocaml
+handle Shared.get counts with
+| Shared!get _ k -> k Counts(hits = 7, names = [])
+```
+
+All updates to one `Shared` wait for each other, even when they touch
+different parts of it. Where that is too slow, use several `Shared` values.
 
 ### `Shell`
 
