@@ -269,8 +269,7 @@ and reap pid =
     | (_, status) -> forget pid; status
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> reap pid
 
-(* A fiber does not block the domain on a child: it looks, and pauses a
-   little longer each time up to a slice. *)
+(* A fiber looks, and pauses a little longer each time up to a slice. *)
 and reap_waiting pid ms =
   match Unix.waitpid [Unix.WNOHANG] pid with
   | (0, _) -> Sched.pause ms; reap_waiting pid (min 50 (ms * 2))
@@ -1280,8 +1279,7 @@ let unhandled_operation name =
 
 let rec run_with_default_handler (thunk : unit -> value) : value =
   (* An effect from a fiber that started inside [thunk] is answered with
-     the work itself, done by the fiber under a handler of its own, so its
-     waits suspend the fiber rather than block the domain. *)
+     the work itself, which the fiber does under a handler of its own. *)
   let r_place = Sched.place () in
   let handle_here : type a. a Effect.t ->
       ((a, value) Effect.Deep.continuation -> value) option = fun eff ->

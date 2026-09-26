@@ -1033,8 +1033,8 @@ type loc_cell =
     mutable budget : int;
     (* Which task this is, for what a task holds: a lock. *)
     task : int;
-    (* Every step writes a cell, and domains run side by side, so no two
-       cells may share a cache line: 128 bytes on Apple silicon. *)
+    (* Padding: no two cells may share a cache line (128 bytes on Apple
+       silicon). *)
     q0 : int; q1 : int; q2 : int; q3 : int; q4 : int; q5 : int; q6 : int;
     q7 : int; q8 : int; q9 : int; q10 : int; q11 : int; q12 : int;
     q13 : int; q14 : int; q15 : int }

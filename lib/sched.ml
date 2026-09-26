@@ -33,7 +33,7 @@ let active () = Option.is_some (Domain.DLS.get current)
 (* Checked on every idle turn; set by the evaluator. *)
 let interrupt_pending : (unit -> bool) ref = ref (fun () -> false)
 
-(* The longest one idle turn blocks, so an interrupt is seen in time. *)
+(* The longest one idle turn blocks. *)
 let slice_ms = 50
 
 let events_of w =
@@ -107,8 +107,7 @@ let union ws =
       | None, u | u, None -> u
       | Some a, Some b -> Some (min a b)) None ws }
 
-(* An interrupt wakes every suspended fiber once, so each takes it at its
-   next checkpoint. Waits after that, in releases, are real waits. *)
+(* An interrupt wakes every suspended fiber once. *)
 let take_interrupt s =
   if (not s.interrupt_seen) && !interrupt_pending () then begin
     s.interrupt_seen <- true;
@@ -189,8 +188,7 @@ let run_with ~(save : unit -> 's) ~(restore : 's -> unit)
       Effect.Deep.match_with body () handler) s.runq
   in
   start spawn;
-  (* While fibers are runnable, waiters are looked at once a millisecond,
-     so a fiber that computes does not starve one whose wait is over. *)
+  (* While fibers are runnable, waiters are looked at once a millisecond. *)
   let next_look = ref 0 in
   let rec loop () =
     match Queue.take_opt s.runq with
