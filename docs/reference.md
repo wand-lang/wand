@@ -4491,6 +4491,7 @@ it is not a `Duration`.
 sleep : Duration -> Unit ! {Clock}
 now   : Unit -> DateTime ! {Clock}
 timed : (Unit -> 'a ! 'e) -> (Duration, 'a) ! {Clock | 'e}
+every : Duration -> (Unit -> 'a ! {Clock | 'e}) -> 'b ! {Clock | 'e}
 ```
 
 Waits for at least the duration given. It is a floor, not a promise: a
@@ -4551,6 +4552,23 @@ microseconds:
 ```ocaml
 let (elapsed, result) = Test.with_clock (fn () -> retry fetch)
 ```
+
+
+`every` runs a function every period, forever, starting at once. It is for
+work beside a service, as a branch of `Par.all!`:
+
+```ocaml
+Par.all! [
+  fn () -> HTTP.serve :8080 256 (handle state),
+  fn () -> Clock.every 1h (fn () -> refresh state)
+]
+```
+
+Runs do not overlap. The ticks are counted from the first run, and a run
+that takes longer than the period skips the ticks it missed instead of
+making the next runs catch up. A run that raises ends `every` with that
+failure, so a service that cannot refresh stops instead of going quiet. To
+go on after a failed run, catch it in the function with `try`.
 
 ### `Random`
 

@@ -1,0 +1,40 @@
+uses {Clock, Shared}
+
+import Clock
+import List
+import Shared
+import Test
+
+let {test, group} = import Test
+
+-- A run that raises ends it, so a test stops it that way. The count says
+-- how many runs came before, and the test clock how long they waited.
+group "Clock.every" (fn () -> [
+  test "runs once a period until a run raises" (fn t ->
+    t.eq
+      (2h, 3)
+      (with Shared.make 0 as runs -> (
+        let (waited, _) =
+          Test.with_clock (fn () ->
+            try Clock.every 1h (fn () -> (
+              Shared.update runs (fn n -> n + 1);
+              if Shared.get runs == 3 then List.head! []
+            )));
+        (waited, Shared.get runs)
+      ))),
+  -- Each run takes 250ms against a 100ms period, so the ticks at 100 and
+  -- 200 are missed. Skipping them starts the runs at 0, 300 and 600, and
+  -- the third ends near 850ms. Catching up would start them back to back
+  -- and end near 750ms.
+  test "a late run skips the ticks it missed" (fn t ->
+    with Shared.make 0 as runs -> (
+      let (took, _) =
+        Clock.timed (fn () ->
+          try Clock.every 100ms (fn () -> (
+            Clock.sleep 250ms;
+            Shared.update runs (fn n -> n + 1);
+            if Shared.get runs == 3 then List.head! []
+          )));
+      t.ok (took >= 830ms && took < 1200ms)
+    ))
+])

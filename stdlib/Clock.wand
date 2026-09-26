@@ -64,3 +64,45 @@ let timed thunk =
   let before = clock_elapsed ();
   let answer = thunk ();
   (clock_elapsed () - before, answer)
+
+-- Run `f` every `d`, forever. The first run is at once.
+--
+-- For work beside a service: refreshing a cache, cleaning up, polling.
+-- It runs as a branch of `Par.all!`, next to the server:
+--
+-- Par.all! [
+--   fn () -> HTTP.serve :8080 256 (handle state),
+--   fn () -> Clock.every 1h (fn () -> refresh state)
+-- ]
+--
+-- Runs do not overlap. The ticks are counted from the first run, and a run
+-- that takes longer than `d` skips the ticks it missed rather than making
+-- the next runs catch up. A `d` below a millisecond is a millisecond.
+--
+-- A run that raises ends `every` with that failure, so a service that
+-- cannot refresh stops rather than going quiet. To keep going after a
+-- failed run, catch it in `f`:
+--
+-- Clock.every 1h (fn () ->
+--   match try refresh state with
+--   | Ok _ -> ()
+--   | Error why -> IO.println_err "refresh failed: %{why}")
+--
+-- It never returns. Under a test clock the waits take no time, so a test
+-- stops it by raising from `f`:
+--
+-- >> let runs = Test.with_clock (fn () ->
+-- ..   try Clock.every 1h (fn () -> List.head! []))
+-- >> runs
+-- (0ms, Error("pattern match failure")) : (Duration, Result String 'a)
+let every d f =
+  let period = if dur_to_ms d < 1 then 1 else dur_to_ms d;
+  let start = clock_elapsed ();
+  let run () = (
+    f ();
+    let since = dur_to_ms (clock_elapsed () - start);
+    let next = (since / period + 1) * period;
+    clock_sleep (dur_scale (next - since) 1ms);
+    run ()
+  );
+  run ()

@@ -79,9 +79,10 @@ with Shared.make init as state ->
   effects run as fibers. Shutdown cancels the whole call, and every branch
   runs its releases. No `spawn`; nothing outlives the scope.
 - **`Clock.every d f`**: runs `f` every `d`, forever.
-    - A failed run is isolated: the error is logged and the next tick runs.
-      Otherwise one failed refresh would stop the server through `Par.all!`.
-      Only the loop itself ending stops the service.
+    - A run that raises ends `every` with that failure, and through
+      `Par.all!` stops the service. A caller that wants the next tick to
+      run after a failure catches it in `f` with `try`, where the choice
+      can be seen.
     - Runs do not overlap: if a run takes longer than `d`, the missed tick
       is skipped, not queued.
     - Tested with `Test.with_clock` by advancing time.
