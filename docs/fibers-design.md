@@ -21,7 +21,6 @@ other. Erlang/BEAM does that better, and wand does not compete there.
 - [Own scheduler; Eio as a reference only](#own-scheduler-eio-as-a-reference-only)
 - [Scheduler](#scheduler)
 - [Par: an item moves at its first effect](#par-an-item-moves-at-its-first-effect)
-- [Questions](#questions)
 - [Order](#order)
 
 ## What exists
@@ -115,7 +114,10 @@ If io_uring speed is needed later, look at Picos before Eio.
 - **Blocking calls need waiting versions.** Sockets and pipes: non-blocking
   fds plus `poll`. Child processes (including `curl` for `HTTP`, and
   `Shell.stream`): wait on the pipes and the exit. Sleep: the timer heap.
-  Regular files and DNS cannot use `poll` (see Questions).
+  Regular files cannot use `poll`: a file operation blocks the domain for
+  as long as the disk takes. This is accepted for now, and the server's
+  load test confirms or revisits it. wand does no DNS lookups of its own;
+  curl resolves names in its own process.
 
 ## Par: an item moves at its first effect
 
@@ -151,11 +153,6 @@ half speed.
 Later: M:N (fibers across several domains) for CPU-heavy services. Fibers
 on other domains are out of handlers' reach, so under a handler they stay
 on the calling domain.
-
-## Questions
-
-- Regular files and DNS under fibers: accept a short block, or use a helper
-  thread.
 
 ## Order
 

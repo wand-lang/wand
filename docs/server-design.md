@@ -193,4 +193,6 @@ stay in 0.x minors until 1.0.
 1. `Net.listen` and `Stream.each_par`, with the `Net.Listen(port)` label.
 2. `HTTP.serve`, with request limits, graceful shutdown, and line-atomic
    logging.
-3. Load-test a simple `HTTP.serve`.
+3. Load-test a simple `HTTP.serve`. Include handlers that read files, and
+   confirm or revisit the short block a file operation takes under fibers
+   (`fibers-design.md`).
