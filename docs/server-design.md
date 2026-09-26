@@ -19,7 +19,6 @@ other. Erlang/BEAM does that better, and wand does not compete there.
 - [Service needs](#service-needs)
 - [First real service: the playground eval endpoint](#first-real-service-the-playground-eval-endpoint)
 - [Release plan](#release-plan)
-- [Questions](#questions)
 - [Order](#order)
 
 ## Server API
@@ -63,8 +62,12 @@ let handle state (req: HTTP.Incoming) =
 - Routing is `match` on method and path segments; no router DSL.
 - Expected failures are values turned into 4xx. A raise becomes a 500 for
   that request only.
-- Deadlines: see Questions. `Par.timeout` works under handlers once `Par`
-  runs on fibers.
+- Deadlines: a per-request deadline is an argument of `HTTP.serve`, like
+  the request limits. A request past it is cancelled and answered 503, and
+  its releases run.
+- `HTTP.Incoming` is a type of its own, not `HTTP.Request`: a client
+  request has a full URL, and a server request has a path, a query and a
+  peer. It cannot be sent back out by mistake.
 
 Tests call the handler directly, with no socket:
 
@@ -93,16 +96,11 @@ Needed for a first real service:
 - **Request limits as defaults** on `HTTP.serve`: max body size, max header
   size, timeout for reading headers (against slow clients). Use `Size` and
   `Duration` literals: `max_body = 1MB`, `header_timeout = 10s`.
-- **Logging.**
-    - Writes are line-atomic, so lines from different fibers never mix.
-    - A small structured log function (one JSON line per event, with a
-      request ID), in `IO` or a new `Log` module.
-    - Default: log to stdout and let the platform rotate (journald, Docker,
-      Kubernetes).
-    - If wand writes log files, rotation is a `Log` setting
-      (`rotate = 100MB`, `rotate = 1d`), not a user task: rotation must
-      close and reopen the file every write uses, which only the module can
-      coordinate safely.
+- **Line-atomic writes.** Lines from different requests never mix. Each
+  `IO.println` is one operation on one domain, and a fiber cannot switch
+  inside one, so this is expected to hold already; the load test confirms
+  it. A structured log function and log files are the `Log` module, after
+  1.0.
 - **`--dry-run` and `--trace` for servers.** Dry run: typecheck, print
   "would listen on :8080", exit. Trace on a long-running process needs a
   way to limit its output.
@@ -191,21 +189,13 @@ Services first (these four records), then package management, then the
 playground eval service (separate repo), then 1.0, then `Log`. Versions
 stay in 0.x minors until 1.0.
 
-## Questions
-
-- `HTTP.Incoming` as a separate type vs reusing `HTTP.Request`.
-  Recommended: separate. A client request has a full URL; a server request
-  has a path, query and peer, and must not be sendable back out by mistake.
-- Where structured logging lives: `IO` or a new `Log` module.
-- Per-request deadlines: an `HTTP.serve` argument vs `Par.timeout` in the
-  handler.
-
 ## Order
 
 1. `Net.listen` and `Stream.each_par`, with the `Net.Listen(port)` label.
-2. `HTTP.serve`, with request limits, graceful shutdown, and line-atomic
-   logging.
-3. Load-test a simple `HTTP.serve`. Include handlers that read files, and
+2. `HTTP.serve`, with request limits, a per-request deadline and graceful
+   shutdown.
+3. Load-test a simple `HTTP.serve`. Confirm that lines written by
+   concurrent requests never mix. Include handlers that read files, and
    confirm or revisit the short block a file operation takes under fibers:
    regular files cannot use `poll`, so a read or a write blocks the domain
    for as long as the disk takes.
