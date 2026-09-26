@@ -148,6 +148,18 @@ let test_sleep_in_fibers () =
   Alcotest.(check bool) (Printf.sprintf "five sleeps in %dms" took)
     true (took < 600)
 
+let test_trace_overlaps () =
+  let path = Filename.temp_file "wand_trace_" ".wand" in
+  Out_channel.with_open_text path (fun oc ->
+    output_string oc
+      "uses {Shell(sleep)}\nimport List\nimport Par\n\
+       let _ = Par.each 10 (fn _ -> $(sleep 0.3)) (List.range 1 10)\n");
+  let took = timed (fun () ->
+    ignore (Runner.run_file ~mode:Runner.Trace path)) in
+  Sys.remove path;
+  Alcotest.(check bool) (Printf.sprintf "ten traced commands in %dms" took)
+    true (took < 1500)
+
 let () =
   Alcotest.run "sched" [
     "sched", [
@@ -167,5 +179,6 @@ let () =
       Alcotest.test_case "captures overlap" `Quick test_capture_overlaps;
       Alcotest.test_case "streams overlap" `Quick test_stream_lines_in_fibers;
       Alcotest.test_case "sleeps overlap" `Quick test_sleep_in_fibers;
+      Alcotest.test_case "traced commands overlap" `Quick test_trace_overlaps;
     ];
   ]

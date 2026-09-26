@@ -2920,6 +2920,7 @@ let run_in_mode mode (thunk : unit -> value) : value =
        back here to be reported rather than letting them run on their own. *)
     Evaluator.observed (fun () ->
     run_with_default_handler (fun () ->
+      let t_place = Sched.place () in
       Effect.Deep.match_with thunk ()
         { Effect.Deep.
             retc = (fun v -> v);
@@ -2999,6 +3000,12 @@ let run_in_mode mode (thunk : unit -> value) : value =
                     | Some (Ok result) -> Effect.Deep.continue k result
                     | Some (Error m) -> Effect.Deep.discontinue k (EvalError m)
                     | None ->
+                    (* A fiber that started inside does the work itself. *)
+                    if not (Sched.same_place (Sched.place ()) t_place) then
+                      Effect.Deep.discontinue k (Evaluator.Perform_here (fun () ->
+                        run_with_default_handler (fun () ->
+                          Evaluator.perform_wand (name, v))))
+                    else
                     match (try Ok (Evaluator.perform_wand (name, v))
                            with EvalError m -> Error m) with
                     | Ok result -> Effect.Deep.continue    k result
