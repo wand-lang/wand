@@ -106,3 +106,27 @@ test "work stopped by a deadline releases" (fn t ->
     let _ = Par.timeout 200ms (fn () -> with holder as _ -> spin 900000000);
     t.eq false (FS.exists? held)
   ))
+
+-- ── Branches that run until one ends ────────────────────────────────────
+
+group "Par.all!" (fn () -> [
+  test "the first branch to end stops the others" (fn t ->
+    t.eq "fast" (Par.all! [fn () -> (Clock.sleep 10s; "slow"), fn () -> "fast"])),
+  test "a branch that fails makes it raise" (fn t ->
+    t.raises (fn () ->
+      Par.all! [fn () -> (Clock.sleep 10s; "slept"), fn () -> $(sh -c 'exit 3')])),
+  test "a stopped branch releases what it holds" (fn t ->
+    with FS.temp_dir "all_" as d -> (
+      let held = Path.join d (Path.of_string "held");
+      let holder =
+        Resource.make (fn () -> FS.write_file! held "y") (fn _ -> FS.delete! held);
+      let _ = Par.all! [fn () -> with holder as _ -> Clock.sleep 10s, fn () -> ()];
+      t.eq false (FS.exists? held)
+    )),
+  test "no branches is a failure" (fn t -> t.raises (fn () -> Par.all! [])),
+  test "a handler around it answers every branch" (fn t ->
+    t.eq
+      "mocked"
+      (Test.with_shell [("git", "mocked")] (fn () ->
+        Par.all! [fn () -> (Clock.sleep 10s; "slept"), fn () -> $(git describe)])))
+])

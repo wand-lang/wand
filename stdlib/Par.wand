@@ -76,6 +76,28 @@ let each limit f xs = par_each limit f xs
 -- Ok(1) : Result String Int
 let race thunks = par_race thunks
 
+-- Run every branch at once, until the first one ends. The rest are told
+-- to stop, and every one of them is joined before this returns.
+--
+-- For work that runs side by side for as long as a service does: a server
+-- and the jobs beside it. When one branch ends, the service is over:
+--
+-- Par.all! [
+--   fn () -> HTTP.serve :8080 256 (handle state),
+--   fn () -> Clock.every 1h (fn () -> refresh state)
+-- ]
+--
+-- A branch that ends by raising makes `all!` raise the same failure, so a
+-- service that dies does not go quiet. A branch that returns makes `all!`
+-- return its value. For the failure as a value, use `race`.
+--
+-- >> Par.all! [fn () -> 1]
+-- 1 : Int
+--
+-- >> try Par.all! [fn () -> List.head! []]
+-- Error("pattern match failure") : Result String 'a
+let all! branches = par_all branches
+
 -- Run `thunk` with a deadline. The result is `Error` if the deadline
 -- passed first, and the message says how long it waited.
 --

@@ -5456,6 +5456,7 @@ URLs say, not of where they point.
 map     : Int -> ('a -> 'b ! 'e) -> List 'a -> List (Result String 'b) ! 'e
 each    : Int -> ('a -> 'b ! 'e) -> List 'a -> Unit ! 'e
 race    : List (Unit -> 'a ! 'e) -> Result String 'a ! 'e
+all!    : List (Unit -> 'a ! 'e) -> 'a ! {Raise | 'e}
 timeout : Duration -> (Unit -> 'a ! {Clock | 'e}) -> Result String 'a ! {Clock | 'e}
 ```
 
@@ -5518,6 +5519,23 @@ them, and `--dry-run` and `--trace` report all of them:
 ```ocaml
 Test.with_shell mocks (fn () -> Par.race [fn () -> probe a, fn () -> probe b])
 ```
+
+`all!` runs every branch at once, until the first one ends. It is for work
+that runs side by side for as long as a service does: a server and the jobs
+beside it.
+
+```ocaml
+Par.all! [
+  fn () -> HTTP.serve :8080 256 (handle state),
+  fn () -> Clock.every 1h (fn () -> refresh state)
+]
+```
+
+When one branch ends, the others are told to stop and are joined, as the
+losers of a race are. A branch that raised makes `all!` raise the same
+failure, so a service that dies exits with an error instead of going quiet.
+A branch that returned makes `all!` return its value. An empty list raises.
+There is no plain `all`: a failure as a value is what `race` gives.
 
 `timeout` puts a deadline on wand code, where `Shell.timeout` puts one on a
 command:

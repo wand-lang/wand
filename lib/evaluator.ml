@@ -5709,6 +5709,15 @@ let stdlib_eval_env : env = [
          handler inside the thunk -- `Par.timeout d (fn () -> with_clock \
          (fn () -> ...))` -- or take it off.")
     else VUnit));
+  ("par_all", VBuiltin (function
+    | VList [] ->
+      raise (EvalError "Par.all needs at least one branch to run")
+    | VList thunks ->
+      (match par_race thunks with
+       | VConstr (c, [v]) when Ctor.equal c (Ctor.Builtin "Ok") -> v
+       | VConstr (_, [VString why]) -> raise (EvalError why)
+       | _ -> raise (EvalError "Par.all: no branch finished"))
+    | _ -> raise (EvalError "par_all: expected a list of thunks")));
   ("par_race", VBuiltin (function
     | VList thunks -> par_race thunks
     | _ -> raise (EvalError "par_race: expected a list of thunks")));

@@ -4775,6 +4775,10 @@ let stdlib_type_env : env = [
                let e = Effect_set.unknown () in
                generalize [] (TFun (TList (TFun (TUnit, a, e)),
                                     TResult (TString, a), e)));
+  ("par_all", let a = fresh () in
+              let e = Effect_set.unknown () in
+              generalize [] (TFun (TList (TFun (TUnit, a, e)), a,
+                                   Effect_set.add Effect_set.Raise e)));
   ("par_map",  let a = fresh () in let b = fresh () in
                let e = Effect_set.unknown () in
                generalize [] (TInt @-> (TFun (a, b, e)
