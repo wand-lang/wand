@@ -168,11 +168,14 @@ type Incoming(
   peer: String = ""
 )
 
--- What `serve!` allows a request, each with a default: the size of its body
--- and of its head, how long its head may take to arrive, how long the
--- handler may take, and how long a request in progress is given to finish
--- when the server is told to stop.
-type Limits(
+-- A server: the port it listens on, and everything else with a default --
+-- how many requests it handles at once, the size of a request's body and
+-- of its head, how long a head may take to arrive, how long the handler
+-- may take, and how long a request in progress is given to finish when
+-- the server is told to stop.
+type Server(
+  port: Port,
+  limit: Int = 256,
   max_body: Size = 1MB,
   max_head: Size = 16KB,
   head_timeout: Duration = 10s,
@@ -279,7 +282,7 @@ let _read_body conn n =
     );
   go [] 0
 
-let _read_request (limits: Limits) conn =
+let _read_request (limits: Server) conn =
   match _read_head conn (Size.to_bytes limits.max_head) with
   | Error refusal -> Error refusal
   | Ok [] -> Error (400, "the request is empty")
@@ -321,7 +324,7 @@ let _send (r: Response) conn =
   let _ = Net.write "%{status}%{fixed}%{head}\r\n%{r.body}" conn;
   ()
 
-let _answer (limits: Limits) handler conn =
+let _answer (limits: Server) handler conn =
   match Par.timeout limits.head_timeout (fn () -> _read_request limits conn) with
   | Error _ -> _send (reply 408 "") conn
   | Ok (Error(status, why)) -> _send (reply status why) conn
@@ -332,28 +335,25 @@ let _answer (limits: Limits) handler conn =
       else _send (reply 500 "") conn
   )
 
--- `serve!`, with limits other than the defaults:
+-- Serve HTTP as `server` says: each request is given to `handler`, which
+-- answers with a response. Runs until the process is told to stop.
 --
--- HTTP.serve_with! HTTP.Limits(max_body = 10MB, deadline = 5s) :8080 256 handle
-let serve_with! (limits: Limits) port limit handler =
-  Net.listen port |> stream_serve limits.grace limit (_answer limits handler)
-
--- Serve HTTP on `port`: at most `limit` requests at once, each given to
--- `handler`, which answers with a response. Runs until the process is
--- told to stop.
---
--- let handle (req: HTTP.Incoming) =
+-- let route (req: HTTP.Incoming) =
 --   match (req.method, HTTP.segments req) with
 --   | (HTTP.GET, ["health"]) -> HTTP.reply 200 "ok"
 --   | _ -> HTTP.reply 404 ""
 --
--- HTTP.serve! :8080 256 handle
+-- HTTP.serve! HTTP.Server(port = :8080) route
+-- HTTP.serve! HTTP.Server(port = :8080, limit = 64, deadline = 5s) route
 --
--- A handler that raises answers 500 for that request only. One that takes
--- longer than the deadline is stopped and answers 503. A request whose
--- head does not arrive in time answers 408, and one larger than the limits
--- answers 413 or 431. `serve_with!` takes other `Limits`.
+-- At most `limit` requests are handled at once. A handler that raises
+-- answers 500 for that request only. One that takes longer than the
+-- deadline is stopped and answers 503. A request whose head does not
+-- arrive in time answers 408, and one larger than the limits answers 413
+-- or 431.
 --
 -- On SIGTERM or Ctrl-C it stops accepting, gives the requests in progress
--- the grace to finish, then stops them, and returns.
-let serve! port limit handler = serve_with! Limits() port limit handler
+-- the grace to finish, then stops them, and returns. It raises when it
+-- cannot listen: the port is in use, or needs privilege.
+let serve! (server: Server) handler =
+  Net.listen server.port |> stream_serve server.grace server.limit (_answer server handler)

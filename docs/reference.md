@@ -4751,8 +4751,7 @@ ok?      : HTTPResponse -> Bool
 header      : String -> HTTPResponse -> Option String
 header_list : String -> HTTPResponse -> List String
 decode   : Decoder 'a -> HTTPResponse -> Result String 'a
-serve!      : Port -> Int -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
-serve_with! : Limits -> Port -> Int -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
+serve!   : Server -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
 reply       : Int -> String -> HTTPResponse
 incoming    : HTTPMethod -> String -> Incoming
 segments    : Incoming -> List String
@@ -4851,13 +4850,22 @@ let route (state: Shared State) (req: HTTP.Incoming) =
   )
   | _ -> HTTP.reply 404 ""
 
-with Shared.make State(users = {}) as state -> HTTP.serve! :8080 256 (route state)
+with Shared.make State(users = {}) as state ->
+  HTTP.serve! HTTP.Server(port = :8080) (route state)
 ```
 
 `HTTP.Incoming` is the request as a server receives it, and a type of its
 own rather than an `HTTPRequest`: it has a `path`, a `query`, `headers`, a
 `body` and the `peer` it came from, and no URL, so it cannot be sent back
 out by mistake. `segments` is the path split on `/` and decoded.
+
+An `HTTP.Server` says how to serve. Only `port` is required, and the rest
+have defaults: `limit = 256`, `max_body = 1MB`, `max_head = 16KB`,
+`head_timeout = 10s`, `deadline = 30s`, `grace = 10s`.
+
+```ocaml
+HTTP.serve! HTTP.Server(port = :8080, limit = 64, max_body = 10MB, deadline = 5s) route
+```
 
 At most `limit` requests are handled at once; past that, new clients wait
 in the system's queue. Each request is answered on its own:
@@ -4870,14 +4878,6 @@ in the system's queue. Each request is answered on its own:
 | the body is larger than `max_body` | 413 |
 | the head is larger than `max_head` | 431 |
 | the method is not one `HTTP.Method` names | 501 |
-
-The limits are an `HTTP.Limits`, and `serve!` uses its defaults:
-`max_body = 1MB`, `max_head = 16KB`, `head_timeout = 10s`, `deadline = 30s`,
-`grace = 10s`. `serve_with!` takes others:
-
-```ocaml
-HTTP.serve_with! HTTP.Limits(max_body = 10MB, deadline = 5s) :8080 256 route
-```
 
 **On SIGTERM or Ctrl-C a server drains.** It stops accepting, gives the
 requests in progress `grace` to finish, then stops the rest and the commands

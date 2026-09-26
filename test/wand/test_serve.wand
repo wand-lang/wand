@@ -59,7 +59,9 @@ test "a server answers each request as its limits say" (fn t ->
     (with Shared.make State(users = {}) as state ->
     Par.all! [
       fn () -> (
-        HTTP.serve_with! HTTP.Limits(deadline = 1s, max_body = 10B) :18481 16 (route! state);
+        HTTP.serve!
+          HTTP.Server(port = :18481, limit = 16, deadline = 1s, max_body = 10B)
+          (route! state);
         []
       ),
       fn () -> (

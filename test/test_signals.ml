@@ -231,7 +231,7 @@ let test_http_server_drains () =
        Clock.sleep 1s;\n\
        HTTP.reply 200 \"finished\"\n\
      )\n\
-     HTTP.serve_with! HTTP.Limits(grace = 5s) (String.to_port! \":%d\") 4 route\n"
+     HTTP.serve! HTTP.Server(port = String.to_port! \":%d\", limit = 4, grace = 5s) route\n"
     marker port in
   let path = Filename.temp_file "wand_drain" ".wand" in
   Out_channel.with_open_text path (fun oc -> output_string oc src);
