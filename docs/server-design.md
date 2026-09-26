@@ -32,11 +32,15 @@ Net.listen :8080
 
 - `Net.listen port`: a `Stream` of connections. A new manifest label
   `Net.Listen(port)`, separate from egress `Net(host)`.
-- `Stream.each_par limit f s`: like `Par.each` over a stream. `limit` is
-  the most connections handled at once. At the limit, accepting stops and
-  new clients wait in the OS queue (backpressure). Each item is isolated
-  like a `Par.map` element. It runs until the stream ends or is cancelled;
-  shutdown is the existing cancellation path.
+- `Stream.each_par limit f s`: runs `f` on each element side by side, on
+  the calling domain. `limit` is the most handled at once. At the limit,
+  reading stops, so accepting stops and new clients wait in the OS queue
+  (backpressure). An element that raises stops the others and the read,
+  and is raised: a caller that wants to go on past one catches it in `f`,
+  as `Clock.every` asks. `HTTP.serve` does that catching, turning a raise
+  into a 500. An element that is a connection is closed when `f` ends.
+- Connections: `Net.read_line`, `Net.read`, `Net.write`, `Net.write!` and
+  `Net.peer`. Reads and writes are operations under `Net.Listen`.
 - `HTTP.serve port limit handler`: `Net.listen` + `Stream.each_par` + HTTP
   parsing.
 - TLS is out of scope for v1; terminate it at a proxy.
@@ -192,6 +196,7 @@ stay in 0.x minors until 1.0.
 ## Order
 
 1. `Net.listen` and `Stream.each_par`, with the `Net.Listen(port)` label.
+   Done (10ab71b).
 2. `HTTP.serve`, with request limits, a per-request deadline and graceful
    shutdown.
 3. Load-test a simple `HTTP.serve`. Confirm that lines written by
