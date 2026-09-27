@@ -77,11 +77,12 @@ all count.
 - On success it writes `wand.api` with the new version and creates the
   git tag, in one step, so the tag and the file never disagree.
 
-## Questions
+## Left out
 
-- A package moving to a new breaking wand: a migration command that
-  rewrites the code and bumps the `wand` field, with `lib/fix.ml` and
-  `lib/autoedit.ml` as its base. In this record, or its own?
+- A migration command that rewrites a package's code for a breaking
+  wand and bumps its `wand` field, with `lib/fix.ml` and `lib/autoedit.ml`
+  as its base. It gets a record of its own, when wand first makes a
+  breaking change that code can be rewritten for.
 
 ## Order
 
