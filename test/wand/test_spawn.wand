@@ -1,0 +1,94 @@
+uses {Clock, Shell(cat, kill, printf, sh)}
+
+import Clock
+import List
+import Par
+import Shell
+import Stream
+import String
+
+let {test, group} = import Test
+
+group "talking to a child" (fn () -> [
+  test "a line written comes back" (fn t ->
+    t.eq
+      (Some "hello")
+      (with Shell.spawn $*(cat) as p -> (Shell.write! "hello\n" p; Shell.read_line p))),
+  test "turns take turns" (fn t ->
+    t.eq
+      (Some "one", Some "two")
+      (with Shell.spawn $*(cat) as p -> (
+        Shell.write! "one\n" p;
+        let a = Shell.read_line p;
+        Shell.write! "two\n" p;
+        (a, Shell.read_line p)
+      ))),
+  test "bytes are read as they are, for a protocol framed by length" (fn t ->
+    t.eq
+      ("Content", "-Length")
+      (with Shell.spawn $*(printf "Content-Length: 2") as p -> (
+        let a = Shell.read 7 p;
+        (a, Shell.read 7 p)
+      ))),
+  test "stderr is read apart from stdout" (fn t ->
+    t.eq
+      (Some "out", Some "err")
+      (with Shell.spawn $*(sh -c "echo out; echo err >&2") as p -> (
+        Shell.read_line p,
+        Shell.read_err_line p
+      ))),
+  test "the end of stdout is None" (fn t ->
+    t.eq
+      (Some "only", None)
+      (with Shell.spawn $*(printf "only\n") as p -> (
+        let a = Shell.read_line p;
+        (a, Shell.read_line p)
+      )))
+])
+
+group "ending" (fn () -> [
+  test "close answers the exit code and what was not read" (fn t ->
+    t.eq
+      (3, "left\n", "note\n")
+      (with Shell.spawn $*(sh -c "cat; echo note >&2; exit 3") as p -> (
+        Shell.write! "left\n" p;
+        let r = Shell.close p;
+        (r.code, r.stdout, r.stderr)
+      ))),
+  test "after close, a read raises" (fn t ->
+    t.raises (fn () ->
+      with Shell.spawn $*(cat) as p -> (let _ = Shell.close p; Shell.read_line p))),
+  -- The child reports its own pid, so the test can ask afterwards whether
+  -- it is still there.
+  test "the with stops a child that was not closed" (fn t -> (
+    let pid = with Shell.spawn $*(sh -c "echo $$; exec sleep 30") as p -> Shell.read_line p;
+    match pid with
+    | Some n -> t.ok (Shell.failed? $?(kill -0 %{n}))
+    | None -> t.fail "the child said nothing"
+  ))
+])
+
+group "waiting" (fn () -> [
+  test "a deadline bounds a read" (fn t ->
+    with Shell.spawn $*(sh -c "exec sleep 30") as p ->
+    match Par.timeout 200ms (fn () -> Shell.read_line p) with
+    | Ok _ -> t.fail "the read should not have answered"
+    | Error why -> t.ok (String.contains? "200ms" why)),
+  -- A worker fed and read at once: one branch writes every job, the other
+  -- reads every answer.
+  test "a child written to and read from at once" (fn t ->
+    t.eq
+      ["1", "2", "3"]
+      (with Shell.spawn $*(cat) as p ->
+      Par.all! [
+        fn () -> (Shell.write! "1\n2\n3\n" p; Clock.sleep 30s; []),
+        fn () -> [Shell.read_line p, Shell.read_line p, Shell.read_line p]
+        |> List.map (fn o ->
+          match o with
+          | Some l -> l
+          | None -> "")
+      ]))
+])
+
+test "stream_err reads a command's stderr" (fn t ->
+  t.eq ["a", "b"] (Shell.stream_err $*(sh -c "printf 'a\nb\n' >&2") |> Stream.to_list))

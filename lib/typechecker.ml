@@ -53,6 +53,8 @@ type typ =
   (* A connection a listening port accepted, open for the length of the
      work `Par.each_stream` gives it. *)
   | TConnection
+  (* A child process `Shell.spawn` started, open for its `with`. *)
+  | TProcess
   (* A resource: how to acquire an 'a and give it back, and what doing
      either performs. The effects are carried rather than hidden -- a bracket
      that concealed its own effects would let a file take a lock and
@@ -498,6 +500,32 @@ let operations : operation list =
     (* Reading one as it goes. The payload is the command line and the
        answer is its output lines, so a mock supplies a list exactly as it
        does for `FS!stream_lines`. *)
+    (* A child that keeps running: started, read, written, and closed or
+       stopped. *)
+    { op_name = "Shell!spawn"; op_effect = Shell; op_types = (fun () -> None);
+      op_performers = ["Shell.spawn"] };
+    { op_name = "Shell!stop"; op_effect = Shell; op_types = t TProcess TUnit;
+      op_performers = ["Shell.spawn"] };
+    { op_name = "Shell!close"; op_effect = Shell;
+      op_types = t TProcess (TName "ShellResult");
+      op_performers = ["Shell.close"] };
+    { op_name = "Shell!read_line"; op_effect = Shell;
+      op_types = t TProcess (TApp (TName "Option", str));
+      op_performers = ["Shell.read_line"] };
+    { op_name = "Shell!read_err_line"; op_effect = Shell;
+      op_types = t TProcess (TApp (TName "Option", str));
+      op_performers = ["Shell.read_err_line"] };
+    { op_name = "Shell!read"; op_effect = Shell;
+      op_types = t (TTuple [TProcess; TInt]) str;
+      op_performers = ["Shell.read"] };
+    { op_name = "Shell!read_err"; op_effect = Shell;
+      op_types = t (TTuple [TProcess; TInt]) str;
+      op_performers = ["Shell.read_err"] };
+    { op_name = "Shell!write"; op_effect = Shell;
+      op_types = t (TTuple [TProcess; str]) (TResult (str, TUnit));
+      op_performers = ["Shell.write"; "Shell.write!"] };
+    { op_name = "Shell!stream_err"; op_effect = Shell; op_types = t str (TList str);
+      op_performers = ["Shell.stream_err"] };
     { op_name = "Shell!stream"; op_effect = Shell; op_types = t str (TList str);
       op_performers = ["Shell.stream"] };
     { op_name = "Shell!run"; op_effect = Shell; op_types = (fun () -> None);
@@ -717,6 +745,7 @@ let string_of_typ t =
     | TRegex    -> "Regex"
     | TCommand  -> "Command"
     | TConnection -> "Connection"
+    | TProcess -> "Process"
     | TJson     -> "JSON"
     | TToml     -> "TOML"
     | TYaml     -> "YAML"
@@ -901,6 +930,7 @@ let rec unify_ t1 t2 =
   | TYaml,     TYaml     -> ()
   | TCommand,  TCommand  -> ()
   | TConnection, TConnection -> ()
+  | TProcess, TProcess -> ()
   | TName n1, TName n2 when n1 = n2 -> ()
   | TVar tv1, TVar tv2 when tv1 == tv2 -> ()
   (* Two variables: link so that the narrower constraint survives on
@@ -1420,7 +1450,7 @@ let known_type_arities : (string * int) list ref = ref []
 let builtin_type_names =
   [ "Int"; "Float"; "String"; "Bool"; "Unit"; "Path"; "Glob";
     "DateTime"; "Duration"; "URL"; "IPv4"; "CIDR";
-    "Port"; "Version"; "Size"; "JSON"; "TOML"; "YAML"; "Command"; "Connection";
+    "Port"; "Version"; "Size"; "JSON"; "TOML"; "YAML"; "Command"; "Connection"; "Process";
     "List"; "Map"; "Result"; "Option"; "Decoder"; "Shared" ]
 
 let builtin_type_name n = List.mem n builtin_type_names
@@ -1812,6 +1842,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
        | "YAML"     -> TYaml
        | "Command"  -> TCommand
        | "Connection" -> TConnection
+       | "Process" -> TProcess
        (* A canonical name resolves to itself: it is not something a file
           writes, it is what a declaration that travelled says. *)
        | n when String.contains n '#' -> TName n
@@ -2709,7 +2740,7 @@ let rec ctors_of_type tenv (ctor_env : env) (t : typ) : (string * typ list) list
   | TVar _ -> []  (* still unresolved -- shape unknown, can't check, never flagged *)
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
-  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TFun _
+  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TProcess | TFun _
   | TResource _ | TStream _
   | TDecoder _ | TShared _ | TIface _ | TModule _ ->
     []  (* infinite/opaque domains: only a wildcard row can cover these *)
@@ -2720,8 +2751,8 @@ let is_infinite_domain t =
   | TVar _ -> false  (* unresolved -- handled as "unchecked" via ctors_of_type = [] *)
   | TInt | TFloat | TString | TPath | TGlob | TDateTime
   | TDuration | TURL | TIPv4 | TCIDR | TPort | TVersion | TSize
-  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TFun _ | TApp _
-  | TResource _
+  | TRegex | TJson | TToml | TYaml | TCommand | TConnection | TProcess | TFun _
+  | TApp _ | TResource _
   | TStream _ | TDecoder _ | TShared _ -> true
   | _ -> false
 
@@ -4431,6 +4462,22 @@ let stdlib_type_env : env = [
    generalize [] (TConnection @-> effs [Effect_set.NetListen] TString
                                      (TResult (TString, TUnit))));
   ("net_peer", generalize [] (TConnection @-> TString));
+  ("shell_stream_err",
+   let r = Effect_set.Set
+       (Effect_set.EffSet.of_list [Effect_set.Shell; Effect_set.Raise],
+        Some (Effect_set.fresh_var ())) in
+   generalize [] (TFun (TCommand, TStream (r, TString), Effect_set.pure)));
+  ("shell_spawn", generalize [] (effs [Effect_set.Shell; Effect_set.Raise] TCommand TProcess));
+  ("shell_stop", generalize [] (effs [Effect_set.Shell] TProcess TUnit));
+  ("shell_close", generalize [] (effs [Effect_set.Shell] TProcess (TName "ShellResult")));
+  ("shell_read_line",
+   generalize [] (effs [Effect_set.Shell] TProcess (TApp (TName "Option", TString))));
+  ("shell_read_err_line",
+   generalize [] (effs [Effect_set.Shell] TProcess (TApp (TName "Option", TString))));
+  ("shell_read", generalize [] (TProcess @-> effs [Effect_set.Shell] TInt TString));
+  ("shell_read_err", generalize [] (TProcess @-> effs [Effect_set.Shell] TInt TString));
+  ("shell_write",
+   generalize [] (TProcess @-> effs [Effect_set.Shell] TString (TResult (TString, TUnit))));
   ("shell_stream",
    let r = Effect_set.Set
        (Effect_set.EffSet.of_list [Effect_set.Shell; Effect_set.Raise],

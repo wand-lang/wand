@@ -1990,7 +1990,7 @@ there is nothing extra to remember.
 
 | Family | Operations |
 |---|---|
-| `Shell` | `command`, `run`, `stream`, `run_quiet`, `capture`, `exit_code` |
+| `Shell` | `command`, `run`, `stream`, `stream_err`, `run_quiet`, `capture`, `exit_code`, `spawn`, `read_line`, `read_err_line`, `read`, `read_err`, `write`, `close`, `stop` |
 | `FS` | `read_file`, `stream_lines`, `write_file`, `write_atomic`, `write_lines`, `write_lines_atomic`, `append_lines`, `append`, `create_file`, `delete`, `delete_tree`, `copy`, `copy_tree`, `rename`, `mkdir`, `list_dir`, `glob`, `exists?`, `file?`, `dir?`, `size`, `mtime`, `cwd`, `temp_file`, `temp_dir`, `lock`, `lock_wait`, `unlock` |
 | `Net` | `http`, `download`, `listen`, `accept`, `read_line`, `read`, `write` |
 | `Hash` | `file` |
@@ -5804,6 +5804,15 @@ run!    : Command -> String ! {Raise, Shell}
 run     : Command -> Result String String ! {Shell}
 query   : Command -> ShellResult ! {Shell}
 stream  : Command -> Stream {Raise, Shell | ..} String
+stream_err    : Command -> Stream {Raise, Shell | ..} String
+spawn         : Command -> Resource {Raise, Shell | ..} Process
+read_line     : Process -> Option String ! {Shell}
+read          : Int -> Process -> String ! {Shell}
+read_err_line : Process -> Option String ! {Shell}
+read_err      : Int -> Process -> String ! {Shell}
+write         : String -> Process -> Result String Unit ! {Shell}
+write!        : String -> Process -> Unit ! {Raise, Shell}
+close         : Process -> ShellResult ! {Shell}
 ok?     : ShellResult -> Bool
 failed? : ShellResult -> Bool
 decode  : Decoder 'a -> String -> Result String 'a
@@ -5815,7 +5824,38 @@ timeout : Duration -> (Unit -> 'a ! 'e) -> Result String 'a ! {Clock | 'e}
 somewhere else. See [A command as a value](#a-command-as-a-value).
 
 `stream` reads a command's output as it arrives. See
-[Streaming a command](#streaming-a-command).
+[Streaming a command](#streaming-a-command). `stream_err` reads its stderr
+the same way, and leaves its stdout to wand's own.
+
+`spawn` keeps a command running for the length of a `with`, to write to its
+stdin and read its stdout and stderr as it goes: a REPL, a language server,
+a worker that takes jobs on stdin.
+
+```ocaml
+uses {Shell(python3)}
+
+with Shell.spawn $*(python3 -i -q) as py -> (
+  Shell.write! "print(6 * 7)\n" py;
+  Shell.read_line py                -- Some "42"
+)
+```
+
+The process is read and written the way a `Net` connection is.
+`read_line` answers the next stdout line, `None` once stdout has ended;
+`read n` answers up to `n` bytes, for a protocol framed by length rather
+than by line. `read_err_line` and `read_err` read stderr apart, so a
+script can tell a result from a warning. `write` answers `Error` when the
+child has stopped reading, and adds nothing: a line needs its `"\n"`.
+
+`close` closes stdin, waits for the child to end, and answers a
+`ShellResult` with its exit code and the stdout and stderr nothing read.
+The `with` stops a child that was not closed: stdin closed, then SIGTERM,
+then SIGKILL after five seconds. Reading or writing after either raises.
+
+A read or a write waits in its own fiber. A timeout is `Par.timeout` around
+a read, and a child written to and read from at once is two branches of
+`Par.all!`. Under `--dry-run` the child is not started, and the script is
+handed a process that reads nothing.
 
 Reading what a command wrote. See [Decoders](#decoders).
 

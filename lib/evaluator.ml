@@ -285,6 +285,9 @@ type value =
   (* A connection a listening port accepted, and the socket listening. *)
   | VConn          of conn
   | VListener      of Unix.file_descr
+  (* A child process started by `Shell.spawn`: its stdin, and its stdout and
+     stderr read as a connection is. *)
+  | VProc          of proc
   (* An index over the entries behind it. An environment is a list because
      that is what binding is -- push a name in front of what was there -- and
      lookup walks it, which is fine for the handful a script defines and not
@@ -305,6 +308,16 @@ and conn = {
   mutable c_eof : bool;
   mutable c_closed : bool;
   c_peer : string;
+}
+
+and proc = {
+  p_pid : int;                  (* -1 for a process a rehearsal withheld *)
+  p_cmd : string;
+  p_in : Unix.file_descr option;
+  mutable p_in_open : bool;
+  p_out : conn option;
+  p_err : conn option;
+  mutable p_done : bool;
 }
 
 and shared_cell = {
@@ -337,6 +350,8 @@ and stream_source =
      until a terminal operation runs it, and folding twice runs the command
      twice -- which re-reading a file does too, and costs more here. *)
   | SCommand of string * string list option
+  (* The same, reading the command's stderr; its stdout is wand's. *)
+  | SCommandErr of string * string list option
   (* Several files read as one. Still a single puller: it moves to the next
      file when one runs out, so the driver's shape does not change. This is
      the concatenation people actually have -- `FS.glob *.log` read as one
@@ -748,6 +763,7 @@ let rec render ~quote v =
   | VShared _   -> "<shared>"
   | VConn c     -> "<connection from " ^ c.c_peer ^ ">"
   | VListener _ -> "<listener>"
+  | VProc p     -> "<process " ^ p.p_cmd ^ ">"
   | VEnvIndex _ -> "<env index>"
   | VPartialConstr (n, _, _) -> Printf.sprintf "<%s>" (Ctor.name n)
   (* The bound is not part of what a request is; it shows as the record. *)
@@ -1685,6 +1701,7 @@ let rec wand_equal a b =
   | VRequest (a, _), b | a, VRequest (b, _) -> wand_equal a b
   | VShared x, VShared y -> x == y
   | VConn x, VConn y -> x == y
+  | VProc x, VProc y -> x == y
   | VConstr (n1, xs), VConstr (n2, ys) ->
     n1 = n2 && List.length xs = List.length ys && List.for_all2 wand_equal xs ys
   (* Entry for entry in insertion order, which is what comparing the two
@@ -3049,8 +3066,7 @@ let conn_of = function
 
 (* The next line, without its line ending; None once the other end has
    finished and nothing is left. *)
-let net_read_line_impl v =
-  let c = conn_of v in
+let conn_read_line c =
   let rec go () =
     let len = Buffer.length c.c_buf in
     let rec find i = if i >= len then None
@@ -3068,38 +3084,50 @@ let net_read_line_impl v =
       else if len > c.c_pos then Some (conn_take c (len - c.c_pos))
       else None
   in
-  match go () with
+  go ()
+
+let option_value = function
   | Some l -> VConstr (Ctor.Builtin "Some", [VString l])
   | None -> VConstr (Ctor.Builtin "None", [])
 
+let net_read_line_impl v = option_value (conn_read_line (conn_of v))
+
+let conn_read c n =
+  let n = max 0 n in
+  if Buffer.length c.c_buf - c.c_pos = 0 then ignore (conn_fill c);
+  conn_take c (min n (Buffer.length c.c_buf - c.c_pos))
+
 let net_read_impl = function
-  | VTuple [v; VInt n] ->
-    let c = conn_of v in
-    let n = max 0 n in
-    if Buffer.length c.c_buf - c.c_pos = 0 then ignore (conn_fill c);
-    VString (conn_take c (min n (Buffer.length c.c_buf - c.c_pos)))
+  | VTuple [v; VInt n] -> VString (conn_read (conn_of v) n)
   | _ -> raise (EvalError "Net.read: expected a Connection and a count")
+
+(* Write all of [s] to [fd], waiting when it is full. [closed] says the end
+   is known to be gone already. *)
+let fd_write ~closed fd s =
+  let total = String.length s in
+  let rec go off =
+    if off >= total then Ok ()
+    else if closed () then Error "the connection is closed"
+    else
+      match Unix.single_write_substring fd s off (total - off) with
+      | n -> go (off + n)
+      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+        socket_wait ~write:true fd; go off
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
+      | exception Unix.Unix_error ((Unix.EPIPE | Unix.ECONNRESET), _, _) ->
+        Error "the other end closed the connection"
+      | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
+  in
+  go 0
+
+let result_value = function
+  | Ok () -> VConstr (Ctor.Builtin "Ok", [VUnit])
+  | Error why -> VConstr (Ctor.Builtin "Error", [VString why])
 
 let net_write_impl = function
   | VTuple [v; VString s] ->
     let c = conn_of v in
-    let total = String.length s in
-    let rec go off =
-      if off >= total then Ok ()
-      else if c.c_closed then Error "the connection is closed"
-      else
-        match Unix.single_write_substring c.c_fd s off (total - off) with
-        | n -> go (off + n)
-        | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
-          socket_wait ~write:true c.c_fd; go off
-        | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
-        | exception Unix.Unix_error ((Unix.EPIPE | Unix.ECONNRESET), _, _) ->
-          Error "the other end closed the connection"
-        | exception Unix.Unix_error (e, _, _) -> Error (Unix.error_message e)
-    in
-    (match go 0 with
-     | Ok () -> VConstr (Ctor.Builtin "Ok", [VUnit])
-     | Error why -> VConstr (Ctor.Builtin "Error", [VString why]))
+    result_value (fd_write ~closed:(fun () -> c.c_closed) c.c_fd s)
   | _ -> raise (EvalError "Net.write: expected a Connection and a String")
 
 let conn_close c =
@@ -4540,6 +4568,12 @@ let rec stream_provider (src : stream_source)
        match !current with
        | Some (_, close) -> current := None; close ~early
        | None -> ())
+  | SCommandErr (cmd, allow) ->
+    (match perform_shell "Shell!stream_err" allow (VString cmd) with
+     | VProcSource (pull, finish) -> (pull, fun ~early -> finish early)
+     | VList vs -> of_vals vs
+     | _ -> raise (EvalError
+         "Shell.stream_err: the handler must answer with a list of lines"))
   | SCommand (cmd, allow) ->
     (match perform_shell "Shell!stream" allow (VString cmd) with
      | VProcSource (pull, finish) -> (pull, fun ~early -> finish early)
@@ -4833,6 +4867,24 @@ let stream_builtins : env = [
       in
       VStream { s_source = SFiles (List.map path ps); s_stages = [] }
     | _ -> raise (EvalError "stream_lines_all: expected a list of Paths")));
+  ("shell_stream_err", VBuiltin (function
+    | VCommand (cmd, allow) ->
+      VStream { s_source = SCommandErr (cmd, allow); s_stages = [] }
+    | _ -> raise (EvalError "Shell.stream_err: expected a Command")));
+  ("shell_spawn", VBuiltin (function
+    | VCommand (cmd, allow) -> perform_shell "Shell!spawn" allow (VString cmd)
+    | _ -> raise (EvalError "Shell.spawn: expected a Command")));
+  ("shell_stop", VBuiltin (fun p -> perform_wand ("Shell!stop", p)));
+  ("shell_close", VBuiltin (fun p -> perform_wand ("Shell!close", p)));
+  ("shell_read_line", VBuiltin (fun p -> perform_wand ("Shell!read_line", p)));
+  ("shell_read_err_line", VBuiltin (fun p ->
+    perform_wand ("Shell!read_err_line", p)));
+  ("shell_read", VBuiltin (fun p -> VBuiltin (fun n ->
+    perform_wand ("Shell!read", VTuple [p; n]))));
+  ("shell_read_err", VBuiltin (fun p -> VBuiltin (fun n ->
+    perform_wand ("Shell!read_err", VTuple [p; n]))));
+  ("shell_write", VBuiltin (fun p -> VBuiltin (fun t ->
+    perform_wand ("Shell!write", VTuple [p; t]))));
   ("shell_stream", VBuiltin (function
     | VCommand (cmd, allow) ->
       VStream { s_source = SCommand (cmd, allow); s_stages = [] }

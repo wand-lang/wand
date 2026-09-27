@@ -1,5 +1,7 @@
 uses {Clock, Shell}
 
+import Resource
+
 -- Reading what a command wrote.
 --
 -- A command's output has no types of its own -- it is text, and the shape
@@ -128,3 +130,82 @@ let query (c: Command) = shell_query c
 -- >> Shell.stream $*(printf "a\nb\n") |> Stream.to_list
 -- ["a", "b"] : List String
 let stream (c: Command) = shell_stream c
+
+-- A command's stderr, one line at a time, as `stream` reads its stdout.
+-- The command's stdout goes to wand's own.
+--
+-- >> Shell.stream_err $*(sh -c "echo out; echo err >&2") |> Stream.to_list
+-- out
+-- ["err"] : List String
+let stream_err (c: Command) = shell_stream_err c
+
+-- Start `c` and keep it running for the length of a `with`, to write to
+-- its stdin and read its stdout and stderr as it goes: a REPL, a language
+-- server, a worker that takes jobs on stdin.
+--
+-- with Shell.spawn $*(python3 -i -q) as py -> (
+--   Shell.write! "print(6 * 7)\n" py;
+--   Shell.read_line py
+-- )
+--
+-- A read or a write waits in its own fiber, so a timeout is `Par.timeout`
+-- around a read, and a child written to and read from at once is two
+-- branches of `Par.all!`. `close` ends it and answers its exit code; the
+-- `with` stops one that was not closed: stdin closed, then SIGTERM, then
+-- SIGKILL after five seconds.
+--
+-- >> with Shell.spawn $*(cat) as p -> (Shell.write! "hi\n" p; Shell.read_line p)
+-- Some("hi") : Option String
+let spawn (c: Command) = Resource.make (fn () -> shell_spawn c) (fn p -> shell_stop p)
+
+-- The next line `p` wrote to stdout, without its line ending, or `None`
+-- once its stdout has ended.
+--
+-- >> with Shell.spawn $*(printf "a\nb\n") as p -> Shell.read_line p
+-- Some("a") : Option String
+let read_line (p: Process) = shell_read_line p
+
+-- Up to `n` bytes of what `p` wrote to stdout, waiting for some if none
+-- has arrived; `""` once its stdout has ended. For a protocol framed by
+-- length rather than by line.
+--
+-- >> with Shell.spawn $*(printf "abcdef") as p -> Shell.read 3 p
+-- "abc" : String
+let read n (p: Process) = shell_read p n
+
+-- The next line `p` wrote to stderr, or `None` once its stderr has ended.
+--
+-- >> with Shell.spawn $*(sh -c "echo oops >&2") as p -> Shell.read_err_line p
+-- Some("oops") : Option String
+let read_err_line (p: Process) = shell_read_err_line p
+
+-- Up to `n` bytes of what `p` wrote to stderr.
+--
+-- >> with Shell.spawn $*(sh -c "printf warning >&2") as p -> Shell.read_err 4 p
+-- "warn" : String
+let read_err n (p: Process) = shell_read_err p n
+
+-- Write `text` to `p`'s stdin, exactly as given: add the "\n" a line
+-- needs. `Error` says why it could not go, most often that `p` has stopped
+-- reading.
+--
+-- >> with Shell.spawn $*(cat) as p -> Shell.write "hi\n" p
+-- Ok(()) : Result String Unit
+let write text (p: Process) = shell_write p text
+
+-- `write`, raising if the text cannot go.
+--
+-- >> with Shell.spawn $*(cat) as p -> (Shell.write! "hi\n" p; Shell.read_line p)
+-- Some("hi") : Option String
+let write! text (p: Process) =
+  match write text p with
+  | Ok _ -> ()
+  | Error why -> fail_exn why
+
+-- Close `p`'s stdin, wait for it to end, and answer how it ended: its exit
+-- code, and the stdout and stderr nothing has read.
+--
+-- >> with Shell.spawn $*(sh -c "cat; exit 3") as p ->
+-- ..   (Shell.write! "left\n" p; Shell.close p)
+-- ShellResult("left\n", "", 3) : ShellResult
+let close (p: Process) = shell_close p

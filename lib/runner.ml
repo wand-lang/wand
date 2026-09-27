@@ -439,8 +439,15 @@ let line_reader fd =
    command wand killed because a `take` was satisfied did not fail -- wand
    ended it -- so its status is wand's own signal coming back, and reporting
    it would turn the ordinary early stop into an error. *)
-let stream_command cmd =
-  let (pid, out_r) = spawn_in cmd in
+let spawn_err_in cmd =
+  let (r, w) = Unix.pipe ~cloexec:true () in
+  let pid = create_process_for cmd Unix.stdin Unix.stdout w in
+  Unix.close w;
+  remember pid;
+  (pid, r)
+
+let stream_command ?(err = false) cmd =
+  let (pid, out_r) = if err then spawn_err_in cmd else spawn_in cmd in
   let next_line = line_reader out_r in
   let pull () =
     match next_line () with
@@ -545,6 +552,133 @@ type mode = Normal | Trace | DryRun
    same handlers on their own domain: an effect performed on one domain does
    not reach a handler on another, so a worker without them would either
    escape a rehearsal or fail outright. *)
+
+(* ── A child that keeps running ──────────────────────────────────────────── *)
+
+let pipe_reader fd =
+  Unix.set_nonblock fd;
+  { Evaluator.c_fd = fd; c_buf = Buffer.create 4096; c_pos = 0; c_scan = 0;
+    c_eof = false; c_closed = false; c_peer = "" }
+
+let spawn_process cmd =
+  let (pid, out_r, err_r, in_w) = spawn_full cmd in
+  Unix.set_nonblock in_w;
+  Evaluator.VProc { p_pid = pid; p_cmd = cmd; p_in = Some in_w; p_in_open = true;
+                    p_out = Some (pipe_reader out_r); p_err = Some (pipe_reader err_r);
+                    p_done = false }
+
+(* What a rehearsal hands a script for a process it did not start: nothing
+   to read, and writes that go nowhere. *)
+let withheld_process cmd =
+  Evaluator.VProc { p_pid = -1; p_cmd = cmd; p_in = None; p_in_open = false;
+                    p_out = None; p_err = None; p_done = false }
+
+let proc_of = function
+  | Evaluator.VProc p -> p
+  | _ -> raise (EvalError "expected a Process")
+
+let proc_open (p : Evaluator.proc) =
+  if p.p_done then
+    raise (EvalError (Printf.sprintf
+      "this process is closed or stopped, so nothing more can be read from \
+       or written to it: %s" p.p_cmd));
+  p
+
+let proc_close_in (p : Evaluator.proc) =
+  if p.p_in_open then begin
+    p.p_in_open <- false;
+    match p.p_in with Some fd -> close_noerr fd | None -> ()
+  end
+
+let proc_read_line ~err v =
+  let p = proc_open (proc_of v) in
+  match (if err then p.p_err else p.p_out) with
+  | None -> Evaluator.option_value None
+  | Some c -> Evaluator.option_value (Evaluator.conn_read_line c)
+
+let proc_read ~err v n =
+  let p = proc_open (proc_of v) in
+  match (if err then p.p_err else p.p_out) with
+  | None -> Evaluator.VString ""
+  | Some c -> Evaluator.VString (Evaluator.conn_read c n)
+
+let proc_write v text =
+  let p = proc_open (proc_of v) in
+  Evaluator.result_value
+    (match p.p_in with
+     | None -> if p.p_pid < 0 then Ok () else Error "the process's stdin is closed"
+     | Some fd -> Evaluator.fd_write ~closed:(fun () -> not p.p_in_open) fd text)
+
+(* The rest of both streams, read together: a child that fills one pipe
+   while wand waits on the other would never finish. *)
+let drain_both (a : Evaluator.conn) (b : Evaluator.conn) =
+  let chunk = Bytes.create 65536 in
+  let step (c : Evaluator.conn) =
+    match Unix.read c.c_fd chunk 0 (Bytes.length chunk) with
+    | 0 -> c.c_eof <- true
+    | n -> Buffer.add_subbytes c.c_buf chunk 0 n
+    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK | Unix.EINTR), _, _) -> ()
+    | exception Unix.Unix_error _ -> c.c_eof <- true
+  in
+  let rec go () =
+    let open_ = List.filter (fun (c : Evaluator.conn) -> not c.c_eof) [a; b] in
+    if open_ <> [] then begin
+      let (ready, _, _) =
+        select_ready (List.map (fun (c : Evaluator.conn) -> c.c_fd) open_) [] in
+      List.iter (fun (c : Evaluator.conn) -> if List.mem c.c_fd ready then step c) open_;
+      Evaluator.check_interrupt ();
+      go ()
+    end
+  in
+  go ()
+
+let rest (c : Evaluator.conn) =
+  Buffer.sub c.c_buf c.c_pos (Buffer.length c.c_buf - c.c_pos)
+
+let proc_close v =
+  let p = proc_open (proc_of v) in
+  proc_close_in p;
+  match p.p_out, p.p_err with
+  | Some out, Some err ->
+    drain_both out err;
+    let code = match reap p.p_pid with
+      | Unix.WEXITED n -> n
+      | Unix.WSIGNALED _ | Unix.WSTOPPED _ -> 128
+    in
+    close_noerr out.c_fd; close_noerr err.c_fd;
+    p.p_done <- true;
+    shell_result (rest out) (rest err) code
+  | _ -> p.p_done <- true; shell_result "" "" 0
+
+(* The release: a child not closed is stopped -- stdin closed, then
+   SIGTERM, then SIGKILL after the grace. *)
+let proc_stop v =
+  let p = proc_of v in
+  if not p.p_done then begin
+    p.p_done <- true;
+    proc_close_in p;
+    (match p.p_out with Some c -> close_noerr c.c_fd | None -> ());
+    (match p.p_err with Some c -> close_noerr c.c_fd | None -> ());
+    if p.p_pid > 0 then begin
+      (try Unix.kill p.p_pid Sys.sigterm with Unix.Unix_error _ -> ());
+      let deadline = Unix.gettimeofday () +. timeout_grace in
+      let rec wait () =
+        match Unix.waitpid [Unix.WNOHANG] p.p_pid with
+        | (0, _) ->
+          if Unix.gettimeofday () < deadline then (Sched.pause 20; wait ())
+          else begin
+            (try Unix.kill p.p_pid Sys.sigkill with Unix.Unix_error _ -> ());
+            ignore (reap p.p_pid)
+          end
+        | _ -> forget p.p_pid
+        | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+        | exception Unix.Unix_error _ -> forget p.p_pid
+      in
+      wait ()
+    end
+  end;
+  Evaluator.VUnit
+
 let current_mode = ref Normal
 
 (* Reports come from several domains at once, so a line is written whole
@@ -591,6 +725,8 @@ let describe_operation name (v : value) =
   | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code"->
     Some ("run", first v)
   | "Shell!stream" -> Some ("read the output of", first v)
+  | "Shell!stream_err" -> Some ("read the errors of", first v)
+  | "Shell!spawn" -> Some ("start", first v)
   | "FS!write_file"   -> Some ("write", with_size v)
   | "FS!write_atomic" -> Some ("write atomically", with_size v)
   | "FS!append"    -> Some ("append to", with_size v)
@@ -888,7 +1024,7 @@ let is_mutation_value name v =
 
 let is_mutation = function
   | "Clock!sleep"
-  | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code" | "Shell!stream" | "FS!write_lines" | "FS!write_lines_atomic" | "FS!append_lines" | "FS!write_file" | "FS!write_atomic" | "FS!append" | "FS!create_file" | "FS!delete" | "FS!mkdir" | "FS!rename" | "FS!copy" | "FS!temp_file" | "FS!temp_dir" | "FS!delete_tree" | "FS!copy_tree" | "Env!set" | "Env!clear"-> true
+  | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code" | "Shell!stream" | "Shell!stream_err" | "Shell!spawn" | "FS!write_lines" | "FS!write_lines_atomic" | "FS!append_lines" | "FS!write_file" | "FS!write_atomic" | "FS!append" | "FS!create_file" | "FS!delete" | "FS!mkdir" | "FS!rename" | "FS!copy" | "FS!temp_file" | "FS!temp_dir" | "FS!delete_tree" | "FS!copy_tree" | "Env!set" | "Env!clear"-> true
   | _ -> false
 
 (* What an operation hands back when it is reported instead of carried out.
@@ -1027,6 +1163,8 @@ let substitute_for name =
   (* A stream of nothing. The lines a rehearsal cannot have are no lines,
      which is the same answer `Shell!run`'s empty String gives. *)
   | "Shell!stream" -> Some (VList [], "no output")
+  | "Shell!stream_err" -> Some (VList [], "no output")
+  | "Shell!spawn" -> Some (withheld_process "", "a process that reads nothing")
   (* A request that was not sent still has to answer, and what it answers
      steers the rest of the script. `202 Accepted` with no body says the
      server took it and said nothing, which is the least a caller can read
@@ -1350,6 +1488,35 @@ let rec run_with_default_handler (thunk : unit -> value) : value =
           | WandEffect ("Shell!command", VString cmd) ->
             Some (fun (k : (a, value) Effect.Deep.continuation) ->
               Effect.Deep.continue k (VString cmd))
+          | WandEffect ("Shell!stream_err", VString cmd) ->
+            Some (fun (k : (a, value) Effect.Deep.continuation) ->
+              match attempt (fun () ->
+                guard_shell cmd;
+                let (pull, finish) = stream_command ~err:true cmd in
+                VProcSource (pull, finish)) with
+              | Ok v    -> Effect.Deep.continue    k v
+              | Error e -> Effect.Deep.discontinue k e)
+          | WandEffect ("Shell!spawn", VString cmd) ->
+            Some (fun (k : (a, value) Effect.Deep.continuation) ->
+              match attempt (fun () -> guard_shell cmd; spawn_process cmd) with
+              | Ok v    -> Effect.Deep.continue    k v
+              | Error e -> Effect.Deep.discontinue k e)
+          | WandEffect (("Shell!read_line" | "Shell!read_err_line" | "Shell!read"
+                        | "Shell!read_err" | "Shell!write" | "Shell!close"
+                        | "Shell!stop") as op, v) ->
+            Some (fun (k : (a, value) Effect.Deep.continuation) ->
+              match attempt (fun () ->
+                match op, v with
+                | "Shell!read_line", p -> proc_read_line ~err:false p
+                | "Shell!read_err_line", p -> proc_read_line ~err:true p
+                | "Shell!read", VTuple [p; VInt n] -> proc_read ~err:false p n
+                | "Shell!read_err", VTuple [p; VInt n] -> proc_read ~err:true p n
+                | "Shell!write", VTuple [p; VString t] -> proc_write p t
+                | "Shell!close", p -> proc_close p
+                | "Shell!stop", p -> proc_stop p
+                | _ -> raise (unhandled_operation op)) with
+              | Ok v    -> Effect.Deep.continue    k v
+              | Error e -> Effect.Deep.discontinue k e)
           | WandEffect ("Shell!stream", VString cmd) ->
             Some (fun (k : (a, value) Effect.Deep.continuation) ->
               match attempt (fun () ->

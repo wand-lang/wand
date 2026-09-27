@@ -58,7 +58,7 @@ with Shell.spawn $*(python3 -i -q) as py -> (
 ## stderr streams
 
 `Shell.stream_err cmd` reads a command's stderr line by line, as
-`Shell.stream` reads its stdout; stdout goes where `$()` sends it.
+`Shell.stream` reads its stdout; its stdout goes to wand's own.
 
 ## Outbound HTTP
 
@@ -77,7 +77,7 @@ themselves are the bottleneck.
 
 ## Order
 
-1. Two-way child processes.
-2. stderr streams.
+1. Two-way child processes. Done.
+2. stderr streams. Done.
 3. Native outbound HTTP, only when a service needs more than `curl` gives:
    plain HTTP first, TLS later. The load test did not ask for it.
