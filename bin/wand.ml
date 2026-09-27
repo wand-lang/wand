@@ -20,7 +20,7 @@ let usage () =
   print_endline "  h   help [cmd]              Show this help, or help for a command";
   print_endline "  i   interactive             Start an interactive session";
   print_endline "  l   lsp                     Start the language server (LSP over stdio)";
-  print_endline "  p   package <cmd>           Manage this package's wand.pkg and wand.sum";
+  print_endline "  p   package <cmd>           Manage this package's wand.pkg";
   print_endline "  s   test [<file>|<dir>]...  Run test_*.wand files (default: search from here)";
   print_endline "  t   type [<file>|<dir>]...  Typecheck files without running them";
   print_endline "  v   version                 Print the version and exit";
@@ -52,20 +52,20 @@ let usage_for sub =
     print_endline "the nearest wand.pkg.";
     print_endline "";
     print_endline "Commands:";
-    print_endline "  a   api [--check]           Write wand.api from the code, or check that";
+    print_endline "  a   api [--check]           Write the api section from the code, or check";
     print_endline "                              it matches the code and the latest release";
     print_endline "  i   init <url>              Start a package here: write wand.pkg";
     print_endline "  r   release [major|minor|patch]";
     print_endline "                              Check the bump the interface needs, write";
-    print_endline "                              wand.api, commit it, and tag the release";
-    print_endline "  t   tidy                    Make wand.pkg and wand.sum match the imports,";
+    print_endline "                              the api section, commit it, and tag the release";
+    print_endline "  t   tidy                    Make wand.pkg match the imports,";
     print_endline "                              and fetch what they need";
     print_endline "  u   upgrade [url[@version]] Move dependencies to their newest version";
     print_endline "                              within their major, or one to a version";
     print_endline "";
     print_endline "Only these commands change wand.pkg. A script or `wand t`";
     print_endline "fetches a version wand.pkg names and the cache lacks, and";
-    print_endline "checks it against wand.sum."
+    print_endline "checks it against the sum section of wand.pkg."
   | "l" | "lsp" ->
     print_endline "Usage: wand l";
     print_endline "";

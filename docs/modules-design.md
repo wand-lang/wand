@@ -35,7 +35,7 @@ imports or effects -- so tools read and rewrite it without running code.
   to 2.0.0. A build refuses a package whose range does not hold the
   running wand.
 - **A local copy** is a `local` field on the entry. The build reads that
-  directory instead of the cache, and `wand.sum` does not check it:
+  directory instead of the cache, and the sum section does not check it:
   `{ path = github.com/mjstahl/json, version = 1.4.0, local = ../json }`.
 - **The subset is fixed from the start**: never extended in a breaking
   way, so any wand reads any package's file. A JSON export of `wand.pkg` is
@@ -64,7 +64,7 @@ import github.com/mjstahl/json/decode   -- decode.wand in it
 A leading `_` means private at every level. Names already work this way.
 A module file (`_parser.wand`) or a directory (`_internal/`) with a `_`
 segment is private to its package: importing it from another package is
-an error. `wand.api` generation and this check use the same path test, so
+an error. The api section and this check use the same path test, so
 they cannot disagree.
 
 ## Fetching
@@ -79,12 +79,27 @@ With `git`, which does the HTTPS and the user's credentials:
 - Fetching runs no code of the module's. Importing it later runs its
   bindings, as any import does; their effects are in the importer's types.
 
-## wand.sum
+## One file
 
-Tool-written, one line per module version and its hash, beside `wand.pkg`.
-A module read from the cache is checked against it; a mismatch is an
-error, never a refetch. `wand p tidy` adds the line for a version it
-fetches.
+`wand.pkg` is the only file a package needs. The record comes first, and
+people edit it. Below it, `wand p` writes two sections, the api section
+(see `release-design.md`) and then the sum section. Each opens with a
+marker line, and the record ends at the first one:
+
+```
+-- DO NOT EDIT: api, written by `wand p`
+-- DO NOT EDIT: sum, written by `wand p`
+```
+
+Every marker starts with the same text, so `grep "^-- DO NOT EDIT"` finds
+them all. A line that starts that way and is not one of the two markers
+is an error, as is a section out of order or given twice.
+
+## The sum section
+
+Tool-written, one line per module version and its hash. A module read
+from the cache is checked against it; a mismatch is an error, never a
+refetch. `wand p tidy` adds the line for a version it fetches.
 
 ## Minimal Version Selection
 
@@ -134,13 +149,14 @@ message prints both qualified, with the exact version:
   has one.
 - `wand p tidy` reads every import in the package: it adds a `require`
   entry, at the latest tagged version, for a module no entry names; drops
-  entries nothing imports; fetches what is missing; and writes `wand.sum`.
+  entries nothing imports; fetches what is missing; and writes the sum
+  section.
 - `wand p upgrade` moves every direct dependency to its latest version
   within its major; `wand p upgrade <url>` moves one; `<url>@<version>`
   pins one. A new major is a different module, so moving to one is a
   change of import, never an upgrade.
 - A script or `wand t` fetches a version `wand.pkg` names and the cache
-  lacks, checked against `wand.sum`. An import `wand.pkg` does not name is
+  lacks, checked against the sum section. An import `wand.pkg` does not name is
   an error that says to run `wand p tidy`.
 
 ## Order
@@ -148,7 +164,7 @@ message prints both qualified, with the exact version:
 1. `wand.pkg`: the data-only reader, the `wand` range check, packages.
 2. URL imports resolved through `require` and `local`, with subpaths and
    the private-path check.
-3. Fetching with `git` into the cache, and `wand.sum`.
+3. Fetching with `git` into the cache, and the sum section.
 4. Minimal Version Selection over the graph, and majors as modules with
    aliases and qualified type errors.
 5. `wand p init`, `wand p tidy` and `wand p upgrade`, under a new `p`

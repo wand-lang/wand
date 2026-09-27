@@ -180,13 +180,76 @@ let parse ~file src =
   dups require;
   (url, wand, wand_at, require)
 
+(* ── Sections ────────────────────────────────────────────────────────── *)
+
+(* wand.pkg is the record a person edits, then the sections wand p writes,
+   each opened by a marker line. The record ends at the first marker. *)
+type sections = {
+  record : string;
+  api    : string list option;
+  sum    : string list option;
+}
+
+let marker = "-- DO NOT EDIT"
+
+let marker_line name = Printf.sprintf "%s: %s, written by `wand p`" marker name
+
+let starts_with p l = String.length l >= String.length p && String.sub l 0 (String.length p) = p
+
+let split_sections ~file text =
+  let lines = String.split_on_char '\n' text in
+  let record = ref [] and api = ref None and sum = ref None in
+  let current = ref `Record in
+  List.iteri (fun i line ->
+    if starts_with marker line then begin
+      let at = Some (Token.point ~file (i + 1) 1 0) in
+      let name =
+        if line = marker_line "api" then `Api
+        else if line = marker_line "sum" then `Sum
+        else fail at (Printf.sprintf
+          "a section of wand.pkg opens with `%s` or `%s`, and wand p writes \
+           both; run `wand p tidy` to write them again"
+          (marker_line "api") (marker_line "sum"))
+      in
+      (match name, !current with
+       | `Api, `Record -> api := Some []
+       | `Sum, (`Record | `Api) when !sum = None -> sum := Some []
+       | _ -> fail at "wand.pkg holds the record, then the api section, then the sum section, each once");
+      current := name
+    end else
+      match !current with
+      | `Record -> record := line :: !record
+      | `Api -> api := Option.map (fun l -> line :: l) !api
+      | `Sum -> sum := Option.map (fun l -> line :: l) !sum) lines;
+  let trim l =
+    let rec drop = function "" :: rest -> drop rest | l -> l in
+    List.rev (drop (List.rev (drop l)))
+  in
+  { record = String.concat "\n" (List.rev !record);
+    api = Option.map (fun l -> trim (List.rev l)) !api;
+    sum = Option.map (fun l -> trim (List.rev l)) !sum }
+
+let join_sections { record; api; sum } =
+  let section name = function
+    | Some lines -> "\n" ^ marker_line name ^ "\n" ^ String.concat "\n" lines ^ "\n"
+    | None -> ""
+  in
+  String.trim record ^ "\n" ^ section "api" api ^ section "sum" sum
+
+let read_sections root =
+  let file = Filename.concat root file_name in
+  match In_channel.with_open_text file In_channel.input_all with
+  | text -> split_sections ~file text
+  | exception Sys_error msg -> fail None ("cannot read " ^ file ^ ": " ^ msg)
+
+let write_sections root sections =
+  Out_channel.with_open_text (Filename.concat root file_name)
+    (fun oc -> output_string oc (join_sections sections))
+
 let read root =
   let file = Filename.concat root file_name in
-  let src =
-    try In_channel.with_open_text file In_channel.input_all
-    with Sys_error msg -> fail None ("cannot read " ^ file ^ ": " ^ msg)
-  in
-  let (url, wand, wand_at, require) = parse ~file src in
+  let sections = read_sections root in
+  let (url, wand, wand_at, require) = parse ~file sections.record in
   { root; file; url; wand; wand_at; require }
 
 (* The versions a `wand` field accepts: from itself up to the next major,
@@ -385,27 +448,24 @@ let cached_hash r =
     Hashtbl.replace hashes dir h;
     h
 
-(* ── wand.sum ──────────────────────────────────────────────────────────── *)
-
-let sum_file pkg = Filename.concat pkg.root "wand.sum"
+(* ── The sum section ───────────────────────────────────────────────────── *)
 
 let read_sums pkg =
-  match In_channel.with_open_text (sum_file pkg) In_channel.input_all with
-  | exception Sys_error _ -> []
-  | text ->
-    List.filter_map (fun line ->
-      match String.split_on_char ' ' (String.trim line) with
-      | [url; version; hash] -> Some ((url, version), hash)
-      | _ -> None) (String.split_on_char '\n' text)
+  List.filter_map (fun line ->
+    match String.split_on_char ' ' (String.trim line) with
+    | [url; version; hash] -> Some ((url, version), hash)
+    | _ -> None) (Option.value (read_sections pkg.root).sum ~default:[])
 
 let write_sums pkg sums =
   let sums = List.sort_uniq compare sums in
-  Out_channel.with_open_text (sum_file pkg) (fun oc ->
-    List.iter (fun ((url, version), hash) ->
-      Printf.fprintf oc "%s %s %s\n" url version hash) sums)
+  let lines = List.map (fun ((url, version), hash) ->
+    Printf.sprintf "%s %s %s" url version hash) sums in
+  let sections = read_sections pkg.root in
+  write_sections pkg.root
+    { sections with sum = (if lines = [] then None else Some lines) }
 
 (* Set while `wand p tidy` or `upgrade` runs: every version checked is
-   collected here, and a version wand.sum has no line for is recorded rather
+   collected here, and a version the sum section has no line for is recorded rather
    than refused. A mismatch is refused either way. *)
 let recording : ((string * string) * string) list ref option ref = ref None
 
@@ -419,14 +479,14 @@ let verify pkg r =
   | None when !recording <> None -> ()
   | Some want ->
     raise (Unresolved (Printf.sprintf
-      "%s %s does not match wand.sum: wand.sum has %s, and the copy in %s \
+      "%s %s does not match the sum section of wand.pkg, which has %s, and the copy in %s \
        hashes to %s. The module changed after it was recorded, or the cache \
-       was changed. Remove %s to fetch it again, and change wand.sum only if \
+       was changed. Remove %s to fetch it again, and change the sum section only if \
        you trust the new code"
       r.path r.version want (cache_dir r) h (cache_dir r)))
   | None ->
     raise (Unresolved (Printf.sprintf
-      "wand.sum has no line for %s %s. Run `wand p tidy`" r.path r.version))
+      "the sum section of wand.pkg has no line for %s %s. Run `wand p tidy`" r.path r.version))
 
 (* ── The build ────────────────────────────────────────────────────────── *)
 
@@ -438,7 +498,7 @@ let major v =
 let key r = (r.path, major r.version)
 
 (* The package of the file the run or the check started from. Its `local`
-   fields and its wand.sum hold for every package in the build. *)
+   fields and its sum section hold for every package in the build. *)
 let main : t option ref = ref None
 
 let set_main_file path = main := of_file path

@@ -23,7 +23,7 @@ examples. Most tasks need only one part.
   - `evaluator.ml` — tree-walking interpreter; effect handlers, `Par`, signals, shell execution.
   - `lint.ml`, `lint_rules.ml` — the `V-*`/`A-*` rules `wand t` reports.
   - `formatter.ml` — `wand f`; comments are never dropped or restyled.
-  - `package.ml` — `wand.pkg` and `wand.sum`: reading, the `wand` range, URL imports, fetching with `git`, Minimal Version Selection. `package_cmd.ml` — `wand p init`, `tidy`, `upgrade`, `api`, `release`.
+  - `package.ml` — `wand.pkg`, its record and its api and sum sections: reading, the `wand` range, URL imports, fetching with `git`, Minimal Version Selection. `package_cmd.ml` — `wand p init`, `tidy`, `upgrade`, `api`, `release`.
   - `runner.ml` — the public API (`Runner.run_string`, `typecheck_file`, sessions); `repl.ml`; `compile_cache.ml`; `module_types.ml`; `util.ml`.
 - `stdlib/*.wand` — the standard library, written in wand, embedded into the binary at build time by `tools/gen_stdlib_embed.ml`.
 - `test/` — Alcotest suites (`test_*.ml`, one per area) plus `test/wand/*.wand`, which are wand-language tests run by `wand s`.

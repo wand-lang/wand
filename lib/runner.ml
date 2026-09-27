@@ -4260,7 +4260,7 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
     | Module_types.ImportErrorAt _ | Failure _) as e ->
     Error (diag_of_exn e)
 
-(* ── wand.api ─────────────────────────────────────────────────────────── *)
+(* ── The api section of wand.pkg ──────────────────────────────────────── *)
 
 (* A package's public interface, one line a type or member, in the
    `wand d --index` format: each module named by its path under the package
@@ -4272,7 +4272,7 @@ let api_lines ~root (modules : (string * string) list) : (string list, Diag.t) r
       (List.mapi (fun i (_, path) -> Printf.sprintf "let %s = import %s" (alias i) path) modules)
     ^ "\n()\n"
   in
-  match typecheck_source ~path:(Filename.concat root "wand.api") src with
+  match typecheck_source ~path:(Filename.concat root "wand.pkg") src with
   | Error d -> Error d
   | Ok check ->
     let types = List.concat_map (fun (name, path) ->
