@@ -65,11 +65,11 @@ let test_shell_fixed_point () =
 
 let test_dead_import_deleted () =
   let (fixed, applied) =
-    fix "let {parse} = import CSV\nlet {parse} = import TOML\nparse \"x = 1\"\n" in
-  Alcotest.(check string) "first binding gone"
+    fix "import CSV\nlet {parse} = import TOML\nparse \"x = 1\"\n" in
+  Alcotest.(check string) "unused import gone"
     "let {parse} = import TOML\nparse \"x = 1\"\n" fixed;
-  Alcotest.(check bool) "V-IMP1 among the fixes" true
-    (List.mem "V-IMP1" (codes applied))
+  Alcotest.(check bool) "V-IMP2 among the fixes" true
+    (List.mem "V-IMP2" (codes applied))
 
 let test_nothing_to_fix () =
   let src = "let double x = x * 2\ndouble 21\n" in

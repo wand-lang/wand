@@ -417,13 +417,11 @@ let test_code_action_updates_manifest () =
   | l -> Alcotest.failf "expected one action, got %d" (List.length l)
 
 let test_code_action_removes_dead_import () =
-  (* V-IMP1: the first of two let-imports binding one name is provably
-     dead, and its fix deletes the line. *)
-  let text = "let {head!} = import List\nlet {head!} = import List\nhead! [1]\n" in
+  let text = "import List\nlet {head!} = import List\nhead! [1]\n" in
   let (_, outs) = session [did_open uri text; code_action_at 19 uri 0 0] in
   match items_of (response_for 19 outs) with
   | [action] ->
-    Alcotest.(check string) "titled" "Remove dead import" (s (m "title" action));
+    Alcotest.(check string) "titled" "Delete `import List`" (s (m "title" action));
     (match m uri (m "changes" (m "edit" action)) with
      | `List [edit] ->
        Alcotest.(check string) "deletes the line" "" (s (m "newText" edit));

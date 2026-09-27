@@ -24,7 +24,6 @@ type id =
   | V_SHELL2   (* a command literal runs on to a second line without a `\` *)
   | V_SHELL1   (* Shell is narrowed, but this command word is only known at run time *)
   | V_NET1     (* Net is narrowed, but this host is only known at run time *)
-  | V_IMP1     (* an import binding is dead: a later import rebinds the name *)
   | V_IMP2     (* an import binds a name the file never mentions *)
   | V_CLOCK1   (* two readings of the civil clock subtracted: a step spoils it *)
   | V_SHADOW1  (* a top-level name is bound twice, so its meaning depends on the line *)
@@ -102,13 +101,6 @@ let all = [
   { id = V_DROP2;  code = "V-DROP2";
     summary = "a statement discards an assertion, so the test cannot fail";
     kind = Violation };
-  { id = V_IMP1;   code = "V-IMP1";
-    summary = "an imported name is rebound by a later import";
-    kind = Violation };
-  (* Decidable from the file alone: the import binds names, and either one
-     of them is mentioned below or none is. Reported only when every name
-     the file mentions can be accounted for -- see `Lint` -- so what it
-     deletes is never something a type or a constructor needed. *)
   { id = V_IMP2;   code = "V-IMP2";
     summary = "an import binds nothing the file uses";
     kind = Violation };
@@ -200,17 +192,8 @@ let name1 ~name ~params =
     (if List.length params = 1 then "" else "s")
     (String.concat ", " (List.map (fun p -> "'" ^ p ^ "'") params))
 
-let imp1 ~name ~first ~second ~line =
-  Printf.sprintf
-    "'%s' from %s is rebound by the %s import on line %d, and every use of \
-     '%s' reads %s's -- above that line as well as below it; drop this \
-     import, or rename one binding ({%s = other_name})"
-    name first second line name second name
-
-(* The second binding is what the finding names, not the first. An import
-   that is rebound really is dead, which is why `imp1` points at the earlier
-   line and offers to delete it -- but a value's earlier binding is not dead.
-   A function defined between the two closes over it and goes on reading it
+(* The second binding is what the finding names, not the first. A value's
+   earlier binding is not dead. A function defined between the two closes over it and goes on reading it
    after the second binding exists. That is the whole reason this is worth
    saying, and the reason no fix travels with it: the correction is a name,
    and only the author has one. *)

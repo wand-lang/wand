@@ -201,17 +201,13 @@ let is_stdlib_dir dir =
        (fun (name, _) -> Sys.file_exists (Filename.concat dir (name ^ ".wand")))
        Stdlib_embed.table
 
-(* Only stdlib imports bind a namespace implicitly, and there the name is
-   written at the import site: `import FS` binds `FS`. A user-path import
-   must state its binding -- `let utils = import ./utils` or a destructuring
-   pattern -- so the name a module arrives under is greppable, rather than
-   being derived by capitalising a filename. *)
-let namespace_name_of = function
-  | Ast.StdlibModule name -> name
-  | Ast.UserPath path ->
+let namespace_name_of kind =
+  match Parser.import_name kind with
+  | Some n -> n
+  | None ->
+    let p = Parser.import_text kind in
     raise (ImportError (Printf.sprintf
-      "bare `import %s` does not bind a name; write `let name = import %s` \
-       or destructure it: `let {foo, bar} = import %s`" path path path))
+      "`import %s` has no name to bind; write `let name = import %s`" p p))
 
 let strip_located = Ast.strip_located
 

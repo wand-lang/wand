@@ -229,6 +229,18 @@ let constr_bare_construction ~named_fields name ids : expr =
 
 (* The expression under any `Located` wrappers. Shared here because nearly
    every stage wants it, and each keeping its own copy is how they drift. *)
+let rec pat_names (p : pat) =
+  match p with
+  | PVar n -> [n]
+  | PTuple ps | PList ps -> List.concat_map pat_names ps
+  | PCons (h, t) -> pat_names h @ pat_names t
+  | PConstr (_, ps) -> List.concat_map pat_names ps
+  | PConstrNamed (_, kvs) | PMap kvs ->
+    List.concat_map (fun (_, p) -> pat_names p) kvs
+  | PConstrBare (_, ids) -> ids
+  | PAnnot (p, _) -> pat_names p
+  | _ -> []
+
 let rec strip_located = function
   | Located (_, e) -> strip_located e
   | e -> e

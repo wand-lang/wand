@@ -34,17 +34,53 @@ let test_destructure_missing_field () =
       (Printf.sprintf {|let {bar = x} = import %s
 x|} path))
 
-(* ── User-path imports must state their binding ──────────────────────────── *)
+(* ── A bare import binds the last segment of its path ──────────────────── *)
 
-(* A bare `import ./utils` used to bind `Utils`, a name derived by
-   capitalising the filename. The two explicit forms below say what they
-   bind, so they must keep working; the bare form must not. *)
+let contains msg needle =
+  let n = String.length needle and m = String.length msg in
+  let rec go i = i + n <= m && (String.sub msg i n = needle || go (i + 1)) in
+  go 0
 
-let test_bare_user_import_rejected () =
+let err_says label needle input =
+  match run input with
+  | Error e ->
+    if not (contains e needle) then
+      Alcotest.failf "%s: expected %S in: %s" label needle e
+  | Ok s -> Alcotest.failf "%s: expected error but got: %s" label s
+
+let test_bare_user_import_binds () =
   with_named "utils" {|let public = 1|} (fun path ->
-    err "bare user-path import does not bind"
-      (Printf.sprintf {|import %s
-Utils.public|} path))
+    Alcotest.(check (result string string))
+      "bare import binds utils"
+      (Ok "1")
+      (run (Printf.sprintf "import %s\nutils.public" path)));
+  with_named "helpers" {|let public = 2|} (fun path ->
+    Alcotest.(check (result string string))
+      ".wand is dropped"
+      (Ok "2")
+      (run (Printf.sprintf "import %s.wand\nhelpers.public"
+              (Filename.chop_suffix path ".wand"))))
+
+let test_bare_import_needs_a_name () =
+  with_named "json-parser" {|let public = 1|} (fun path ->
+    err_says "not a name" "let json_parser = import"
+      (Printf.sprintf "import %s\n1" path))
+
+let test_two_imports_one_name () =
+  err_says "stdlib then path" "`List` is already bound by `import List` (standard library) on line 1"
+    "import List\nimport ./List\n1";
+  err_says "the fix" "Rename this one: `let my_list = import ./List`"
+    "import List\nimport ./List\n1";
+  err_says "destructured" "Rename this one: `{parse = my_parse}`"
+    "let {parse} = import JSON\nlet {parse} = import TOML\n1";
+  err_says "an import and a value" "`List` is already bound by `import List`"
+    "import List\nlet List = 3\n1";
+  err_says "a value, then an import" "is already bound by `let parse`"
+    "let parse = 3\nlet {parse} = import JSON\n1"
+
+let test_two_values_one_name_still_run () =
+  Alcotest.(check (result string string)) "values may rebind" (Ok "2")
+    (run "let a = 1\nlet a = 2\na")
 
 let test_explicit_binding_works () =
   with_named "utils" {|let public = 1|} (fun path ->
@@ -244,7 +280,10 @@ let () =
       Alcotest.test_case "missing field"   `Quick test_destructure_missing_field;
     ];
     "user paths", [
-      Alcotest.test_case "bare import rejected"   `Quick test_bare_user_import_rejected;
+      Alcotest.test_case "bare import binds"      `Quick test_bare_user_import_binds;
+      Alcotest.test_case "bare import needs a name" `Quick test_bare_import_needs_a_name;
+      Alcotest.test_case "two imports, one name"  `Quick test_two_imports_one_name;
+      Alcotest.test_case "two values, one name"   `Quick test_two_values_one_name_still_run;
       Alcotest.test_case "let binding works"      `Quick test_explicit_binding_works;
       Alcotest.test_case "destructuring works"    `Quick test_destructured_binding_works;
     ];

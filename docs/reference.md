@@ -2080,15 +2080,15 @@ that type.
 interface Ranked 'a(top: 'a -> 'a -> 'a, bottom: 'a -> 'a -> 'a)
 
 -- ints.wand
-let ord = import ./ord
+import ./ord
 
 implement ord.Ranked Int =
   let top a b = if a > b then a else b;
   let bottom a b = if a < b then a else b
 
 -- main.wand
-let ord = import ./ord
-let ints = import ./ints
+import ./ord
+import ./ints
 
 let biggest (m: ord.Ranked Int) a b = m.top a b
 
@@ -3469,20 +3469,32 @@ List.length conf.hosts
 
 ### User modules
 
-Bind a user module to a name:
+An import by path binds the last segment of the path:
 
 ```ocaml
-let utils   = import ./utils
-let Helpers = import ./lib/helpers    -- capitalisation is convention, not enforced
+import ./utils                           -- binds utils
+import ./lib/helpers.wand                -- binds helpers
+let h = import ./lib/helpers             -- binds h
+let {parse, encode} = import ./json      -- binds parse and encode
 ```
 
 The file extension is optional. `./utils` and `./utils.wand` mean the
-same.
+same, and `.wand` is not part of the name. A private module needs no `let`:
+`import ./_internal` binds `_internal`.
+
+When the last segment is not a name, as in `./json-parser` or `../`, write
+the `let` form. The error gives the line to write:
+
+```ocaml
+import ./json-parser
+-- error: `import ./json-parser` has no name to bind, because `json-parser`
+--        is not a name. Write `let json_parser = import ./json-parser`
+```
 
 Access members via dot notation:
 
 ```ocaml
-let utils = import ./utils
+import ./utils
 
 utils.my_function 42
 utils.greeting
@@ -3645,16 +3657,29 @@ let double x = _helper x    -- public, calls private helper
 ```
 
 ```ocaml
-let utils = import ./utils
+import ./utils
 utils.double 5       -- 10
 utils._helper 5      -- type error: _helper not found in module
 ```
 
-An import by path must state the name that it binds. `import ./utils` alone
-is an error. Write `let utils = import ./utils`, or a destructuring pattern.
-Then the name of the module is written at the import, and `grep` finds it.
-This does not affect `import FS` and the other stdlib imports. Those already
-write the name.
+### One name, one import
+
+Two imports that bind the same name are an error at the second one. The
+message names the first, and gives the line that renames the second:
+
+```ocaml
+import List
+import ./List
+-- error: `List` is already bound by `import List` (standard library) on line 1.
+--        Rename this one: `let my_list = import ./List`
+```
+
+The same holds for an import and a top-level `let` of the same name, in
+either order. Two top-level `let`s of one name are not an error; `V-SHADOW1`
+reports them.
+
+A top-level import is not a member of the module that writes it. Another file
+that imports this one does not see the names it imported.
 
 ---
 
@@ -6954,7 +6979,6 @@ punish the safer choice.
 | `V-NAME1` | a signature exposes a parameter whose name ends in `_` |
 | `V-DROP1` | a statement's value is a `Result` nothing reads, so a failure is lost |
 | `V-DROP2` | a statement's value is a `TestOutcome` nothing reads, so the test cannot fail |
-| `V-IMP1` | two imports bind the same name, so the first binding is dead — every use reads the second, above its line as well as below — rename one (`let {parse = csv_parse} = import CSV`) or drop it |
 | `V-IMP2` | an import binds nothing the file mentions, so it does nothing — drop the line |
 | `V-SHADOW1` | a top-level name is bound twice in one file, so which value the name means depends on the line it is read from — rename one of them |
 | `V-CLOCK1` | a length of time is measured by subtracting two readings of `Clock.now`, which a clock step spoils — wrap the work in `Clock.timed` |
@@ -6995,8 +7019,8 @@ the second binding, because the first is not dead — that is the point. It
 carries no fix: the correction is a name, and only the author has one. A
 binding named `_` is exempt, and a name bound inside a function shadows
 freely; this is about the top level of a file, where the two bindings can be
-hundreds of lines apart. `V-IMP1` covers the same shape for imports, and
-reports the *earlier* line, because an import that is rebound really is dead.
+hundreds of lines apart. For an import, a name bound twice is an error; see
+[One name, one import](#one-name-one-import).
 
 `V-DROP1` catches a bug, not a habit:
 
@@ -7198,7 +7222,7 @@ object. A manifest suggestion carries the exact line:
 ```
 
 `A-USES1` and the manifest type error carry `fix.replace_line` instead.
-`V-IMP1` and `V-IMP2` carry `"fix":{"delete_line":true}`. A drift error whose correction
+`V-IMP2` carries `"fix":{"delete_line":true}`. A drift error whose correction
 is one substitution carries `"fix":{"replace":{"from":"and","to":"&&"}}`. A
 typed hole has a shape of its own:
 

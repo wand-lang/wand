@@ -1840,11 +1840,6 @@ let test_leading_imports_sorted () =
      let u = import CSV\nlet {test} = import Test\nlet x = 1\nx\n"
     (fmt "import String\nlet u = import CSV\nimport FS\n\
           let {test} = import Test\nimport Env\nlet x = 1\nx");
-  (* Let-imports are ordinary bindings: two binding the same name rebind,
-     and their order is program meaning. *)
-  regression "rebinding order kept"
-    "let {parse} = import CSV\nlet {parse} = import TOML\nparse \"x = 1\"\n"
-    (fmt "let {parse} = import CSV\nlet {parse} = import TOML\nparse \"x = 1\"");
   (* Imports past the leading region stay where they are. *)
   regression "only the leading region"
     "import String\n\nlet x = 1\nimport FS\nx\n"

@@ -9,6 +9,98 @@ exception ParseError of Token.loc option * string
 let fail msg = raise (ParseError (None, msg))
 let fail_at loc msg = raise (ParseError (Some loc, msg))
 
+(* The name a bare import binds: a standard library module's own, or the
+   last segment of a path without `.wand`. None when that is not a name. *)
+let import_name = function
+  | Ast.StdlibModule n -> Some n
+  | Ast.UserPath p ->
+    let base = Filename.basename p in
+    let base =
+      if Filename.check_suffix base ".wand" then Filename.chop_suffix base ".wand"
+      else base
+    in
+    if base <> "" && (Lexer.is_alpha base.[0] || base.[0] = '_')
+       && String.for_all Lexer.is_alnum_or_under base
+       && (match Lexer.keyword_or_ident base with
+           | Token.Ident _ | Token.Upper _ -> true
+           | _ -> false)
+    then Some base
+    else None
+
+let suggested_name text =
+  let s = String.map (fun c -> if Lexer.is_alnum_or_under c then c else '_') text in
+  let s = String.lowercase_ascii s in
+  let rec drop i =
+    if i < String.length s && not (Lexer.is_alpha s.[i]) then drop (i + 1) else i
+  in
+  let i = drop 0 in
+  let s = String.sub s i (String.length s - i) in
+  if s = "" then "name" else s
+
+type binding_role = Value | Whole of Ast.import_kind | Picked of Ast.import_kind
+
+let import_text = function
+  | Ast.StdlibModule n -> n
+  | Ast.UserPath p -> p
+
+(* What each top-level item binds, for the check that an import's name is
+   bound once. *)
+let item_bindings loc item =
+  let import_of body = match Ast.strip_located body with
+    | Ast.ImportExpr k -> Some k
+    | _ -> None
+  in
+  let library = function
+    | Ast.StdlibModule _ -> " (standard library)"
+    | Ast.UserPath _ -> ""
+  in
+  match item with
+  | Ast.TLImport k ->
+    (match import_name k with
+     | Some n -> [(n, Printf.sprintf "`import %s`%s" (import_text k) (library k), Whole k)]
+     | None ->
+       let p = import_text k in
+       let base = Filename.remove_extension (Filename.basename p) in
+       fail_at loc (Printf.sprintf
+         "`import %s` has no name to bind, because `%s` is not a name. \
+          Write `let %s = import %s`"
+         p base (suggested_name base) p))
+  | Ast.TLLet (n, _, body) ->
+    (match import_of body with
+     | Some k ->
+       [(n, Printf.sprintf "`let %s = import %s`%s" n (import_text k) (library k), Whole k)]
+     | None -> [(n, Printf.sprintf "`let %s`" n, Value)])
+  | Ast.TLLetRec bs -> List.map (fun (n, _, _) -> (n, Printf.sprintf "`let %s`" n, Value)) bs
+  | Ast.TLLetPat (pat, body) ->
+    let ns = Ast.pat_names pat in
+    (match import_of body with
+     | Some k ->
+       let what = Printf.sprintf "`let {%s} = import %s`%s"
+           (String.concat ", " ns) (import_text k) (library k) in
+       List.map (fun n -> (n, what, Picked k)) ns
+     | None ->
+       List.map (fun n -> (n, Printf.sprintf "`let %s`" (Ast.show_pat pat), Value)) ns)
+  | _ -> []
+
+let check_bindings seen loc item =
+  List.iter (fun (n, what, role) ->
+    if n <> "_" then begin
+      (match List.assoc_opt n !seen with
+       | Some (line, first, first_role) when role <> Value || first_role <> Value ->
+         let fix = match role with
+           | Whole k ->
+             Printf.sprintf ": `let %s = import %s`"
+               ("my_" ^ String.lowercase_ascii n) (import_text k)
+           | Picked _ -> Printf.sprintf ": `{%s = my_%s}`" n n
+           | Value -> "."
+         in
+         fail_at loc (Printf.sprintf
+           "`%s` is already bound by %s on line %d. Rename this one%s"
+           n first line fix)
+       | _ -> ());
+      seen := (n, (loc.Token.line, what, role)) :: List.remove_assoc n !seen
+    end) (item_bindings loc item)
+
 type state = {
   tokens : (Token.t * Token.loc) array;
   mutable pos : int;
@@ -2468,6 +2560,7 @@ let parse_program_generic ~on_item tokens =
      parses as separate items and surfaces much later as an unbound name
      that is plainly in scope, which is a bad way to learn a layout rule. *)
   let previous_item = ref None in
+  let bound = ref [] in
   (* Set when a `;` ended the item above. Definitions separated by `;` on one
      line are ordinary, so the flag alone means nothing -- it is the `;`
      together with a line indented under the definition it ended that says
@@ -2722,6 +2815,7 @@ let parse_program_generic ~on_item tokens =
     if !items != before_items then begin
       let last_loc = if s.pos > 0 then snd s.tokens.(s.pos - 1) else start_loc in
       previous_item := Some (start_loc.Token.col, last_loc.Token.line);
+      check_bindings bound start_loc (List.nth !items (List.length !items - 1));
       on_item start_loc last_loc
     end
   done;

@@ -28,28 +28,6 @@ let not_fired label src code =
 
 (* ── Individual rules ────────────────────────────────────────────────────── *)
 
-(* Two imports fighting over one name leave the first binding dead and
-   misstate where the name comes from. Renaming one binding keeps both, so
-   that's what the message suggests. *)
-let test_imp1 () =
-  fires "the same name from two modules"
-    "let {parse} = import JSON\nlet {parse} = import TOML\nparse \"x = 1\""
-    "V-IMP1";
-  silent "renamed apart"
-    "let {parse = jparse} = import JSON\nlet {parse = tparse} = import TOML\n\
-     let _ = jparse \"1\"\ntparse \"x = 1\"";
-  (* A use between the two imports reads the *second* one, because imports
-     bind before the file's own bindings wherever they are written. So the
-     first binding is dead there too, and the rule used to stop at the
-     first non-import item and miss it. *)
-  fires "a use between imports"
-    "let {parse} = import JSON\nlet j = parse \"1\"\n\
-     let {parse} = import TOML\nparse \"x = 1\""
-    "V-IMP1";
-  silent "two modules that share no name"
-    "let {parse} = import JSON\nlet j = parse \"1\"\n\
-     let {upper} = import String\nupper \"a\""
-
 (* An import that binds nothing the file mentions. The fix deletes the line,
    so the rule stays silent whenever it cannot account for every name -- an
    import brings its module's types and constructors as well as the names it
@@ -709,17 +687,6 @@ let test_shadow1_is_top_level_only () =
 let test_shadow1_ignores_underscore () =
   not_fired "two discards" "let _ = 1\nlet _ = 2\n3" "V-SHADOW1"
 
-(* Two imports binding one name belong to V-IMP1, which reports the earlier
-   line because that binding really is dead. Reporting both would put two
-   findings on one mistake and point them at different lines. *)
-let test_shadow1_leaves_imports_to_imp1 () =
-  fires "two imports, one name"
-    "let {parse} = import JSON\nlet {parse} = import TOML\nparse \"x = 1\""
-    "V-IMP1";
-  not_fired "two imports, one name"
-    "let {parse} = import JSON\nlet {parse} = import TOML\nparse \"x = 1\""
-    "V-SHADOW1"
-
 let () =
   Alcotest.run "Lint" [
     "rules", [
@@ -735,7 +702,6 @@ let () =
       Alcotest.test_case "V-NAME1"  `Quick test_name1;
       Alcotest.test_case "V-DROP1"  `Quick test_drop1;
       Alcotest.test_case "V-DROP2"  `Quick test_drop2;
-      Alcotest.test_case "V-IMP1"   `Quick test_imp1;
       Alcotest.test_case "V-IMP2"   `Quick test_imp2;
       Alcotest.test_case "V-CLOCK1" `Quick test_clock1;
       Alcotest.test_case "A-SHELL1" `Quick test_shell1;
@@ -751,8 +717,6 @@ let () =
         test_shadow1_is_top_level_only;
       Alcotest.test_case "V-SHADOW1 ignores _" `Quick
         test_shadow1_ignores_underscore;
-      Alcotest.test_case "V-SHADOW1 leaves imports to V-IMP1" `Quick
-        test_shadow1_leaves_imports_to_imp1;
     ];
     "catalog", [
       Alcotest.test_case "V-SHELL2"     `Quick test_shell2;

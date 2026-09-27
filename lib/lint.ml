@@ -104,17 +104,7 @@ let rec type_raises ?(demanded = false) ?(through_resource = false)
 let is_function (t : Typechecker.typ) =
   match Typechecker.repr t with Typechecker.TFun _ -> true | _ -> false
 
-let rec pat_names (p : Ast.pat) =
-  match p with
-  | Ast.PVar n -> [n]
-  | Ast.PTuple ps | Ast.PList ps -> List.concat_map pat_names ps
-  | Ast.PCons (h, t) -> pat_names h @ pat_names t
-  | Ast.PConstr (_, ps) -> List.concat_map pat_names ps
-  | Ast.PConstrNamed (_, kvs) | Ast.PMap kvs ->
-    List.concat_map (fun (_, p) -> pat_names p) kvs
-  | Ast.PConstrBare (_, ids) -> ids
-  | Ast.PAnnot (p, _) -> pat_names p
-  | _ -> []
+let pat_names = Ast.pat_names
 
 (* Shell-level structure in a command string. One stage is exactly what $()
    is for; it is the accumulation of stages that hides work from the type
@@ -536,25 +526,10 @@ let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
   let add ?fix rule loc text =
     findings := { rule; loc; text; fix } :: !findings
   in
-  (* V-IMP1 watches every import in the file, not only the leading run.
-     Imports bind before the file's own bindings, wherever they are
-     written, so the last import of a name decides every use of it -- a use
-     above the second import line reads the second import. The earlier
-     binding is dead however far down the rebinding sits.
-
-     The rule used to stop at the first non-import item, on the reasoning
-     that a later rebinding might follow a genuine use. It cannot: the
-     "genuine use" reads the later module too, which is the whole reason
-     this warns. Found porting a script whose helper collided with an
-     earlier port's.
-
-     The pattern can bind another name (`let {parse = csv_parse} = import
-     CSV`), so keeping both is spelled by renaming, not by shadowing. *)
   let import_display = function
     | Ast.StdlibModule s -> s
     | Ast.UserPath p     -> p
   in
-  let imports_seen : (string * (Token.loc * string)) list ref = ref [] in
   (* Every name the file mentions anywhere below its imports. An import is
      reported only when none of the names it binds is in here. *)
   let mentioned = List.concat_map names_of_item prog.Ast.items in
@@ -602,11 +577,8 @@ let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
       && not (List.mem n ["Ok"; "Error"; "Some"; "None"; "true"; "false"]))
       mentioned
   in
-  (* Every top-level name a `let` binds, and the line it was bound on. The
-     imports are not in here: V-IMP1 already reports those, and reports them
-     the other way round -- an import that is rebound is dead, so the finding
-     lands on the earlier line and offers to delete it. A value's earlier
-     binding is not dead, so this reports the second one instead. *)
+  (* Every top-level name a `let` binds, and the line it was bound on. An
+     import's name bound twice is a parse error, so only values are here. *)
   let value_bindings_seen = ref [] in
   List.iteri (fun i (item : Ast.top_item) ->
     (* An item-level finding marks the whole item, first token to last. *)
@@ -615,32 +587,6 @@ let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
       then Token.span_to (fst locs.(i)) (snd locs.(i))
       else no_loc
     in
-    begin
-      let bound = match item with
-        | Ast.TLImport _ -> Some []
-        | Ast.TLLet (name, [], body) ->
-          Option.map (fun k -> [ (name, k) ]) (Module_types.import_kind_of body)
-        | Ast.TLLetPat (pat, body) ->
-          Option.map (fun k -> List.map (fun n -> (n, k)) (pat_names pat))
-            (Module_types.import_kind_of body)
-        | _ -> None
-      in
-      match bound with
-      | None -> ()
-      | Some names ->
-        List.iter (fun (n, k) ->
-          let this = import_display k in
-          (match List.assoc_opt n !imports_seen with
-           | Some (first_loc, first_mod) ->
-             (* The dead binding is the earlier one, so the fix deletes the
-                line the finding already points at. *)
-             add ~fix:DeleteLine Lint_rules.V_IMP1 first_loc
-               (Lint_rules.imp1 ~name:n ~first:first_mod ~second:this
-                  ~line:loc.Token.line)
-           | None -> ());
-          imports_seen := (n, (loc, this)) :: List.remove_assoc n !imports_seen
-        ) names
-    end;
     (* An import that binds nothing the file mentions. *)
     (match item with
      | _ when unattributable -> ()

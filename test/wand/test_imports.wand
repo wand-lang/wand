@@ -11,6 +11,10 @@ test "whole module bound to name" (fn t -> t.eq 42 mylib.answer)
 test "function call via bound name" (fn t -> t.eq 42 (mylib.double 21))
 test "multiple fields accessible" (fn t -> t.eq 3 (mylib.x + mylib.y))
 
+import ./imports_fixture
+
+test "bare import binds the file's name" (fn t -> t.eq 42 imports_fixture.answer)
+
 let Mylib = import ./imports_fixture
 
 test "capital name works" (fn t -> t.eq "hello" Mylib.greet)

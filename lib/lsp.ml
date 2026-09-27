@@ -696,10 +696,7 @@ let action_edit lines text (d : Diag.t) : (string * J.t list) option =
   | Some Diag.DeleteLine ->
     (match line_at lines (loc_line - 1) with
      | Some old ->
-       let title =
-         if d.Diag.code = "V-IMP1" then "Remove dead import"
-         else "Delete `" ^ String.trim old ^ "`"
-       in
+       let title = "Delete `" ^ String.trim old ^ "`" in
        (* The whole line, newline included. *)
        Some (title, [text_edit (range0 (loc_line - 1) 0 loc_line 0) ""])
      | None -> None)
