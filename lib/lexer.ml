@@ -1152,7 +1152,19 @@ let next_token s =
   in
   scan ()
 
+(* The text of each source lexed whole, by file name, so that a message can
+   quote a line of it next to its number. A body lexed on its own -- an
+   interpolation, which starts part way into a file -- is not a source. *)
+let sources : (string, string) Hashtbl.t = Hashtbl.create 8
+
+(* Line `n` of `file`, as it was lexed. *)
+let source_line file n =
+  match Hashtbl.find_opt sources file with
+  | None -> None
+  | Some src -> List.nth_opt (String.split_on_char '\n' src) (n - 1)
+
 let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false) src =
+  if line = 1 && col = 1 && base = 0 then Hashtbl.replace sources file src;
   let s = make ~file ~line ~col ~base ~bare_urls src in
   (* skip shebang line if present *)
   if String.length src >= 2 && src.[0] = '#' && src.[1] = '!' then

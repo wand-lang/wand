@@ -702,16 +702,17 @@ let test_constructors_qualified_by_type () =
     (decls ^ "let f x = match x with\n  | Always -> 1\n  | _ -> 2\n1")
     "'Always' is a constructor of both"
 
-(* Two lines meant as two statements, where the second is indented under
-   the first and so continues it. The message named two types; it says now
-   that the lines were read as one expression, and what to write. *)
+(* Two lines meant as two statements, read as one expression because a
+   `match` arm holds one. The message named two types; it quotes the lines
+   now, says what was called with what, and writes the fix. *)
 let test_lines_read_as_one_expression () =
   err_contains "two statements in a match arm"
     "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
-    "lines 4 to 5 are read as one expression: line 4 gives Unit, not a function";
-  err_contains "and it says what to write"
+    "lines 4 to 5 are read as one expression, so line 4 is called with line 5 \
+     as its argument:\n  4 | IO.println \"a\"\n  5 | IO.println \"b\"";
+  err_contains "and it writes the fix with the lines themselves"
     "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
-    "write them in brackets with ';' between";
+    "put them in brackets with ';' between them:\n  ( IO.println \"a\"; IO.println \"b\" )";
   ok "a call written over several lines is still a call"
     "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"
     "[2, 3]"

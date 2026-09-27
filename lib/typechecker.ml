@@ -2698,10 +2698,9 @@ let rec unwrap_ctor_type t =
     (arg :: args, result)
   | _ -> ([], t)
 
-(* Two lines meant as two statements, read as one expression. Where the
-   next line is indented under the first -- in a `match` arm, say -- it
-   continues it, so `IO.println "a"` on one line and `IO.println "b"` on the
-   next apply the first line's Unit to the second. The message was "expected
+(* Two lines meant as two statements, read as one expression. A `match` arm
+   holds one expression, so `IO.println "a"` on one line and
+   `IO.println "b"` on the next apply the first line's Unit to the second. The message was "expected
    Unit, got ('a -> Unit ! {IO}) -> 'b", which names two types and not the
    brackets that were missing. *)
 let sequence_read_as_call tf (_f : expr) (_x : expr) =
@@ -2711,15 +2710,37 @@ let sequence_read_as_call tf (_f : expr) (_x : expr) =
     | _ -> true
   in
   (* The argument has no location of its own; the application does, and it
-     runs over more than one line. *)
+     runs over more than one line. The lines are quoted with their numbers
+     when the source is at hand, and named by number when it is not. *)
   match !cur_loc with
   | Some l when not_a_function && l.Token.end_line > l.Token.line ->
-    raise (TypeErrorAt (l, Printf.sprintf
-      "lines %d to %d are read as one expression: line %d gives %s, not a \
-       function, and what follows it is read as its argument. To run the \
-       lines one after another, write them in brackets with ';' between: \
-       ( ...; ... )"
-      l.Token.line l.Token.end_line l.Token.line (string_of_typ tf)))
+    let first = l.Token.line and last = l.Token.end_line in
+    let numbers = List.init (last - first + 1) (fun i -> first + i) in
+    let texts =
+      List.map (fun n -> Lexer.source_line l.Token.file n) numbers in
+    let rest =
+      if last = first + 1 then Printf.sprintf "line %d as its argument" last
+      else Printf.sprintf "lines %d to %d as its arguments" (first + 1) last
+    in
+    let msg =
+      if List.for_all Option.is_some texts then
+        let texts = List.map (fun t -> String.trim (Option.get t)) texts in
+        let excerpt =
+          List.map2 (fun n t -> Printf.sprintf "  %d | %s" n t) numbers texts in
+        Printf.sprintf
+          "lines %d to %d are read as one expression, so line %d is called \
+           with %s:\n%s\nTo run them one after the other, put them in \
+           brackets with ';' between them:\n  ( %s )"
+          first last first rest (String.concat "\n" excerpt)
+          (String.concat "; " texts)
+      else
+        Printf.sprintf
+          "lines %d to %d are read as one expression, so line %d is called \
+           with %s. To run them one after the other, put them in brackets \
+           with ';' between them: ( line %d; ...; line %d )"
+          first last first rest first last
+    in
+    raise (TypeErrorAt (l, msg))
   | _ -> ()
 
 (* Whether `m` is a type in scope with constructors, so that `m.Ctor` names
