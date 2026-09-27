@@ -86,6 +86,57 @@ let test_found_above_the_file () =
     (Printf.sprintf "{ module = https://x.dev/a, wand = %s }" Version.value);
   Alcotest.(check (result string string)) "runs in range" (Ok "2") (Runner.run_file file)
 
+(* An app requiring json through a local copy, as a directory tree. *)
+let with_two_packages f =
+  let root = fresh_dir () in
+  let app = Filename.concat root "app" and json = Filename.concat root "json" in
+  List.iter (fun d -> Unix.mkdir d 0o755)
+    [app; json; Filename.concat json "_internal"];
+  write (Filename.concat json "wand.mod")
+    (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  write (Filename.concat json "json.wand") {|let parse s = "parsed %{s}"|};
+  write (Filename.concat json "decode.wand") "let decode s = s";
+  write (Filename.concat (Filename.concat json "_internal") "p.wand") "let x = 1";
+  write (Filename.concat json "inside.wand") "import ./_internal/p\np.x";
+  write (Filename.concat app "wand.mod")
+    (Printf.sprintf
+       "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../json } ] }"
+       Version.value);
+  f ~app ~json
+
+let run_in dir name src =
+  let file = Filename.concat dir name in
+  write file src;
+  Runner.run_file file
+
+let error_says label needle = function
+  | Error e ->
+    if not (contains e needle) then Alcotest.failf "%s: expected %S in: %s" label needle e
+  | Ok v -> Alcotest.failf "%s: expected an error, got %s" label v
+
+let test_url_imports () =
+  with_two_packages (fun ~app ~json:_ ->
+    Alcotest.(check (result string string)) "root and a file below it"
+      (Ok "parsed x")
+      (run_in app "main.wand"
+         "import https://x.dev/me/json\nimport https://x.dev/me/json/decode\njson.parse (decode.decode \"x\")");
+    error_says "not required" "is not in the `require` list"
+      (run_in app "other.wand" "import https://x.dev/other/thing\n1");
+    error_says "a private file" "`_internal` is private to https://x.dev/me/json"
+      (run_in app "priv.wand" "import https://x.dev/me/json/_internal/p\np.x"))
+
+let test_url_import_outside_a_package () =
+  let dir = fresh_dir () in
+  error_says "no wand.mod" "this file is in no package"
+    (run_in dir "loose.wand" "import https://x.dev/me/json\n1")
+
+let test_private_by_path () =
+  with_two_packages (fun ~app ~json ->
+    error_says "from another package" "`_internal` is private to the package at"
+      (run_in app "bypath.wand" "let p = import ../json/_internal/p\np.x");
+    Alcotest.(check (result string string)) "from its own package" (Ok "1")
+      (Runner.run_file (Filename.concat json "inside.wand")))
+
 let () =
   Random.self_init ();
   Alcotest.run "Package" [
@@ -95,5 +146,10 @@ let () =
       Alcotest.test_case "refuses what is not data" `Quick test_refuses_what_is_not_data;
       Alcotest.test_case "the wand range"      `Quick test_the_wand_range;
       Alcotest.test_case "found above the file" `Quick test_found_above_the_file;
+    ];
+    "imports", [
+      Alcotest.test_case "by URL"              `Quick test_url_imports;
+      Alcotest.test_case "by URL, no package"  `Quick test_url_import_outside_a_package;
+      Alcotest.test_case "private by path"     `Quick test_private_by_path;
     ];
   ]

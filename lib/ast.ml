@@ -49,6 +49,7 @@ type type_expr =
 type import_kind =
   | StdlibModule of string   (* import List        — resolves to stdlib/List.wand *)
   | UserPath     of string   (* import ./utils     — resolves relative to caller  *)
+  | ModuleURL    of string   (* import https://…   — resolves through wand.mod    *)
 
 type pat =
   | Int      of int
@@ -333,6 +334,7 @@ let rec show : expr -> string = function
   | RegexLit (p, f)   -> Printf.sprintf "r/%s/%s" p f
   | ImportExpr (StdlibModule n) -> Printf.sprintf "import %s" n
   | ImportExpr (UserPath p)     -> Printf.sprintf "import %s" p
+  | ImportExpr (ModuleURL u)    -> Printf.sprintf "import %s" u
   | RawString s -> Printf.sprintf "`%s`" s
   | RawInterp (parts, tail) ->
     let buf = Buffer.create 32 in

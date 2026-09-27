@@ -528,7 +528,7 @@ let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
   in
   let import_display = function
     | Ast.StdlibModule s -> s
-    | Ast.UserPath p     -> p
+    | Ast.UserPath p | Ast.ModuleURL p -> p
   in
   (* Every name the file mentions anywhere below its imports. An import is
      reported only when none of the names it binds is in here. *)

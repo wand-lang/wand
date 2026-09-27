@@ -10,11 +10,20 @@ let fail msg = raise (ParseError (None, msg))
 let fail_at loc msg = raise (ParseError (Some loc, msg))
 
 (* The name a bare import binds: a standard library module's own, or the
-   last segment of a path without `.wand`. None when that is not a name. *)
-let import_name = function
-  | Ast.StdlibModule n -> Some n
-  | Ast.UserPath p ->
-    let base = Filename.basename p in
+   last segment of a path or URL, without `.wand`. None when that is not a
+   name. *)
+let import_name kind =
+  let segment = match kind with
+    | Ast.StdlibModule n -> `Name n
+    | Ast.UserPath p -> `Base (Filename.basename p)
+    | Ast.ModuleURL u ->
+      `Base (match List.rev (List.filter (( <> ) "") (String.split_on_char '/' u)) with
+             | s :: _ -> s
+             | [] -> u)
+  in
+  match segment with
+  | `Name n -> Some n
+  | `Base base ->
     let base =
       if Filename.check_suffix base ".wand" then Filename.chop_suffix base ".wand"
       else base
@@ -41,7 +50,7 @@ type binding_role = Value | Whole of Ast.import_kind | Picked of Ast.import_kind
 
 let import_text = function
   | Ast.StdlibModule n -> n
-  | Ast.UserPath p -> p
+  | Ast.UserPath p | Ast.ModuleURL p -> p
 
 (* What each top-level item binds, for the check that an import's name is
    bound once. *)
@@ -52,7 +61,7 @@ let item_bindings loc item =
   in
   let library = function
     | Ast.StdlibModule _ -> " (standard library)"
-    | Ast.UserPath _ -> ""
+    | Ast.UserPath _ | Ast.ModuleURL _ -> ""
   in
   match item with
   | Ast.TLImport k ->
@@ -1280,6 +1289,7 @@ and atom_base_ s =
     (match advance s with
      | Token.Upper n -> ImportExpr (Ast.StdlibModule n)
      | Token.Path p  -> ImportExpr (Ast.UserPath p)
+     | Token.URL u   -> ImportExpr (Ast.ModuleURL u)
      | t -> fail_at loc (Format.asprintf "expected module name or path after import, got %a"
                 Token.pp t))
   | Token.Result   -> Var "result"
@@ -2753,6 +2763,10 @@ let parse_program_generic ~on_item tokens =
           items := !items @ [Ast.TLImport (Ast.UserPath path)];
           Printf.sprintf
             "write 'let name = import %s' to bind it, then 'name.member'" path
+        | Token.URL url ->
+          items := !items @ [Ast.TLImport (Ast.ModuleURL url)];
+          Printf.sprintf
+            "write 'let name = import %s' to bind it, then 'name.member'" url
         | t -> fail (Format.asprintf
             "expected module name or path after import, got %a" Token.pp t)
       in

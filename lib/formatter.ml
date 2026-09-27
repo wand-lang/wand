@@ -1329,6 +1329,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
   | RegexLit (p, f) -> Doc.text ("r/" ^ p ^ "/" ^ f)
   | ImportExpr (StdlibModule n) -> Doc.text ("import " ^ n)
   | ImportExpr (UserPath p)     -> Doc.text ("import " ^ p)
+  | ImportExpr (ModuleURL u)    -> Doc.text ("import " ^ u)
   (* Given back as it was written. Its content is verbatim by definition, so
      nothing is escaped -- and the newline the lexer dropped after the
      opening backtick is put back, or a reformat would eat one line of
@@ -2545,6 +2546,7 @@ let emit_interface (i : Ast.interface_def) =
 let emit_top_item_pretty_uncached = function
   | TLImport (StdlibModule n) -> "import " ^ n
   | TLImport (UserPath p)     -> "import " ^ p
+  | TLImport (ModuleURL u)    -> "import " ^ u
   | TLType (tdef, _) -> emit_type_def tdef
   | TLInterface (i, _) -> emit_interface i
   | TLImplement (im, _) ->

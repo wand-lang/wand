@@ -156,13 +156,13 @@ let read root =
 (* The versions a `wand` field accepts: from itself up to the next major,
    where before 1.0 each minor counts as a major. *)
 let upper_bound v =
-  let major = Evaluator.version_number v 0 and minor = Evaluator.version_number v 1 in
+  let major = Semver.version_number v 0 and minor = Semver.version_number v 1 in
   if major = 0 then Printf.sprintf "0.%d.0" (minor + 1)
   else Printf.sprintf "%d.0.0" (major + 1)
 
 let accepts range running =
-  Evaluator.compare_versions running range >= 0
-  && Evaluator.compare_versions running (upper_bound range) < 0
+  Semver.compare_versions running range >= 0
+  && Semver.compare_versions running (upper_bound range) < 0
 
 let check_wand ?(running = Version.value) pkg =
   if not (accepts pkg.wand running) then
@@ -184,3 +184,123 @@ let of_file path =
     let pkg = read root in
     check_wand pkg;
     Some pkg
+
+let known : (string, t) Hashtbl.t = Hashtbl.create 4
+
+let of_dir dir =
+  let dir = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
+  match find_root dir with
+  | None -> None
+  | Some root ->
+    (match Hashtbl.find_opt known root with
+     | Some pkg -> Some pkg
+     | None ->
+       let pkg = read root in
+       check_wand pkg;
+       Hashtbl.replace known root pkg;
+       Some pkg)
+
+let url_path u =
+  match String.index_opt u ':' with
+  | Some i when i + 2 < String.length u && String.sub u i 3 = "://" ->
+    String.sub u (i + 3) (String.length u - i - 3)
+  | _ -> u
+
+let segments u =
+  List.filter (fun s -> s <> "") (String.split_on_char '/' (url_path u))
+
+let last_segment u =
+  match List.rev (segments u) with
+  | s :: _ -> s
+  | [] -> u
+
+let cache_root () =
+  match Sys.getenv_opt "XDG_CACHE_HOME" with
+  | Some d when d <> "" -> Filename.concat (Filename.concat d "wand") "mod"
+  | _ ->
+    let home = Option.value (Sys.getenv_opt "HOME") ~default:"." in
+    List.fold_left Filename.concat home [".cache"; "wand"; "mod"]
+
+let cache_dir r =
+  Filename.concat (cache_root ()) (url_path r.path ^ "@" ^ r.version)
+
+(* The entry whose path is the longest prefix of the URL, by whole segments. *)
+let entry_for pkg url =
+  let under r =
+    let p = segments r.path and u = segments url in
+    let rec prefix a b = match a, b with
+      | [], _ -> true
+      | x :: a, y :: b -> x = y && prefix a b
+      | _ :: _, [] -> false
+    in
+    prefix p u
+  in
+  List.fold_left (fun best r ->
+    if not (under r) then best
+    else match best with
+      | Some b when List.length (segments b.path) >= List.length (segments r.path) -> best
+      | _ -> Some r) None pkg.require
+
+exception Unresolved of string
+
+let absolute dir =
+  let full = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
+  let parts = List.fold_left (fun acc seg -> match seg with
+    | "" | "." -> acc
+    | ".." -> (match acc with _ :: rest -> rest | [] -> [])
+    | s -> s :: acc) [] (String.split_on_char '/' full) in
+  "/" ^ String.concat "/" (List.rev parts)
+
+let check_private_path ~base_dir file =
+  match find_root (absolute (Filename.dirname file)) with
+  | None -> ()
+  | Some root when Some root = find_root (absolute base_dir) -> ()
+  | Some root ->
+    let full = absolute file in
+    let n = String.length root in
+    let below =
+      if String.length full > n && String.sub full 0 n = root
+      then String.sub full n (String.length full - n)
+      else ""
+    in
+    match List.find_opt (fun s -> String.length s > 0 && s.[0] = '_')
+            (String.split_on_char '/' below) with
+    | Some s ->
+      raise (Unresolved (Printf.sprintf
+        "`%s` is private to the package at %s, so no other package can import it"
+        (Filename.remove_extension s) root))
+    | None -> ()
+
+let resolve_url ~base_dir url =
+  let pkg = match of_dir base_dir with
+    | Some p -> p
+    | None ->
+      raise (Unresolved (Printf.sprintf
+        "`import %s` needs a wand.mod that requires it, and this file is in \
+         no package. Run `wand p init <url>` in the package's directory" url))
+  in
+  let r = match entry_for pkg url with
+    | Some r -> r
+    | None ->
+      raise (Unresolved (Printf.sprintf
+        "%s is not in the `require` list of %s. Run `wand p tidy`" url pkg.file))
+  in
+  let rest = List.filteri (fun i _ -> i >= List.length (segments r.path)) (segments url) in
+  (match List.find_opt (fun s -> String.length s > 0 && s.[0] = '_') rest with
+   | Some s ->
+     raise (Unresolved (Printf.sprintf
+       "`%s` is private to %s, so no other package can import it" s r.path))
+   | None -> ());
+  let dir = match r.local with
+    | Some l -> if Filename.is_relative l then Filename.concat pkg.root l else l
+    | None -> cache_dir r
+  in
+  if not (Sys.file_exists dir) then
+    raise (Unresolved (match r.local with
+      | Some l -> Printf.sprintf "%s has `local = %s`, and there is no such directory" r.path l
+      | None -> Printf.sprintf "%s %s is not fetched. Run `wand p tidy`" r.path r.version));
+  let file = match rest with
+    | [] -> last_segment r.path
+    | _ -> String.concat Filename.dir_sep rest
+  in
+  Filename.concat dir (file ^ ".wand")

@@ -175,11 +175,18 @@ let resolve_stdlib name =
 
 let resolve_import base_dir = function
   | Ast.StdlibModule name -> resolve_stdlib name
+  | Ast.ModuleURL url ->
+    (try File (Package.resolve_url ~base_dir url)
+     with Package.Unresolved msg -> raise (ImportError msg))
   | Ast.UserPath path ->
-    File
-      (if Filename.is_relative path
-       then Filename.concat base_dir (add_ext path)
-       else add_ext path)
+    let file =
+      if Filename.is_relative path
+      then Filename.concat base_dir (add_ext path)
+      else add_ext path
+    in
+    (try Package.check_private_path ~base_dir file
+     with Package.Unresolved msg -> raise (ImportError msg));
+    File file
 
 let read_source = function
   | Embedded name ->
