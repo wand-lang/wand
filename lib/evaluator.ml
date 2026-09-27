@@ -4120,7 +4120,7 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     try ignore (Unix.single_write_substring pipe_w "x" 0 1)
     with Unix.Unix_error _ -> ()
   in
-  let pool = max 1 (min limit (min n (Domain.recommended_domain_count ()))) in
+  let pool = max 1 (min limit (min n (Pool.size + 1))) in
   let workers_left = ref pool in
   (* Under a handler, or inside an item still on the pool, the fiber leaves
      its effects to whoever encloses the call. *)
@@ -4129,6 +4129,7 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   let file_listen = Domain.DLS.get ambient_file_listen in
   let caller_cancel = (Domain.DLS.get cancelled).flags in
   let caller_deferred = Domain.DLS.get interrupts_deferred in
+  let caller_on_pool = Domain.DLS.get on_pool in
   let stop () =
     Atomic.set stopping true;
     locked (fun () -> Condition.broadcast room);
@@ -4145,11 +4146,12 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   in
   (* Items that never move share their worker's state; one that moves
      takes it along, and the worker starts another. *)
-  let pool_state () =
-    restore_fiber { (fresh_fiber ()) with f_on_pool = true; f_file_net = file_net;
+  let pool_state ~inline () =
+    restore_fiber { (fresh_fiber ()) with f_on_pool = (not inline) || caller_on_pool;
+                                           f_file_net = file_net;
                                            f_file_listen = file_listen }
   in
-  let run_item i =
+  let run_item ~inline i =
     Domain.DLS.set cancelled
       { flags = cancels.(i) :: caller_cancel; raised = false };
     Domain.DLS.set interrupts_deferred caller_deferred;
@@ -4176,21 +4178,25 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
                 in
                 locked (fun () -> Queue.push (st, body) moved);
                 signal ();
-                pool_state ())
+                pool_state ~inline ())
             | _ -> None }
   in
-  let worker () =
+  (* A worker runs on a pool domain, or -- taken back because no domain
+     picked it up -- as a fiber of the caller, where it must not block. *)
+  let worker ~inline () =
     let rec take () =
       if halted () || Atomic.get next >= n
          || Atomic.get interrupt_requested <> 0 then None
       else
         let c = Atomic.get in_progress in
         if c >= limit then begin
-          locked (fun () ->
-            while Atomic.get in_progress >= limit && not (halted ())
-                  && Atomic.get next < n do
-              Condition.wait room m
-            done);
+          if inline then Sched.pause 1
+          else
+            locked (fun () ->
+              while Atomic.get in_progress >= limit && not (halted ())
+                    && Atomic.get next < n do
+                Condition.wait room m
+              done);
           take ()
         end
         else if not (Atomic.compare_and_set in_progress c (c + 1)) then take ()
@@ -4203,17 +4209,33 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     let rec loop () =
       match take () with
       | None -> ()
-      | Some i -> run_item i; loop ()
+      | Some i -> run_item ~inline i; loop ()
     in
-    pool_state ();
+    pool_state ~inline ();
     Fun.protect loop ~finally:(fun () ->
-      locked (fun () -> decr workers_left); signal ())
+      locked (fun () -> decr workers_left; signal ()))
+  in
+  let tickets = List.init pool (fun _ ->
+    Pool.submit (fun () -> worker ~inline:false ())) in
+  let inline_state () =
+    { (fresh_fiber ()) with f_on_pool = caller_on_pool; f_file_net = file_net;
+                            f_file_listen = file_listen } in
+  let take_back spawn =
+    let now = Sched.elapsed_ms () in
+    List.iter (fun (t : Pool.ticket) ->
+      if Pool.waiting t && now - t.at >= 1 && Pool.take_back t then
+        spawn (inline_state ()) (fun () -> worker ~inline:true ()))
+      tickets
   in
   let receive spawn () =
     let buf = Bytes.create 64 in
     let woke = ref false in
     let rec go () =
-      Sched.wait_readable pipe_r;
+      if List.exists Pool.waiting tickets then begin
+        Sched.suspend { Sched.reads = [pipe_r]; writes = [];
+                        until = Some (Sched.elapsed_ms () + 1) };
+        take_back spawn
+      end else Sched.wait_readable pipe_r;
       (try while Unix.read pipe_r buf 0 64 > 0 do () done
        with Unix.Unix_error _ -> ());
       let batch, finished, stopped =
@@ -4232,13 +4254,12 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     (try Unix.close pipe_r with Unix.Unix_error _ -> ());
     (try Unix.close pipe_w with Unix.Unix_error _ -> ())
   in
-  let domains = List.init pool (fun _ -> Domain.spawn worker) in
+  (* Every worker has finished, so nothing writes to the pipe any more. A
+     worker no domain took is taken back and counted as done. *)
   let join () =
-    List.iter (fun d ->
-      match Domain.join d with
-      | () -> ()
-      | exception (Interrupted _ | Fun.Finally_raised (Interrupted _)) -> ())
-      domains;
+    List.iter (fun t ->
+      if Pool.take_back t then locked (fun () -> decr workers_left)) tickets;
+    while locked (fun () -> !workers_left > 0) do Unix.sleepf 0.001 done;
     close ()
   in
   match run_fibers_with (fun spawn -> spawn (fresh_fiber ()) (receive spawn)) with
@@ -4563,11 +4584,12 @@ let stop_children_hook : (unit -> unit) ref = ref (fun () -> ())
    raises stops the rest and the read, and is raised. *)
 let stream_each_par ?grace_ms limit f desc =
   let limit = max 1 limit in
-  let items : cancel list ref = ref [] in
-  let deferrals : int ref list ref = ref [] in
+  (* The items in progress, each with its flag, its cancel and the hold on
+     interrupts a drain gives it; an item leaves when it ends. *)
+  let live : (int, bool ref * cancel * int ref) Hashtbl.t = Hashtbl.create 64 in
+  let next_id = ref 0 in
   let in_progress = ref 0 in
   let failure = ref None in
-  let cancels = ref [] in
   let room = Sched.parking () in
   let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
   let stopping = ref false in
@@ -4575,7 +4597,7 @@ let stream_each_par ?grace_ms limit f desc =
     if not !stopping then begin
       stopping := true;
       Atomic.incr checks_wanted;
-      List.iter (fun c -> c := true) !cancels;
+      Hashtbl.iter (fun _ (c, _, _) -> c := true) live;
       Sched.wake_all ()
     end
   in
@@ -4587,27 +4609,26 @@ let stream_each_par ?grace_ms limit f desc =
     (fun () ->
       run_fibers_with (fun spawn ->
         let driver_cancel = ref false in
-        cancels := [driver_cancel];
+        Hashtbl.replace live (-1) (driver_cancel, cancel_within (), ref 0);
         let item x =
           while !in_progress >= limit && not !stopping do Sched.park room done;
           if !stopping then raise Each_par_stopped;
           let cancel = ref false in
-          cancels := cancel :: !cancels;
           incr in_progress;
+          let id = !next_id in
+          incr next_id;
           let st = fresh_fiber ~cancel () in
           let st = match grace_ms with
             | None -> st
-            | Some _ ->
-              let d = ref 1 in
-              deferrals := d :: !deferrals;
-              items := st.f_cancelled :: !items;
-              { st with f_deferred = d } in
+            | Some _ -> { st with f_deferred = ref 1 } in
+          Hashtbl.replace live id (cancel, st.f_cancelled, st.f_deferred);
           spawn st (fun () ->
             let body () = ignore (apply f x); VUnit in
             (match if own_handler then !with_default_handler body else body () with
              | _ -> ()
              | exception e -> if not !stopping then fail e);
             decr in_progress;
+            Hashtbl.remove live id;
             !each_par_release x;
             Sched.unpark room)
         in
@@ -4636,8 +4657,8 @@ let stream_each_par ?grace_ms limit f desc =
                 Sched.pause 20
               done;
               if not (finished ()) then begin
-                List.iter (fun d -> d := 0) !deferrals;
-                List.iter (fun (c : cancel) -> c.raised <- false) !items;
+                Hashtbl.iter (fun _ (_, (c : cancel), d) ->
+                  d := 0; c.raised <- false) live;
                 !stop_children_hook ();
                 stop_all ()
               end
