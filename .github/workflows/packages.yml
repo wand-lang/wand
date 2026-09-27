@@ -1,0 +1,45 @@
+name: Packages
+
+# The package commands against a real host: tools/check_packages.wand
+# fetches github.com/wand-lang/pkg-fixture over HTTPS, from a cache of its
+# own, and runs add, upgrade, a second major, a private import and tidy
+# against it.
+#
+# `dune test` covers the same commands against repositories on disk. This
+# covers what only the host decides: HTTPS through git, the answer GitHub
+# gives for a URL that is not a repository, and the cache path a real host
+# makes. It needs the network, so it runs once a day, after a release, and
+# by hand -- not on every push, where an outage at GitHub would turn a pull
+# request red.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032 # v3
+        with:
+          ocaml-compiler: "5.5.1"
+
+      - name: Install dependencies
+        run: opam install . --deps-only --locked
+
+      - name: Build
+        run: opam exec -- dune build bin/wand.exe
+
+      - name: Check the package commands against github.com
+        run: |
+          set -euo pipefail
+          WAND="$PWD/_build/default/bin/wand.exe"
+          WAND="$WAND" "$WAND" tools/check_packages.wand

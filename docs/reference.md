@@ -3696,7 +3696,9 @@ registry: the URL is where the module is, and `git` fetches it.
 wand p init github.com/you/tool
 ```
 
-This writes `wand.pkg` in the current directory. `wand.pkg` is the only
+In a clone, `wand p init` with no URL takes it from the remote `origin`:
+`git@github.com:you/tool.git` is `github.com/you/tool`. This writes
+`wand.pkg` in the current directory. `wand.pkg` is the only
 file a package needs. Its top is a record that you can edit; below it,
 `wand p` writes two sections, the interface section and the sum section, each opened by a line that starts with
 `-- DO NOT EDIT`. A new package has only the record:

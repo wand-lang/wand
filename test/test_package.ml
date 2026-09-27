@@ -303,9 +303,9 @@ let test_init_tidy_upgrade () =
           Version.value);
        ("text.wand", "import https://x.dev/me/json\nlet v = json.version") ])]) ]
     (fun ~app ->
-      Package_cmd.init ~dir:app "https://x.dev/me/app";
+      Package_cmd.init ~dir:app (Some "https://x.dev/me/app");
       Alcotest.(check bool) "init refuses a second wand.pkg" true
-        (match Package_cmd.init ~dir:app "https://x.dev/me/app" with
+        (match Package_cmd.init ~dir:app (Some "https://x.dev/me/app") with
          | exception Package_cmd.Failed _ -> true
          | () -> false);
       let main = "import https://x.dev/me/json\nimport https://x.dev/me/text\n\"%{json.version} %{text.v}\"" in
@@ -354,7 +354,7 @@ let test_schemeless_urls () =
      | Token.Ident "r" :: _ -> true
      | _ -> false);
   let dir = fresh_dir () in
-  Package_cmd.init ~dir "x.dev/me/tool";
+  Package_cmd.init ~dir (Some "x.dev/me/tool");
   Alcotest.(check bool) "init writes the short form" true
     (contains (In_channel.with_open_text (Filename.concat dir "wand.pkg") In_channel.input_all)
        "{ package = x.dev/me/tool\n")
@@ -387,7 +387,7 @@ let test_interface_and_release () =
   let root = fresh_dir () in
   let git args = Package.run_git ("-C" :: root :: "-c" :: "user.email=t@t" :: "-c" :: "user.name=t" :: args) |> fst in
   ignore (git ["init"; "-q"]);
-  Package_cmd.init ~dir:root "x.dev/me/digest";
+  Package_cmd.init ~dir:root (Some "x.dev/me/digest");
   write (Filename.concat root "digest.wand")
     "type Algorithm = Sha256 | Sha512\nlet name a = match a with\n  | Sha256 -> \"sha256\"\n  | Sha512 -> \"sha512\"\nlet _helper x = x\n";
   Unix.mkdir (Filename.concat root "_internal") 0o755;
@@ -467,7 +467,7 @@ let test_add () =
   with_repos [
     ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5"); ("2.0.0", json_at "2.0")]) ]
     (fun ~app ->
-      Package_cmd.init ~dir:app "x.dev/me/app";
+      Package_cmd.init ~dir:app (Some "x.dev/me/app");
       let refused label needle f =
         match f () with
         | exception Package_cmd.Failed msg ->
@@ -481,14 +481,40 @@ let test_add () =
         (contains (sum_section app) "https://x.dev/me/json 1.4.0 sha256:");
       refused "the same major again" "run `wand p upgrade x.dev/me/json@1.5.0`"
         (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@1.5.0" ~name:None);
-      refused "a second major with no name" "--name json2"
-        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json" ~name:None);
+      refused "a required package, no version" "is already required at 1.4.0, and every file in it"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json/decode" ~name:None);
+      refused "a second major with no name" "`wand p add x.dev/me/json@2.0.0 --name json2`"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@2.0.0" ~name:None);
       refused "no such release" "has no release 9.9.9"
         (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@9.9.9" ~name:(Some "json9"));
-      Package_cmd.add ~dir:app "x.dev/me/json" ~name:(Some "json2");
+      Package_cmd.add ~dir:app "x.dev/me/json@2.0.0" ~name:(Some "json2");
       Alcotest.(check (result string string)) "both majors import" (Ok "1.4 2.0")
         (run_in app "main.wand"
            "import x.dev/me/json\nimport json2\n\"%{json.version} %{json2.version}\""))
+
+let test_init_from_origin () =
+  List.iter (fun (remote, want) ->
+    Alcotest.(check (option string)) remote want (Package_cmd.url_of_remote remote))
+    [ ("git@github.com:wand-lang/pkg-fixture.git", Some "github.com/wand-lang/pkg-fixture");
+      ("https://github.com/wand-lang/pkg-fixture.git", Some "github.com/wand-lang/pkg-fixture");
+      ("ssh://git@github.com/wand-lang/pkg-fixture.git", Some "github.com/wand-lang/pkg-fixture");
+      ("https://gitlab.com/a/b/c", Some "gitlab.com/a/b/c");
+      ("/srv/git/tool.git", None) ];
+  let dir = fresh_dir () in
+  let git args = ignore (Package.run_git ("-C" :: dir :: args)) in
+  let refused label needle =
+    match Package_cmd.init ~dir None with
+    | exception Package_cmd.Failed msg ->
+      if not (contains msg needle) then Alcotest.failf "%s: expected %S in %s" label needle msg
+    | () -> Alcotest.failf "%s: expected a refusal" label
+  in
+  refused "not a repository" "not a git repository";
+  git ["init"; "-q"];
+  refused "no origin" "no remote named origin";
+  git ["remote"; "add"; "origin"; "git@github.com:wand-lang/pkg-fixture.git"];
+  Package_cmd.init ~dir None;
+  Alcotest.(check bool) "named by origin" true
+    (contains (Package.read_sections dir).record "{ package = github.com/wand-lang/pkg-fixture\n")
 
 let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
 
@@ -518,6 +544,8 @@ let () =
       Alcotest.test_case "two majors need a name" `Quick test_two_majors_need_a_name;
       Alcotest.test_case "an unknown alias"   `Quick test_unknown_alias;
       Alcotest.test_case "two majors in a type error" `Quick test_two_majors_in_a_type_error;
+      Alcotest.test_case "init from origin" `Quick
+        (fun () -> if git_present then test_init_from_origin () else Alcotest.skip ());
       Alcotest.test_case "add" `Quick
         (fun () -> if git_present then test_add () else Alcotest.skip ());
       Alcotest.test_case "init, tidy, upgrade" `Quick

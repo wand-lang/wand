@@ -56,7 +56,8 @@ let usage_for sub =
     print_endline "                              Require a package, and fetch it";
     print_endline "  f   interface [--check]     Write the interface section from the code, or";
     print_endline "                              check it matches the code and the latest release";
-    print_endline "  i   init <url>              Start a package here: write wand.pkg";
+    print_endline "  i   init [<url>]            Start a package here: write wand.pkg. With no";
+    print_endline "                              URL, the repository's origin names it";
     print_endline "  r   release [major|minor|patch]";
     print_endline "                              Check the bump the interface needs, write";
     print_endline "                              the interface section, commit it, and tag it";
@@ -670,9 +671,10 @@ let main () =
       in
       (match rest with
        | [] -> usage_for "p"
-       | ("i" | "init") :: [url] -> run (fun () -> Wand.Package_cmd.init ~dir url)
+       | ["i"] | ["init"] -> run (fun () -> Wand.Package_cmd.init ~dir None)
+       | ("i" | "init") :: [url] -> run (fun () -> Wand.Package_cmd.init ~dir (Some url))
        | ("i" | "init") :: _ ->
-         Printf.eprintf "Error: expected the module's URL: wand p init <url>\n"; exit 1
+         Printf.eprintf "Error: usage: wand p init [<url>]\n"; exit 1
        | ["f"] | ["interface"] -> run (fun () -> Wand.Package_cmd.interface ~dir ~check:false)
        | ["f"; "--check"] | ["interface"; "--check"] ->
          run (fun () -> Wand.Package_cmd.interface ~dir ~check:true)

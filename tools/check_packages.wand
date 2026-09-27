@@ -1,0 +1,94 @@
+uses {Env, FS.Read, FS.Write, IO, Proc, Shell(sh)}
+
+import Env
+import FS
+import IO
+import List
+import Option
+import Path
+import Proc
+import String
+
+-- The package commands against a real host: github.com/wand-lang/pkg-fixture.
+--
+-- The test suite fetches from repositories on disk, which covers everything
+-- wand does with a package and nothing the host does: HTTPS through git, the
+-- answer GitHub gives for a URL that is not a repository, and the cache path
+-- a real host makes. This checks those, from a cache of its own, so every
+-- version is fetched. It needs the network, so it runs on a schedule and
+-- after a release rather than on every push.
+--
+-- The fixture has three releases, made by `wand p release`: v0.1.0, v0.1.1,
+-- which adds `bye`, and v0.2.0, which changes `greet`. Its root module is
+-- `pkg-fixture`, which is not a name, so it is imported with a `let`.
+
+-- The binary to check with -- the one this build just produced, not
+-- whatever `wand` is on the PATH.
+let wand = Env.get "WAND" |> Option.default "wand"
+
+let fixture = "github.com/wand-lang/pkg-fixture"
+
+-- `wand p` works in the directory it is run from, so each step starts in
+-- the package's own.
+let run_in dir args = $?(sh -c 'cd "$1" && shift && exec "$@"' sh %{dir} %{wand} %!{args})
+
+let fail step (r: ShellResult) = (
+  IO.println_err "FAIL: %{step}";
+  IO.println_err "  exit %{r.code}";
+  IO.println_err "  stdout: %{String.trim r.stdout}";
+  IO.println_err "  stderr: %{String.trim r.stderr}";
+  Proc.exit 1
+)
+
+-- A step that has to succeed and print `want`.
+let expect dir step args want =
+  let r = run_in dir args;
+  if r.code == 0 && String.contains? want r.stdout then IO.println "ok: %{step}"
+  else fail step r
+
+-- A step that has to fail, saying `want`.
+let refused dir step args want =
+  let r = run_in dir args;
+  if r.code != 0 && String.contains? want r.stderr then IO.println "ok: %{step}"
+  else fail step r
+
+let write! dir name text = FS.write_file! (Path.join dir (Path.of_string name)) text
+
+let main! () =
+  with FS.temp_dir "wand_pkg_check_" as root -> (
+    Env.set "XDG_CACHE_HOME" (Path.to_string (Path.join root (Path.of_string "cache")));
+    let app = Path.join root (Path.of_string "app");
+    FS.mkdir! app;
+    expect app "init" "p init github.com/wand-lang/pkg-check" "";
+    expect app "add at a version" "p add %{fixture}@0.1.0" "added https://%{fixture} 0.1.0";
+    write!
+      app
+      "main.wand"
+      "let fixture = import %{fixture}\nimport %{fixture}/words\n\"\%{fixture.version} \%{words.shout (fixture.greet \"x\")}\"\n";
+    expect app "a URL import and one below it" "main.wand" "0.1.0 HELLO X";
+    refused
+      app
+      "a URL that is a file in a required package"
+      "p add %{fixture}/words"
+      "is already required at 0.1.0";
+    expect app "upgrade within the major" "p upgrade" "0.1.0 -> 0.1.1";
+    expect app "the upgraded version" "main.wand" "0.1.1 HELLO X";
+    expect
+      app
+      "a second major, named"
+      "p add %{fixture}@0.2.0 --name fixture2"
+      "added https://%{fixture} 0.2.0 as fixture2";
+    write!
+      app
+      "both.wand"
+      "let fixture = import %{fixture}\nimport fixture2\n\"\%{fixture.version} \%{fixture2.greet \"hi\" \"x\"}\"\n";
+    expect app "two majors side by side" "both.wand" "0.1.1 hi x";
+    write! app "private.wand" "import %{fixture}/_private/secret\nsecret.value\n";
+    refused app "a private module" "private.wand" "is private to https://%{fixture}";
+    FS.delete! (Path.join app (Path.of_string "both.wand"));
+    FS.delete! (Path.join app (Path.of_string "private.wand"));
+    expect app "tidy drops the unused major" "p tidy" "removed https://%{fixture} 0.2.0";
+    IO.println "the package commands work against %{fixture}"
+  )
+
+main! ()

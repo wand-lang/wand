@@ -111,6 +111,14 @@ let last_segment_of u =
   | s :: _ -> s
   | [] -> u
 
+(* A name for one major of a package: its last segment as a name, then the
+   major, as `json2` or `pkg_fixture0_2`. *)
+let alias_for path version =
+  let m = Semver.version_number version 0 in
+  let major =
+    if m = 0 then Printf.sprintf "0_%d" (Semver.version_number version 1) else string_of_int m in
+  Parser.suggested_name (last_segment_of path) ^ major
+
 let key_loc tokens key =
   let n = Array.length tokens in
   let rec go i =
@@ -168,9 +176,8 @@ let parse ~file src =
         else if o.path = r.path && o.name = None && r.name = None then
           fail req_at (Printf.sprintf
             "%s is required at %s and at %s; give one of them a name, such as \
-             `name = %s%s`, and import it by that name"
-            r.path r.version o.version (last_segment_of r.path)
-            (String.map (fun c -> if c = '.' then '_' else c) (major o.version)))
+             `name = %s`, and import it by that name"
+            r.path r.version o.version (alias_for r.path o.version))
         else match o.name, r.name with
           | Some a, Some b when a = b ->
             fail req_at (Printf.sprintf "two `require` entries have `name = %s`" a)

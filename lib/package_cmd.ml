@@ -40,9 +40,56 @@ let running_range () =
   Printf.sprintf "%d.%d.0"
     (Semver.version_number Version.value 0) (Semver.version_number Version.value 1)
 
+(* A git remote as a package URL: `git@github.com:you/tool.git`,
+   `ssh://git@github.com/you/tool.git` and `https://github.com/you/tool.git`
+   are all `github.com/you/tool`. *)
+let url_of_remote remote =
+  let r = String.trim remote in
+  let r = if Filename.check_suffix r ".git" then Filename.chop_suffix r ".git" else r in
+  let after p s =
+    let n = String.length p in
+    if String.length s >= n && String.sub s 0 n = p then Some (String.sub s n (String.length s - n))
+    else None
+  in
+  let drop_user s = match String.index_opt s '@' with
+    | Some i when not (String.contains (String.sub s 0 i) '/') ->
+      String.sub s (i + 1) (String.length s - i - 1)
+    | _ -> s
+  in
+  match List.find_map (fun p -> after p r) ["https://"; "http://"; "ssh://"; "git://"] with
+  | Some rest -> Some (drop_user rest)
+  | None ->
+    (match String.index_opt r ':' with
+     | Some i when String.contains (String.sub r 0 i) '@' ->
+       let host = drop_user (String.sub r 0 i) in
+       Some (host ^ "/" ^ String.sub r (i + 1) (String.length r - i - 1))
+     | _ -> None)
+
+(* The URL of the repository `dir` is the top of, from its `origin`. *)
+let url_from_git dir =
+  let ask why =
+    fail (Printf.sprintf "%s; name the package: wand p init github.com/you/%s"
+            why (Filename.basename dir))
+  in
+  match Package.run_git ["-C"; dir; "rev-parse"; "--show-toplevel"] with
+  | (0, top) ->
+    let real p = try Unix.realpath p with Unix.Unix_error _ -> p in
+    if real (String.trim top) <> real dir then
+      ask "this directory is inside a git repository but not at its top, and \
+           a package is fetched as a whole repository"
+    else
+      (match Package.run_git ["-C"; dir; "remote"; "get-url"; "origin"] with
+       | (0, remote) ->
+         (match url_of_remote remote with
+          | Some u -> u
+          | None -> ask (Printf.sprintf "the remote origin, %s, is not a URL wand can read" remote))
+       | _ -> ask "this repository has no remote named origin")
+  | _ -> ask "this directory is not a git repository"
+
 let init ~dir url =
   let file = Filename.concat dir Package.file_name in
   if Sys.file_exists file then fail (file ^ " already exists");
+  let url = match url with Some u -> u | None -> url_from_git dir in
   let is_url =
     match Lexer.tokenize ~bare_urls:true url with
     | [(Token.URL _, _); (Token.EOF, _)] -> true
@@ -488,22 +535,30 @@ let add ~dir target ~name =
     | None -> Option.get (latest versions)
   in
   let same_path = List.filter (fun (r : Package.require) -> r.path = path) pkg.require in
+  let already r =
+    fail (Printf.sprintf
+      "%s is already required at %s, and every file in it can be imported. \
+       To move it, run `wand p upgrade %s@<version>`"
+      path r.Package.version (short path))
+  in
+  (match asked, same_path with
+   | None, r :: _ -> already r
+   | _ -> ());
   (match List.find_opt (fun (r : Package.require) ->
      Package.major r.version = Package.major version) same_path with
+   | Some r when r.version = version -> already r
    | Some r ->
      fail (Printf.sprintf
        "%s is already required at %s. To move it, run `wand p upgrade %s@%s`"
        path r.version (short path) version)
    | None -> ());
-  let suggested =
-    Package.last_segment_of path
-    ^ String.map (fun c -> if c = '.' then '_' else c) (Package.major version) in
+  let suggested = Package.alias_for path version in
   (match name, List.exists (fun (r : Package.require) -> r.name = None) same_path with
    | None, true ->
      fail (Printf.sprintf
        "%s is already required at another major. Give this one a name, and \
-        import it by that name: `wand p add %s --name %s`"
-       path target suggested)
+        import it by that name: `wand p add %s@%s --name %s`"
+       path (short path) version suggested)
    | _ -> ());
   (match name with
    | Some n ->
