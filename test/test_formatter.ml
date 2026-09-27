@@ -631,7 +631,7 @@ f 9
      needs its parens kept -- printed bare, `Some n` reads as two separate
      parameters instead of one destructured one. *)
   ok_after_format "constructor pattern as a function parameter"
-    "type Opt = None | Some Int\nlet f None = 0\nlet f (Some n) = n\nf (Some 42)"
+    "let f None = 0\nlet f (Some n) = n\nf (Some 42)"
     "42"
 
 (* `Ok 42.0` reformatting to `Ok 42` runs fine and *displays* the same (both
@@ -673,10 +673,10 @@ let test_constructor_argument_keeps_its_parens () =
   (* Behaviour, not text: formatted, this still returns the first argument
      rather than applying the constructor to the second. *)
   ok_after_format "constructor before another argument"
-    "type Opt = None | Some Int\nlet f a b = b\nf (None) 7"
+    "let f a b = b\nf (None) 7"
     "7";
   ok_after_format "constructor as the last argument"
-    "type Opt = None | Some Int\nlet f a b = a\nf 7 None"
+    "let f a b = a\nf 7 None"
     "7";
   (* The brackets appear where the next argument would be absorbed. *)
   Alcotest.(check string) "a bracketed argument follows"
@@ -755,7 +755,7 @@ let test_width_is_measured_from_the_start_column () =
     "let t label =\n  Testing(\n    ok = fn cond -> if cond then Pass label else Fail      \"%{label}: the assertion did not hold at all\"\n  )";
   (* And what it decides still runs the same. *)
   ok_after_format "wrapping a case body preserves it"
-    "type Opt = None | Some Int\nlet plus n = n + 1\nlet f x =\n  match x with\n     | Some averylongconstructorpattern -> let y = plus averylongconstructorpattern in y\n     | None -> 0\nf (Some 41)"
+    "let plus n = n + 1\nlet f x =\n  match x with\n     | Some averylongconstructorpattern -> let y = plus averylongconstructorpattern in y\n     | None -> 0\nf (Some 41)"
     "42"
 
 (* An `if` or `match` that starts mid-line -- after `x = ` or `fn a -> ` --
@@ -1021,6 +1021,20 @@ let test_wide_type_definition_wraps () =
   assert_contains "fields kept" out "raises:";
   (* And the result still parses back to the same shape. *)
   assert_idempotent "wrapped type definition" src
+
+(* A sum past the margin wraps at its alternatives, with the `=` ending the
+   first line. The space the one-line form puts after the `=` was left there,
+   at the end of the line. *)
+let test_wrapped_sum_has_no_trailing_space () =
+  let src =
+    "type DeploymentStrategyType = " ^ String.make 58 'A' ^ " | Bb\n1" in
+  let out = fmt src in
+  List.iter (fun l ->
+    if String.length l > 0 && l.[String.length l - 1] = ' ' then
+      Alcotest.failf "a line ends in a space: %S" l)
+    (String.split_on_char '\n' out);
+  assert_contains "the = ends the first line" out "type DeploymentStrategyType =\n  A";
+  assert_idempotent "wrapped sum" src
 
 (* A named field's type may be a function, written bare: the comma or the
    closing parenthesis ends the field, so the parentheses say nothing. The
@@ -1977,6 +1991,7 @@ let () =
       Alcotest.test_case "doc run kept together" `Quick test_doc_run_kept_together;
       Alcotest.test_case "no blank after doc" `Quick test_no_blank_between_doc_and_binding;
       Alcotest.test_case "wide type wraps" `Quick test_wide_type_definition_wraps;
+      Alcotest.test_case "a wrapped sum has no trailing space" `Quick test_wrapped_sum_has_no_trailing_space;
       Alcotest.test_case "named field arrow" `Quick test_named_field_arrow_loses_brackets;
       Alcotest.test_case "interface settles" `Quick test_interface_and_implement_settle;
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;

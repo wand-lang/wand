@@ -2518,8 +2518,11 @@ let emit_type_def = function
        page rather than past the margin. Several constructors wrap at the
        alternatives instead, which is where a reader looks first. *)
     | [c] -> head ^ emit_ctor_fields_wrapped ~defaults:c.defaults c.name c.fields
+    (* The `=` ends the line, and nothing follows it there: `head` ends in
+       the space that the one-line form puts before the first constructor,
+       and here that space was left at the end of the line. *)
     | _ ->
-      head ^ "\n  "
+      "type " ^ name_and_params ^ " =\n  "
       ^ String.concat "\n  | "
           (List.map (fun c ->
              c.name ^ emit_ctor_fields ~defaults:c.defaults c.fields) ctors)
