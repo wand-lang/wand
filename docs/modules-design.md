@@ -64,7 +64,7 @@ import github.com/mjstahl/json/decode   -- decode.wand in it
 A leading `_` means private at every level. Names already work this way.
 A module file (`_parser.wand`) or a directory (`_internal/`) with a `_`
 segment is private to its package: importing it from another package is
-an error. The api section and this check use the same path test, so
+an error. The interface section and this check use the same path test, so
 they cannot disagree.
 
 ## Fetching
@@ -82,12 +82,12 @@ With `git`, which does the HTTPS and the user's credentials:
 ## One file
 
 `wand.pkg` is the only file a package needs. The record comes first, and
-people edit it. Below it, `wand p` writes two sections, the api section
+people edit it. Below it, `wand p` writes two sections, the interface section
 (see `release-design.md`) and then the sum section. Each opens with a
 marker line, and the record ends at the first one:
 
 ```
--- DO NOT EDIT: api, written by `wand p`
+-- DO NOT EDIT: interface, written by `wand p`
 -- DO NOT EDIT: sum, written by `wand p`
 ```
 
@@ -147,6 +147,10 @@ message prints both qualified, with the exact version:
 - `wand p init <url>` writes a `wand.pkg` naming the module, with the
   running wand's range and no requirements. It refuses a directory that
   has one.
+- `wand p add <url>[@version] [--name <name>]` adds a `require` entry at
+  that version, or the latest, and fetches what the build needs. It
+  refuses a package already required at that major, and a second major
+  with no `--name`; each refusal names the command that works.
 - `wand p tidy` reads every import in the package: it adds a `require`
   entry, at the latest tagged version, for a module no entry names; drops
   entries nothing imports; fetches what is missing; and writes the sum

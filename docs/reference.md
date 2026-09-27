@@ -3698,7 +3698,7 @@ wand p init github.com/you/tool
 
 This writes `wand.pkg` in the current directory. `wand.pkg` is the only
 file a package needs. Its top is a record that you can edit; below it,
-`wand p` writes two sections, each opened by a line that starts with
+`wand p` writes two sections, the interface section and the sum section, each opened by a line that starts with
 `-- DO NOT EDIT`. A new package has only the record:
 
 ```ocaml
@@ -3723,13 +3723,19 @@ The scheme is optional here and in `wand.pkg`: a URL without one is
 `https`, so `github.com/mjstahl/json` is `https://github.com/mjstahl/json`.
 Elsewhere a URL keeps its scheme. A URL import binds its last segment, as a
 path import does. The import line
-never holds a version; `wand.pkg` does. Write the import, then run:
+never holds a version; `wand.pkg` does. Add the package, then import it:
 
 ```sh
-wand p tidy
+wand p add github.com/mjstahl/json          # its latest release
+wand p add github.com/mjstahl/json@1.4.0    # that release
 ```
 
-`tidy` finds the module each URL import names, adds it to `require` at its
+`add` finds the repository the URL names, adds a `require` entry, fetches
+what the build needs, and writes the sum section. It refuses a package that
+is already required at that major, and names the `wand p upgrade` that moves
+it.
+
+You can also write the import first and run `wand p tidy`. `tidy` finds the module each URL import names, adds it to `require` at its
 latest version, removes an entry that no import uses, fetches what the build
 needs, and writes the sum section. With nothing to change, it prints nothing.
 
@@ -3800,7 +3806,8 @@ expected a `Value` from https://github.com/mjstahl/json 2.1.0, got a `Value` fro
 ```
 
 `wand p upgrade` does not move a dependency to a new major. To use two majors
-in one package, give one of them a `name`, and import it by that name:
+in one package, give one of them a `name`, and import it by that name.
+`wand p add github.com/mjstahl/json@2.1.0 --name json2` writes the entry:
 
 ```ocaml
 { require =
@@ -3840,12 +3847,12 @@ Another package that imports it, by URL or by path, gets an error.
 The types decide the smallest version change that a release needs. You can
 ask for a larger one, and never for a smaller one.
 
-The api section of `wand.pkg` holds the package's public interface, in the
+The interface section of `wand.pkg` holds the package's public interface, in the
 format that `wand d --index` uses. It comes after the record and before the
 sum section:
 
 ```
--- DO NOT EDIT: api, written by `wand p`
+-- DO NOT EDIT: interface, written by `wand p`
 version 0.3.1
 
 type digest.Algorithm = Sha256 | Sha512
@@ -3859,13 +3866,13 @@ file are not in it. A change to the interface shows as a diff in `wand.pkg`,
 where a reviewer sees it.
 
 ```sh
-wand p api            # write the api section from the code; keep its version line
-wand p api --check    # fail when it does not match the code or the latest tag
+wand p interface          # write the interface section; keep its version line
+wand p interface --check  # fail when it does not match the code or the latest tag
 wand p release        # release with the smallest change the interface needs
 wand p release minor  # or a larger one
 ```
 
-`wand p release` compares the interface with the api section of the last
+`wand p release` compares the interface with the interface section of the last
 release tag:
 
 | Change | Interface change |
@@ -3882,7 +3889,7 @@ with `wand p release major`. A change in what a function does, with no
 change to its type, is invisible to the types: ask for the larger change
 yourself.
 
-The working tree must be clean. The command writes the api section with the new
+The working tree must be clean. The command writes the interface section with the new
 version, commits it, and tags the commit `v<version>`, so the tag and the
 file always agree. It does not push; it prints the command that does.
 

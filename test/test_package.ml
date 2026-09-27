@@ -23,8 +23,8 @@ let write_sum dir text =
 let sum_section dir =
   String.concat "\n" (Option.value (Package.read_sections dir).sum ~default:[])
 
-let api_section dir =
-  String.concat "\n" (Option.value (Package.read_sections dir).api ~default:[])
+let interface_section dir =
+  String.concat "\n" (Option.value (Package.read_sections dir).iface ~default:[])
 
 
 let parse_error label needle src =
@@ -380,7 +380,7 @@ let test_bump_rules () =
     ["0.4.0"; "0.3.2"; "2.0.0"; "1.3.0"; "1.2.4"]
     [next "0.3.1" Major; next "0.3.1" Minor; next "1.2.3" Major; next "1.2.3" Minor; next "1.2.3" Patch]
 
-let test_api_and_release () =
+let test_interface_and_release () =
   let root = fresh_dir () in
   let git args = Package.run_git ("-C" :: root :: "-c" :: "user.email=t@t" :: "-c" :: "user.name=t" :: args) |> fst in
   ignore (git ["init"; "-q"]);
@@ -390,10 +390,10 @@ let test_api_and_release () =
   Unix.mkdir (Filename.concat root "_internal") 0o755;
   write (Filename.concat root "_internal/p.wand") "let hidden = 1";
   write (Filename.concat root "test_digest.wand") "let {test} = import Test\ntest \"a\" (fn t -> t.eq 1 1)";
-  Package_cmd.api ~dir:root ~check:false;
+  Package_cmd.interface ~dir:root ~check:false;
   Alcotest.(check string) "the whole file"
     "{ package = x.dev/me/digest\n, wand    = VERSION\n}\n\n\
-     -- DO NOT EDIT: api, written by `wand p`\n\
+     -- DO NOT EDIT: interface, written by `wand p`\n\
      type digest.Algorithm = Sha256 | Sha512\n\ndigest.name : Algorithm -> String\n"
     ((let text = read_file (Filename.concat root "wand.pkg") in
       let range = Package_cmd.running_range () in
@@ -403,13 +403,13 @@ let test_api_and_release () =
   ignore (git ["commit"; "-qm"; "one"]);
   Package_cmd.release ~dir:root None;
   Alcotest.(check bool) "the first release" true
-    (contains (api_section root) "version 0.1.0");
-  Package_cmd.api ~dir:root ~check:true;
+    (contains (interface_section root) "version 0.1.0");
+  Package_cmd.interface ~dir:root ~check:true;
   write (Filename.concat root "digest.wand")
     "type Algorithm = Sha256 | Sha512\nlet name a = 1\n";
   ignore (git ["commit"; "-qam"; "two"]);
   Alcotest.(check bool) "check sees the change" true
-    (match Package_cmd.api ~dir:root ~check:true with
+    (match Package_cmd.interface ~dir:root ~check:true with
      | exception Package_cmd.Failed msg -> contains msg "+ digest.name : 'a -> Int"
      | () -> false);
   Alcotest.(check bool) "a patch is refused" true
@@ -418,7 +418,7 @@ let test_api_and_release () =
      | () -> false);
   Package_cmd.release ~dir:root None;
   Alcotest.(check bool) "before 1.0 a break moves the minor" true
-    (contains (api_section root) "version 0.2.0");
+    (contains (interface_section root) "version 0.2.0");
   write (Filename.concat root "junk.txt") "x";
   Alcotest.(check bool) "a dirty tree is refused" true
     (match Package_cmd.release ~dir:root None with
@@ -428,10 +428,10 @@ let test_api_and_release () =
 let test_sections () =
   let text =
     "{ package = x.dev/a\n, wand    = 0.85.0\n}\n\n\
-     -- DO NOT EDIT: api, written by `wand p`\nversion 0.1.0\n\na.f : Int\n\n\
+     -- DO NOT EDIT: interface, written by `wand p`\nversion 0.1.0\n\na.f : Int\n\n\
      -- DO NOT EDIT: sum, written by `wand p`\nhttps://x.dev/b 1.0.0 sha256:00\n" in
   let sections = Package.split_sections ~file:"wand.pkg" text in
-  Alcotest.(check (option (list string))) "api" (Some ["version 0.1.0"; ""; "a.f : Int"]) sections.api;
+  Alcotest.(check (option (list string))) "interface" (Some ["version 0.1.0"; ""; "a.f : Int"]) sections.iface;
   Alcotest.(check (option (list string))) "sum" (Some ["https://x.dev/b 1.0.0 sha256:00"]) sections.sum;
   Alcotest.(check string) "a round trip" text (Package.join_sections sections);
   let refused label needle text =
@@ -442,23 +442,50 @@ let test_sections () =
   in
   refused "a changed marker" "opens with"
     "{ package = x.dev/a, wand = 0.85.0 }\n-- DO NOT EDIT: api\n";
-  refused "sum before api" "then the api section, then the sum section"
+  refused "sum before interface" "then the interface section, then the sum section"
     "{ package = x.dev/a, wand = 0.85.0 }\n-- DO NOT EDIT: sum, written by `wand p`\n\
-     -- DO NOT EDIT: api, written by `wand p`\n";
+     -- DO NOT EDIT: interface, written by `wand p`\n";
   refused "a section twice" "each once"
-    "{ package = x.dev/a, wand = 0.85.0 }\n-- DO NOT EDIT: api, written by `wand p`\n\
-     -- DO NOT EDIT: api, written by `wand p`\n"
+    "{ package = x.dev/a, wand = 0.85.0 }\n-- DO NOT EDIT: interface, written by `wand p`\n\
+     -- DO NOT EDIT: interface, written by `wand p`\n"
 
-let test_tidy_keeps_the_api_section () =
+let test_tidy_keeps_the_interface_section () =
   let root = fresh_dir () in
   write (Filename.concat root "wand.pkg") (Printf.sprintf
     "{ package = x.dev/me/a, wand = %s, require = [ { path = x.dev/me/unused, version = 1.0.0, local = ../x } ] }\n\n\
-     -- DO NOT EDIT: api, written by `wand p`\na.f : Int\n" Version.value);
+     -- DO NOT EDIT: interface, written by `wand p`\na.f : Int\n" Version.value);
   write (Filename.concat root "a.wand") "let f = 1";
   Package_cmd.tidy ~dir:root;
   let sections = Package.read_sections root in
   Alcotest.(check bool) "the entry is gone" false (contains sections.record "unused");
-  Alcotest.(check (option (list string))) "the api section is kept" (Some ["a.f : Int"]) sections.api
+  Alcotest.(check (option (list string))) "the interface section is kept" (Some ["a.f : Int"]) sections.iface
+
+let test_add () =
+  with_repos [
+    ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5"); ("2.0.0", json_at "2.0")]) ]
+    (fun ~app ->
+      Package_cmd.init ~dir:app "x.dev/me/app";
+      let refused label needle f =
+        match f () with
+        | exception Package_cmd.Failed msg ->
+          if not (contains msg needle) then Alcotest.failf "%s: expected %S in %s" label needle msg
+        | () -> Alcotest.failf "%s: expected a refusal" label
+      in
+      Package_cmd.add ~dir:app "x.dev/me/json@1.4.0" ~name:None;
+      Alcotest.(check bool) "the entry" true
+        (contains (Package.read_sections app).record "{ path = x.dev/me/json, version = 1.4.0 }");
+      Alcotest.(check bool) "its sum line" true
+        (contains (sum_section app) "https://x.dev/me/json 1.4.0 sha256:");
+      refused "the same major again" "run `wand p upgrade x.dev/me/json@1.5.0`"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@1.5.0" ~name:None);
+      refused "a second major with no name" "--name json2"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json" ~name:None);
+      refused "no such release" "has no release 9.9.9"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@9.9.9" ~name:(Some "json9"));
+      Package_cmd.add ~dir:app "x.dev/me/json" ~name:(Some "json2");
+      Alcotest.(check (result string string)) "both majors import" (Ok "1.4 2.0")
+        (run_in app "main.wand"
+           "import x.dev/me/json\nimport json2\n\"%{json.version} %{json2.version}\""))
 
 let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
 
@@ -488,14 +515,16 @@ let () =
       Alcotest.test_case "two majors need a name" `Quick test_two_majors_need_a_name;
       Alcotest.test_case "an unknown alias"   `Quick test_unknown_alias;
       Alcotest.test_case "two majors in a type error" `Quick test_two_majors_in_a_type_error;
+      Alcotest.test_case "add" `Quick
+        (fun () -> if git_present then test_add () else Alcotest.skip ());
       Alcotest.test_case "init, tidy, upgrade" `Quick
         (fun () -> if git_present then test_init_tidy_upgrade () else Alcotest.skip ());
     ];
     "releasing", [
       Alcotest.test_case "the bump rules"      `Quick test_bump_rules;
       Alcotest.test_case "sections"            `Quick test_sections;
-      Alcotest.test_case "tidy keeps the api section" `Quick test_tidy_keeps_the_api_section;
-      Alcotest.test_case "api and release"     `Quick
-        (fun () -> if git_present then test_api_and_release () else Alcotest.skip ());
+      Alcotest.test_case "tidy keeps the interface section" `Quick test_tidy_keeps_the_interface_section;
+      Alcotest.test_case "interface and release"     `Quick
+        (fun () -> if git_present then test_interface_and_release () else Alcotest.skip ());
     ];
   ]

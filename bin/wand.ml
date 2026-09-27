@@ -52,12 +52,14 @@ let usage_for sub =
     print_endline "the nearest wand.pkg.";
     print_endline "";
     print_endline "Commands:";
-    print_endline "  a   api [--check]           Write the api section from the code, or check";
-    print_endline "                              it matches the code and the latest release";
+    print_endline "  a   add <url>[@version] [--name <name>]";
+    print_endline "                              Require a package, and fetch it";
+    print_endline "  f   interface [--check]     Write the interface section from the code, or";
+    print_endline "                              check it matches the code and the latest release";
     print_endline "  i   init <url>              Start a package here: write wand.pkg";
     print_endline "  r   release [major|minor|patch]";
     print_endline "                              Check the bump the interface needs, write";
-    print_endline "                              the api section, commit it, and tag the release";
+    print_endline "                              the interface section, commit it, and tag it";
     print_endline "  t   tidy                    Make wand.pkg match the imports,";
     print_endline "                              and fetch what they need";
     print_endline "  u   upgrade [url[@version]] Move dependencies to their newest version";
@@ -671,9 +673,22 @@ let main () =
        | ("i" | "init") :: [url] -> run (fun () -> Wand.Package_cmd.init ~dir url)
        | ("i" | "init") :: _ ->
          Printf.eprintf "Error: expected the module's URL: wand p init <url>\n"; exit 1
-       | ["a"] | ["api"] -> run (fun () -> Wand.Package_cmd.api ~dir ~check:false)
-       | ["a"; "--check"] | ["api"; "--check"] ->
-         run (fun () -> Wand.Package_cmd.api ~dir ~check:true)
+       | ["f"] | ["interface"] -> run (fun () -> Wand.Package_cmd.interface ~dir ~check:false)
+       | ["f"; "--check"] | ["interface"; "--check"] ->
+         run (fun () -> Wand.Package_cmd.interface ~dir ~check:true)
+       | ("a" | "add") :: target :: opts ->
+         let name = match opts with
+           | [] -> None
+           | ["--name"; n] -> Some n
+           | _ ->
+             Printf.eprintf "Error: usage: wand p add <url>[@version] [--name <name>]
+";
+             exit 1
+         in
+         run (fun () -> Wand.Package_cmd.add ~dir target ~name)
+       | ["a"] | ["add"] ->
+         Printf.eprintf "Error: expected a package's URL: wand p add <url>[@version]
+"; exit 1
        | ["r"] | ["release"] -> run (fun () -> Wand.Package_cmd.release ~dir None)
        | ("r" | "release") :: [bump] ->
          run (fun () -> Wand.Package_cmd.release ~dir (Some bump))

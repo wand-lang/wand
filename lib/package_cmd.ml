@@ -135,7 +135,7 @@ let latest versions =
 
 (* The module a URL belongs to: the longest prefix that is a repository
    with a tagged version. *)
-let find_module url =
+let find_module_versions url =
   let segs = Package.segments url in
   let scheme = match String.index_opt url ':' with
     | Some i -> String.sub url 0 i
@@ -148,15 +148,17 @@ let find_module url =
       let candidate =
         scheme ^ "://" ^ String.concat "/" (List.filteri (fun i _ -> i < n) segs) in
       match tagged_versions candidate with
-      | Some vs ->
-        (match latest vs with
-         | Some v -> (candidate, v)
-         | None ->
-           fail (Printf.sprintf
-             "%s has no version tags. A release is a tag such as v0.1.0" candidate))
+      | Some [] ->
+        fail (Printf.sprintf
+          "%s has no version tags. A release is a tag such as v0.1.0" candidate)
+      | Some vs -> (candidate, vs)
       | None -> try_prefix (n - 1)
   in
   try_prefix (List.length segs)
+
+let find_module url =
+  let (path, vs) = find_module_versions url in
+  (path, Option.get (latest vs))
 
 (* ── tidy and upgrade ──────────────────────────────────────────────────── *)
 
@@ -261,7 +263,7 @@ let upgrade ~dir target =
   rewrite pkg require;
   report !say
 
-(* ── The api section ──────────────────────────────────────────────────────── *)
+(* ── The interface section ──────────────────────────────────────────────────────── *)
 
 (* The files that make up the interface: every module not under a `_`
    segment, and not a test. *)
@@ -277,9 +279,9 @@ let public_modules (pkg : Package.t) =
     else Some (Filename.chop_suffix rel ".wand", full))
     (wand_files pkg.root "")
 
-let current_api (pkg : Package.t) =
+let current_interface (pkg : Package.t) =
   let modules = public_modules pkg in
-  match Runner.api_lines ~root:pkg.root modules with
+  match Runner.interface_lines ~root:pkg.root modules with
   | Ok lines -> lines
   | Error d ->
     let first = List.find_map (fun (_, path) ->
@@ -288,15 +290,15 @@ let current_api (pkg : Package.t) =
       | Ok _ -> None) modules in
     fail (Option.value first ~default:("the package does not typecheck: " ^ Diag.legacy d))
 
-(* The version line and the interface lines of an api section. *)
-let parse_api lines =
+(* The version line and the interface lines of an interface section. *)
+let parse_interface lines =
   let is_version_line l = String.length l > 8 && String.sub l 0 8 = "version " in
   let version = List.find_map (fun l ->
     if is_version_line l then Some (String.trim (String.sub l 8 (String.length l - 8)))
     else None) lines in
   (version, List.filter (fun l -> l <> "" && not (is_version_line l)) lines)
 
-let render_api version lines =
+let render_interface version lines =
   (match version with Some v -> ["version " ^ v; ""] | None -> []) @ lines
 
 let released_versions (pkg : Package.t) =
@@ -329,7 +331,7 @@ let split_once text sep =
   go 0
 
 (* An interface line as (name, what it says), padding taken out. *)
-let api_entry line =
+let interface_entry line =
   let p = "type " in
   let n = String.length p in
   if String.length line > n && String.sub line 0 n = p then
@@ -345,7 +347,7 @@ let api_entry line =
 type change = Removed of string | Changed of string * string | Added of string
 
 let changes ~before ~after =
-  let b = List.map api_entry before and a = List.map api_entry after in
+  let b = List.map interface_entry before and a = List.map interface_entry after in
   List.filter_map (fun (name, old) ->
     match List.assoc_opt name a with
     | None -> Some (Removed old)
@@ -396,18 +398,18 @@ let release ~dir asked =
       (String.split_on_char '\n' status) in
   if dirty <> [] then
     fail (String.concat "\n"
-      ("commit or stash these first, so the tag holds the code the api section describes:"
+      ("commit or stash these first, so the tag holds the code the interface section describes:"
        :: List.map (fun l -> "  " ^ String.trim l) dirty));
-  let lines = current_api pkg in
+  let lines = current_interface pkg in
   let now = List.filter (( <> ) "") lines in
   let version = match last_release pkg with
     | None -> (match asked with Some Major -> "1.0.0" | _ -> "0.1.0")
     | Some last ->
       let before = match git_in pkg ["show"; "v" ^ last ^ ":./" ^ Package.file_name] with
         | (0, text) ->
-          (match (Package.split_sections ~file:Package.file_name text).api with
-           | Some lines -> snd (parse_api lines)
-           | None -> fail (Printf.sprintf "v%s has no api section in wand.pkg to compare with" last))
+          (match (Package.split_sections ~file:Package.file_name text).iface with
+           | Some lines -> snd (parse_interface lines)
+           | None -> fail (Printf.sprintf "v%s has no interface section in wand.pkg to compare with" last))
         | _ -> fail (Printf.sprintf "v%s holds no wand.pkg to compare with" last)
       in
       let found = changes ~before ~after:now in
@@ -430,7 +432,7 @@ let release ~dir asked =
   in
   let sections = Package.read_sections pkg.root in
   Package.write_sections pkg.root
-    { sections with api = Some (render_api (Some version) lines) };
+    { sections with iface = Some (render_interface (Some version) lines) };
   let step args =
     match git_in pkg args with
     | (0, _) -> ()
@@ -443,27 +445,75 @@ let release ~dir asked =
   step ["tag"; "v" ^ version];
   Printf.printf "tagged v%s. Push it: git push origin HEAD v%s\n" version version
 
-let api ~dir ~check =
+let interface ~dir ~check =
   let pkg = package_here dir in
-  let lines = current_api pkg in
+  let lines = current_interface pkg in
   let sections = Package.read_sections pkg.root in
-  let (version, recorded) = match sections.api with
-    | Some l -> parse_api l
+  let (version, recorded) = match sections.iface with
+    | Some l -> parse_interface l
     | None -> (None, [])
   in
   if check then begin
-    if sections.api = None then
-      fail "wand.pkg has no api section. Run `wand p api` and commit it";
+    if sections.iface = None then
+      fail "wand.pkg has no interface section. Run `wand p interface` and commit it";
     let found = changes ~before:recorded ~after:(List.filter (( <> ) "") lines) in
-    if found <> [] || sections.api <> Some (render_api version lines) then
+    if found <> [] || sections.iface <> Some (render_interface version lines) then
       fail (String.concat "\n"
-        ("the api section of wand.pkg does not match the code. Run `wand p api` \
+        ("the interface section of wand.pkg does not match the code. Run `wand p interface` \
           and commit the change:"
          :: List.map show_change found));
     let tag = last_release pkg in
     if version <> tag then
-      fail (Printf.sprintf "the api section says version %s, and the latest release tag is %s"
+      fail (Printf.sprintf "the interface section says version %s, and the latest release tag is %s"
               (Option.value version ~default:"(none)")
               (match tag with Some v -> "v" ^ v | None -> "(none)"))
   end else
-    Package.write_sections pkg.root { sections with api = Some (render_api version lines) }
+    Package.write_sections pkg.root { sections with iface = Some (render_interface version lines) }
+
+(* ── add ───────────────────────────────────────────────────────────────── *)
+
+let add ~dir target ~name =
+  let pkg = package_here dir in
+  let (url, asked) = match String.index_opt target '@' with
+    | Some i -> (String.sub target 0 i, Some (String.sub target (i + 1) (String.length target - i - 1)))
+    | None -> (target, None)
+  in
+  let url = Package.normalize_url url in
+  let (path, versions) = find_module_versions url in
+  let version = match asked with
+    | Some v when List.mem v versions -> v
+    | Some v ->
+      fail (Printf.sprintf "%s has no release %s; it has %s" path v
+              (String.concat ", " versions))
+    | None -> Option.get (latest versions)
+  in
+  let same_path = List.filter (fun (r : Package.require) -> r.path = path) pkg.require in
+  (match List.find_opt (fun (r : Package.require) ->
+     Package.major r.version = Package.major version) same_path with
+   | Some r ->
+     fail (Printf.sprintf
+       "%s is already required at %s. To move it, run `wand p upgrade %s@%s`"
+       path r.version (short path) version)
+   | None -> ());
+  let suggested =
+    Package.last_segment_of path
+    ^ String.map (fun c -> if c = '.' then '_' else c) (Package.major version) in
+  (match name, List.exists (fun (r : Package.require) -> r.name = None) same_path with
+   | None, true ->
+     fail (Printf.sprintf
+       "%s is already required at another major. Give this one a name, and \
+        import it by that name: `wand p add %s --name %s`"
+       path target suggested)
+   | _ -> ());
+  (match name with
+   | Some n ->
+     let valid = n <> "" && n.[0] >= 'a' && n.[0] <= 'z'
+                 && String.for_all Lexer.is_alnum_or_under n in
+     if not valid then
+       fail (Printf.sprintf "a name is lowercase letters, digits and _, such as %s" suggested);
+     if List.exists (fun (r : Package.require) -> r.name = Some n) pkg.require then
+       fail (Printf.sprintf "another `require` entry already has `name = %s`" n)
+   | None -> ());
+  rewrite pkg (pkg.require @ [{ Package.path; version; name; local = None }]);
+  print_endline (Printf.sprintf "added %s %s%s" path version
+                   (match name with Some n -> " as " ^ n | None -> ""))

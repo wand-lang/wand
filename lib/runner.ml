@@ -4260,13 +4260,13 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
     | Module_types.ImportErrorAt _ | Failure _) as e ->
     Error (diag_of_exn e)
 
-(* ── The api section of wand.pkg ──────────────────────────────────────── *)
+(* ── The interface section of wand.pkg ──────────────────────────────────────── *)
 
 (* A package's public interface, one line a type or member, in the
    `wand d --index` format: each module named by its path under the package
    root, its types, then its members. `modules` is (name, absolute path). *)
-let api_lines ~root (modules : (string * string) list) : (string list, Diag.t) result =
-  let alias i = Printf.sprintf "api_module_%d" i in
+let interface_lines ~root (modules : (string * string) list) : (string list, Diag.t) result =
+  let alias i = Printf.sprintf "interface_module_%d" i in
   let src =
     String.concat "\n"
       (List.mapi (fun i (_, path) -> Printf.sprintf "let %s = import %s" (alias i) path) modules)

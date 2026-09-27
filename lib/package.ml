@@ -186,7 +186,7 @@ let parse ~file src =
    each opened by a marker line. The record ends at the first marker. *)
 type sections = {
   record : string;
-  api    : string list option;
+  iface  : string list option;
   sum    : string list option;
 }
 
@@ -198,43 +198,43 @@ let starts_with p l = String.length l >= String.length p && String.sub l 0 (Stri
 
 let split_sections ~file text =
   let lines = String.split_on_char '\n' text in
-  let record = ref [] and api = ref None and sum = ref None in
+  let record = ref [] and iface = ref None and sum = ref None in
   let current = ref `Record in
   List.iteri (fun i line ->
     if starts_with marker line then begin
       let at = Some (Token.point ~file (i + 1) 1 0) in
       let name =
-        if line = marker_line "api" then `Api
+        if line = marker_line "interface" then `Interface
         else if line = marker_line "sum" then `Sum
         else fail at (Printf.sprintf
           "a section of wand.pkg opens with `%s` or `%s`, and wand p writes \
            both; run `wand p tidy` to write them again"
-          (marker_line "api") (marker_line "sum"))
+          (marker_line "interface") (marker_line "sum"))
       in
       (match name, !current with
-       | `Api, `Record -> api := Some []
-       | `Sum, (`Record | `Api) when !sum = None -> sum := Some []
-       | _ -> fail at "wand.pkg holds the record, then the api section, then the sum section, each once");
+       | `Interface, `Record -> iface := Some []
+       | `Sum, (`Record | `Interface) when !sum = None -> sum := Some []
+       | _ -> fail at "wand.pkg holds the record, then the interface section, then the sum section, each once");
       current := name
     end else
       match !current with
       | `Record -> record := line :: !record
-      | `Api -> api := Option.map (fun l -> line :: l) !api
+      | `Interface -> iface := Option.map (fun l -> line :: l) !iface
       | `Sum -> sum := Option.map (fun l -> line :: l) !sum) lines;
   let trim l =
     let rec drop = function "" :: rest -> drop rest | l -> l in
     List.rev (drop (List.rev (drop l)))
   in
   { record = String.concat "\n" (List.rev !record);
-    api = Option.map (fun l -> trim (List.rev l)) !api;
+    iface = Option.map (fun l -> trim (List.rev l)) !iface;
     sum = Option.map (fun l -> trim (List.rev l)) !sum }
 
-let join_sections { record; api; sum } =
+let join_sections { record; iface; sum } =
   let section name = function
     | Some lines -> "\n" ^ marker_line name ^ "\n" ^ String.concat "\n" lines ^ "\n"
     | None -> ""
   in
-  String.trim record ^ "\n" ^ section "api" api ^ section "sum" sum
+  String.trim record ^ "\n" ^ section "interface" iface ^ section "sum" sum
 
 let read_sections root =
   let file = Filename.concat root file_name in

@@ -8,7 +8,7 @@ each released once:
 1. `imports-design.md` (this record): an import binds a name of its own.
 2. `modules-design.md`: `wand.pkg`, URL imports, fetching with `git`,
    the sum section, Minimal Version Selection and `wand p tidy`.
-3. `release-design.md`: the api section, the version bump the types decide,
+3. `release-design.md`: the interface section, the version bump the types decide,
    and `wand p release`.
 
 Package management is built for predictable results over flexibility,
@@ -18,11 +18,12 @@ The commands are one group, `p package`, each with its short form:
 
 | Command | Does | Record |
 |---|---|---|
+| `wand p a` / `add <url>[@version] [--name <name>]` | requires a package, and fetches it | modules |
+| `wand p f` / `interface [--check]` | writes the interface section from the code, or checks it | release |
 | `wand p i` / `init <url>` | starts a package: writes `wand.pkg` | modules |
 | `wand p t` / `tidy` | makes `wand.pkg` match the imports, fetching what they need | modules |
 | `wand p u` / `upgrade [url[@version]]` | moves dependencies to newer versions within their major | modules |
-| `wand p a` / `api [--check]` | writes the api section from the code, or checks it | release |
-| `wand p r` / `release [major\|minor\|patch]` | checks the bump, writes the api section, commits, tags | release |
+| `wand p r` / `release [major\|minor\|patch]` | checks the bump, writes the interface section, commits, tags | release |
 
 `wand h p` lists them. A script or `wand t` that needs a version
 `wand.pkg` names and the cache lacks fetches it, checked against
