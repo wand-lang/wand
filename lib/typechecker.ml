@@ -4476,13 +4476,19 @@ and infer_binop tenv (env : env) op a b : typ =
   | "|>" ->
     let ta = infer tenv env a in
     (match b with
+     (* A value piped into a command runs the command all the same, so it
+        performs what the command does on its own. These two recorded
+        nothing: `x |> $(cat)` in a file whose manifest was `uses {IO}`
+        typechecked, and ran `cat`. *)
      | RunCmd (e, _) ->
        unify_expected ~expected:TString ~got:(infer tenv env e);
        unify_expected ~expected:TString ~got:ta;
+       performs (Effect_set.of_list [Effect_set.Shell; Effect_set.Raise]);
        TString
      | RunQuery (e, _) ->
        unify_expected ~expected:TString ~got:(infer tenv env e);
        unify_expected ~expected:TString ~got:ta;
+       performs (Effect_set.single Effect_set.Shell);
        TName "ShellResult"
      | _ ->
        (* `xs |> List.map (fn p -> p.host)` has the same problem the spine

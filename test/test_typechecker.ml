@@ -1873,6 +1873,20 @@ let test_manifest_too_narrow () =
     "uses {FS.Write}\nlet publish () = $(rsync -a . host:/srv)\npublish"
     "uses {Shell(rsync)}"
 
+(* A value piped into a command runs the command. The pipe recorded no
+   effect, so a file whose manifest said `uses {IO}` typechecked and ran
+   `cat`: the one line meant to say what a file can reach said nothing. *)
+let test_a_piped_command_needs_shell () =
+  manifest_error "a value piped into $()"
+    "uses {IO}\nimport IO\nlet s = \"x\" |> $(cat)\nIO.println s"
+    "uses {IO, Shell(cat)}";
+  manifest_error "and into $?()"
+    "uses {IO}\nimport IO\nlet r = \"x\" |> $?(cat)\nIO.println r.stdout"
+    "uses {IO, Shell(cat)}";
+  manifest_error "inside a function, reached when it is called"
+    "uses {}\nlet send! doc = doc |> $(kubectl apply -f -)\nsend!"
+    "Shell(kubectl)"
+
 (* A file that answers an effect in full does not perform it, and its
    manifest should not have to say it does. The label survived in the
    argument's row -- a demand on the caller -- and the manifest counted
@@ -2295,6 +2309,7 @@ let () =
     ];
     "manifests", [
       Alcotest.test_case "too narrow is an error"  `Quick test_manifest_too_narrow;
+      Alcotest.test_case "a piped command needs Shell" `Quick test_a_piped_command_needs_shell;
       Alcotest.test_case "shell binaries"          `Quick test_manifest_shell_binaries;
       Alcotest.test_case "a handled effect leaves"  `Quick test_a_handled_effect_leaves_the_manifest;
       Alcotest.test_case "names the binding"       `Quick test_manifest_names_the_binding;
