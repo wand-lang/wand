@@ -218,3 +218,7 @@
 (test
  (name test_sched)
  (libraries wand alcotest unix))
+
+(test
+ (name test_package)
+ (libraries wand alcotest unix))

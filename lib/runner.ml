@@ -16,6 +16,7 @@ let diag_of_exn = function
      like a type error rather than like an internal failure. *)
   | Module_types.ImportError msg       -> Diag.error ~code:"E-IMPORT" msg
   | Module_types.ImportErrorAt (loc, msg) -> Diag.error ~code:"E-IMPORT" ~loc msg
+  | Package.Error (loc, msg)           -> Diag.error ~code:"E-PACKAGE" ?loc msg
   | Failure msg                        -> Diag.error ~code:"E-FAIL" msg
   | e -> raise e
 
@@ -3326,6 +3327,7 @@ let run_file ?(mode = Normal) path =
        because it is the file the reader is looking at; a position from
        anywhere else says where it is. *)
     Evaluator.entry_file := full;
+    ignore (Package.of_file full);
     let tokens   = Lexer.tokenize ~file:full src in
     let prog     = Parser.parse_program tokens in
     let base_dir = Filename.dirname full in
@@ -3334,7 +3336,7 @@ let run_file ?(mode = Normal) path =
   | Sys_error msg         -> Error ("cannot open file: " ^ msg)
   | EvalError msg -> Error ("eval error: " ^ Evaluator.stamp_loc msg)
   | (Lexer.LexError _ | Parser.ParseError _ | Module_types.ImportError _
-    | Module_types.ImportErrorAt _ | Failure _) as e ->
+    | Module_types.ImportErrorAt _ | Package.Error _ | Failure _) as e ->
     Error (legacy_of_exn e)
 
 (* ── `wand s` ──────────────────────────────────────────────────────────── *)
@@ -4092,6 +4094,7 @@ type source_check = {
 let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
   let full = entry_path path in
   try
+    ignore (Package.of_file full);
     let tokens   = Lexer.tokenize src in
     let (prog, item_locs) = Parser.parse_program_with_locs tokens in
     let base_dir = Filename.dirname full in
@@ -4155,7 +4158,7 @@ let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
   with
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _
-    | Module_types.ImportErrorAt _ | Failure _) as e ->
+    | Module_types.ImportErrorAt _ | Package.Error _ | Failure _) as e ->
     Error (diag_of_exn e)
 
 let typecheck_file path : (source_check, Diag.t) result =

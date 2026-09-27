@@ -85,6 +85,8 @@ let legacy d =
     | _         -> ""
   in
   let pos = match d.loc with
+    | Some l when d.code = "E-PACKAGE" && l.Token.file <> "" ->
+      Printf.sprintf "%s:%d:%d: " l.Token.file l.Token.line l.Token.col
     | Some l -> Printf.sprintf "%d:%d: " l.Token.line l.Token.col
     | None   -> ""
   in
