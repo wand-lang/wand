@@ -654,6 +654,18 @@ let test_annotation_mismatch_has_a_position () =
     "1\nlet x : Int = \"s\"\nx"
     "2:15: expected Int, got String"
 
+(* A message names what to write. `++` on lists and a two-list map by its
+   name in another language each got an answer that was true and did not
+   say what joins or pairs two lists. *)
+let test_list_joins_and_pairs_say_how () =
+  err_contains "++ on lists"
+    "[1] ++ [2]"
+    "two lists are joined with 'List.concat xs ys'";
+  err_contains "map2"
+    "import List\nList.map2 (fn a b -> a + b) [1] [2]"
+    "'List.zip xs ys |> List.map (fn (x, y) -> ...)'";
+  ok "++ still joins strings" "\"a\" ++ \"b\"" "ab"
+
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
     {|type Pod (name: String, restarts: Int)
@@ -2359,6 +2371,8 @@ let () =
         test_builtin_constructor_names_are_taken;
       Alcotest.test_case "an annotation mismatch has a position" `Quick
         test_annotation_mismatch_has_a_position;
+      Alcotest.test_case "list joins and pairs say how" `Quick
+        test_list_joins_and_pairs_say_how;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];

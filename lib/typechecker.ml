@@ -1165,6 +1165,11 @@ let foreign_member_hint ns member =
   match ns, member with
   | "List", "iter" -> Some "use List.each"
   | "List", "iteri" -> Some "use List.each, with List.indexed for positions"
+  (* The spelling guess answered 'map', which takes one list: the call it
+     suggested could not be written with the two lists in hand. *)
+  | "List", ("map2" | "map_2" | "zip_with" | "map_with" | "iter2") ->
+    Some "pair the lists first: \
+          'List.zip xs ys |> List.map (fn (x, y) -> ...)'"
   | "String", "split_on_char" -> Some "use String.split -- the separator is a String"
   | "String", "sub" -> Some "use String.slice"
   | "FS", "read_lines" -> Some "FS.read_file! reads the whole file; \
@@ -4314,8 +4319,20 @@ and infer_binop tenv (env : env) op a b : typ =
     unify_expected ~expected:TInt ~got:(infer tenv env b);
     TInt
   | "++" ->
-    unify_expected ~expected:TString ~got:(infer tenv env a);
-    unify_expected ~expected:TString ~got:(infer tenv env b);
+    (* `++` joins strings only. Given a list it said "expected String, got
+       List Int", which is true and does not say what joins two lists. *)
+    let operand e =
+      let t = infer tenv env e in
+      (match repr t with
+       | TList _ ->
+         raise (TypeError
+           "'++' joins two strings; two lists are joined with \
+            'List.concat xs ys'")
+       | _ -> ());
+      unify_expected ~expected:TString ~got:t
+    in
+    operand a;
+    operand b;
     TString
   | "::" ->
     let elem_t = fresh () in
