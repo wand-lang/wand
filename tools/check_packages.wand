@@ -20,7 +20,7 @@ import String
 --
 -- The fixture has three releases, made by `wand p release`: v0.1.0, v0.1.1,
 -- which adds `bye`, and v0.2.0, which changes `greet`. Its root module is
--- `pkg-fixture`, which is not a name, so it is imported with a `let`.
+-- `pkg-fixture`, which a bare import binds as `pkg_fixture`.
 
 -- The binary to check with -- the one this build just produced, not
 -- whatever `wand` is on the PATH.
@@ -64,7 +64,7 @@ let main! () =
     write!
       app
       "main.wand"
-      "let fixture = import %{fixture}\nimport %{fixture}/words\n\"\%{fixture.version} \%{words.shout (fixture.greet \"x\")}\"\n";
+      "import %{fixture}\nimport %{fixture}/words\n\"\%{pkg_fixture.version} \%{words.shout (pkg_fixture.greet \"x\")}\"\n";
     expect app "a URL import and one below it" "main.wand" "0.1.0 HELLO X";
     refused
       app
@@ -81,7 +81,7 @@ let main! () =
     write!
       app
       "both.wand"
-      "let fixture = import %{fixture}\nimport fixture2\n\"\%{fixture.version} \%{fixture2.greet \"hi\" \"x\"}\"\n";
+      "import %{fixture}\nimport fixture2\n\"\%{pkg_fixture.version} \%{fixture2.greet \"hi\" \"x\"}\"\n";
     expect app "two majors side by side" "both.wand" "0.1.1 hi x";
     write! app "private.wand" "import %{fixture}/_private/secret\nsecret.value\n";
     refused app "a private module" "private.wand" "is private to https://%{fixture}";

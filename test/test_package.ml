@@ -79,20 +79,21 @@ let test_the_wand_range () =
     Alcotest.(check bool) (range ^ " accepts " ^ running) true (Package.accepts range running) in
   let no range running =
     Alcotest.(check bool) (range ^ " refuses " ^ running) false (Package.accepts range running) in
-  yes "0.4.0" "0.4.0"; yes "0.4.0" "0.4.9"; no "0.4.0" "0.5.0"; no "0.4.2" "0.4.1";
+  yes "0.4.0" "0.4.0"; yes "0.4.0" "0.4.9"; yes "0.4.0" "0.86.0"; no "0.4.0" "1.0.0";
+  no "0.4.2" "0.4.1";
   yes "1.2.0" "1.9.3"; no "1.2.0" "2.0.0"; no "1.2.0" "1.1.0"
 
 let test_found_above_the_file () =
   let root = fresh_dir () in
   let sub = Filename.concat root "lib" in
   Unix.mkdir sub 0o755;
-  write (Filename.concat root "wand.pkg") "{ package = https://x.dev/a, wand = 0.4.0 }";
+  write (Filename.concat root "wand.pkg") "{ package = https://x.dev/a, wand = 99.0.0 }";
   let file = Filename.concat sub "main.wand" in
   write file "1 + 1";
   (match Runner.run_file file with
    | Error e ->
      Alcotest.(check bool) "names the range" true
-       (contains e "needs wand 0.4.0 or later, before 0.5.0");
+       (contains e "needs wand 99.0.0 or later, before 100.0.0");
      Alcotest.(check bool) "names the file" true (contains e "wand.pkg:1:")
    | Ok _ -> Alcotest.fail "expected the range to refuse this wand");
   write (Filename.concat root "wand.pkg")

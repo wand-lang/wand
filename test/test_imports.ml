@@ -63,7 +63,10 @@ let test_bare_user_import_binds () =
 
 let test_bare_import_needs_a_name () =
   with_named "json-parser" {|let public = 1|} (fun path ->
-    err_says "not a name" "let json_parser = import"
+    Alcotest.(check (result string string)) "a hyphen becomes _" (Ok "1")
+      (run (Printf.sprintf "import %s\njson_parser.public" path)));
+  with_named "2fast" {|let public = 1|} (fun path ->
+    err_says "not a name" "Write `let fast = import"
       (Printf.sprintf "import %s\n1" path))
 
 let test_two_imports_one_name () =

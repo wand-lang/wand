@@ -10,8 +10,8 @@ let fail msg = raise (ParseError (None, msg))
 let fail_at loc msg = raise (ParseError (Some loc, msg))
 
 (* The name a bare import binds: a standard library module's own, or the
-   last segment of a path or URL, without `.wand`. None when that is not a
-   name. *)
+   last segment of a path or URL, without `.wand` and with each `-` made a
+   `_`. None when that is still not a name. *)
 let import_name kind =
   let segment = match kind with
     | Ast.StdlibModule n | Ast.ModuleAlias n -> `Name n
@@ -28,6 +28,7 @@ let import_name kind =
       if Filename.check_suffix base ".wand" then Filename.chop_suffix base ".wand"
       else base
     in
+    let base = String.map (fun c -> if c = '-' then '_' else c) base in
     if base <> "" && (Lexer.is_alpha base.[0] || base.[0] = '_')
        && String.for_all Lexer.is_alnum_or_under base
        && (match Lexer.keyword_or_ident base with

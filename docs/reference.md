@@ -3483,13 +3483,15 @@ The file extension is optional. `./utils` and `./utils.wand` mean the
 same, and `.wand` is not part of the name. A private module needs no `let`:
 `import ./_internal` binds `_internal`.
 
-When the last segment is not a name, as in `./json-parser` or `../`, write
-the `let` form. The error gives the line to write:
+A `-` in the segment becomes `_`, so `import ./json-parser` binds
+`json_parser`, and `import github.com/wand-lang/pkg-fixture` binds
+`pkg_fixture`. When the segment is still not a name, as in `../` or
+`./2fast`, write the `let` form. The error gives the line to write:
 
 ```ocaml
-import ./json-parser
--- error: `import ./json-parser` has no name to bind, because `json-parser`
---        is not a name. Write `let json_parser = import ./json-parser`
+import ./2fast
+-- error: `import ./2fast` has no name to bind, because `2fast`
+--        is not a name. Write `let fast = import ./2fast`
 ```
 
 Access members via dot notation:
@@ -3709,10 +3711,10 @@ file a package needs. Its top is a record that you can edit; below it,
 }
 ```
 
-`wand` is the range of wand versions the package works with. `0.85.0`
-accepts 0.85.0 up to, not including, 0.86.0, and `1.2.0` accepts 1.2.0 up to
-2.0.0. A run or a check of a file in the package refuses a wand outside the
-range, and the error names the field to change.
+`wand` is the oldest wand the package works with. A newer wand runs it, up
+to the next major: `0.85.0` accepts 0.85.0 up to, not including, 1.0.0, and
+`1.2.0` accepts 1.2.0 up to 2.0.0. A run or a check of a file in the package
+refuses a wand outside that range, and the error names the field to change.
 
 ### Importing a module by URL
 

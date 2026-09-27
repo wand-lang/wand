@@ -259,11 +259,11 @@ let read root =
   let (url, wand, wand_at, require) = parse ~file sections.record in
   { root; file; url; wand; wand_at; require }
 
-(* The versions a `wand` field accepts: from itself up to the next major,
-   where before 1.0 each minor counts as a major. *)
+(* The versions a `wand` field accepts: from itself up to the next major.
+   Before 1.0 that is 1.0.0, so a new minor of wand refuses no package. *)
 let upper_bound v =
-  let major = Semver.version_number v 0 and minor = Semver.version_number v 1 in
-  if major = 0 then Printf.sprintf "0.%d.0" (minor + 1)
+  let major = Semver.version_number v 0 in
+  if major = 0 then "1.0.0"
   else Printf.sprintf "%d.0.0" (major + 1)
 
 let accepts range running =
