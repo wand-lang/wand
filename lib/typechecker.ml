@@ -2698,6 +2698,30 @@ let rec unwrap_ctor_type t =
     (arg :: args, result)
   | _ -> ([], t)
 
+(* Two lines meant as two statements, read as one expression. Where the
+   next line is indented under the first -- in a `match` arm, say -- it
+   continues it, so `IO.println "a"` on one line and `IO.println "b"` on the
+   next apply the first line's Unit to the second. The message was "expected
+   Unit, got ('a -> Unit ! {IO}) -> 'b", which names two types and not the
+   brackets that were missing. *)
+let sequence_read_as_call tf (_f : expr) (_x : expr) =
+  let not_a_function =
+    match repr tf with
+    | TFun _ | TVar _ -> false
+    | _ -> true
+  in
+  (* The argument has no location of its own; the application does, and it
+     runs over more than one line. *)
+  match !cur_loc with
+  | Some l when not_a_function && l.Token.end_line > l.Token.line ->
+    raise (TypeErrorAt (l, Printf.sprintf
+      "lines %d to %d are read as one expression: line %d gives %s, not a \
+       function, and what follows it is read as its argument. To run the \
+       lines one after another, write them in brackets with ';' between: \
+       ( ...; ... )"
+      l.Token.line l.Token.end_line l.Token.line (string_of_typ tf)))
+  | _ -> ()
+
 (* Whether `m` is a type in scope with constructors, so that `m.Ctor` names
    one of them. A module of the same name is asked first, by the callers. *)
 let is_ctor_type tenv m =
@@ -3360,6 +3384,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        tr
      | _ ->
        let tx = infer tenv env x in
+       sequence_read_as_call tf f x;
        let tr = fresh () in
        let latent = Effect_set.unknown () in
        unify_expected ~expected:tf ~got:(TFun (tx, tr, latent));

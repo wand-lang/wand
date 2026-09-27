@@ -702,6 +702,20 @@ let test_constructors_qualified_by_type () =
     (decls ^ "let f x = match x with\n  | Always -> 1\n  | _ -> 2\n1")
     "'Always' is a constructor of both"
 
+(* Two lines meant as two statements, where the second is indented under
+   the first and so continues it. The message named two types; it says now
+   that the lines were read as one expression, and what to write. *)
+let test_lines_read_as_one_expression () =
+  err_contains "two statements in a match arm"
+    "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
+    "lines 4 to 5 are read as one expression: line 4 gives Unit, not a function";
+  err_contains "and it says what to write"
+    "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
+    "write them in brackets with ';' between";
+  ok "a call written over several lines is still a call"
+    "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"
+    "[2, 3]"
+
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
     {|type Pod (name: String, restarts: Int)
@@ -2432,6 +2446,8 @@ let () =
         test_list_joins_and_pairs_say_how;
       Alcotest.test_case "constructors qualified by type" `Quick
         test_constructors_qualified_by_type;
+      Alcotest.test_case "lines read as one expression" `Quick
+        test_lines_read_as_one_expression;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];
