@@ -36,6 +36,7 @@ For what wand is and why, see the [README](../README.md).
 - [Type inference](#type-inference)
 - [Type annotations](#type-annotations)
 - [Imports](#imports)
+- [Packages](#packages)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
   - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
@@ -3680,6 +3681,146 @@ reports them.
 
 A top-level import is not a member of the module that writes it. Another file
 that imports this one does not see the names it imported.
+
+---
+
+## Packages
+
+A package is the directory tree under a `wand.mod`. A module that another
+package can use is a package whose URL is its name. There is no central
+registry: the URL is where the module is, and `git` fetches it.
+
+### Starting a package
+
+```sh
+wand p init https://github.com/you/tool
+```
+
+This writes `wand.mod` in the current directory:
+
+```ocaml
+{ module  = https://github.com/you/tool
+, wand    = 0.85.0
+}
+```
+
+`wand` is the range of wand versions the package works with. `0.85.0`
+accepts 0.85.0 up to, not including, 0.86.0, and `1.2.0` accepts 1.2.0 up to
+2.0.0. A run or a check of a file in the package refuses a wand outside the
+range, and the error names the field to change.
+
+### Importing a module by URL
+
+```ocaml
+import https://github.com/mjstahl/json          -- json.wand at the module's root
+import https://github.com/mjstahl/json/decode   -- decode.wand in the module
+```
+
+A URL import binds its last segment, as a path import does. The import line
+never holds a version; `wand.mod` does. Write the import, then run:
+
+```sh
+wand p tidy
+```
+
+`tidy` finds the module each URL import names, adds it to `require` at its
+latest version, removes an entry that no import uses, fetches what the build
+needs, and writes `wand.sum`. With nothing to change, it prints nothing.
+
+```ocaml
+{ module  = https://github.com/you/tool
+, wand    = 0.85.0
+, require =
+    [ { path = https://github.com/mjstahl/json, version = 1.4.0 }
+    ]
+}
+```
+
+The longest `require` path that is a prefix of the import's URL, segment by
+segment, names the module. The rest of the URL names a file in it, and the
+module's root file is named for the last segment of its path.
+
+An import that `wand.mod` does not name is an error that tells you to run
+`wand p tidy`. Only the `wand p` commands change `wand.mod`. You can edit it
+by hand to pin a version or to use a local copy. The file is data: literals,
+records and lists, with no code.
+
+### Fetching and wand.sum
+
+A version is a git tag: `v1.4.0` is version `1.4.0`. A run or `wand t` that
+needs a version the cache does not have fetches it: a shallow clone of the
+tag into `~/.cache/wand/mod/<host>/<path>@<version>` (`$XDG_CACHE_HOME` moves
+it). The copy has no `.git`, and its files are read-only. `git` does the
+HTTPS and uses your git credentials. Fetching a module runs none of its code.
+
+`wand.sum` holds one line for each version the build reads, with the hash of
+its files. Commit it with `wand.mod`. A version that does not match its line
+is an error, and wand does not fetch it again. A version with no line is an
+error that tells you to run `wand p tidy`.
+
+### Choosing versions
+
+Each package lists the versions it needs. The build reads every `require`
+list it reaches and uses, for each module, the highest version that any of
+them requires. This is the lowest version that satisfies all of them
+(Minimal Version Selection). A newer version is used only when a `wand.mod`
+asks for it:
+
+```sh
+wand p upgrade                                      # every dependency, within its major
+wand p upgrade https://github.com/mjstahl/json      # one
+wand p upgrade https://github.com/mjstahl/json@1.4.0  # one, to that version
+```
+
+The package that the run or the check starts from decides two things for the
+whole build: its `local` fields, and its `wand.sum`.
+
+### Major versions
+
+Each major version of a module is a different module, so two majors can be
+in one build. Before 1.0, each minor version counts as a major. A `Value`
+from json 1.x and a `Value` from json 2.x are different types. When two types
+print the same, the error names the module and version of each:
+
+```
+expected a `Value` from https://github.com/mjstahl/json 2.1.0, got a `Value` from https://github.com/mjstahl/json 1.4.0
+```
+
+`wand p upgrade` does not move a dependency to a new major. To use two majors
+in one package, give one of them a `name`, and import it by that name:
+
+```ocaml
+{ require =
+    [ { path = https://github.com/mjstahl/json, version = 1.4.0 }
+    , { name = json2, path = https://github.com/mjstahl/json, version = 2.1.0 }
+    ]
+}
+```
+
+```ocaml
+import https://github.com/mjstahl/json   -- json, the 1.x entry
+import json2                             -- the 2.x entry
+```
+
+A name is lowercase, so `import json2` is never a standard library module.
+
+### A local copy
+
+To work on a dependency beside the package that uses it, add a `local` field
+to its entry:
+
+```ocaml
+{ path = https://github.com/mjstahl/json, version = 1.4.0, local = ../json }
+```
+
+The build reads that directory in place of the cache, and `wand.sum` does not
+check it.
+
+### Private modules
+
+A leading `_` is private at every level. A module file (`_parser.wand`) or a
+directory (`_internal/`) whose name starts with `_` is private to its package.
+Another package that imports it, by URL or by path, gets an error.
 
 ---
 

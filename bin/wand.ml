@@ -20,6 +20,7 @@ let usage () =
   print_endline "  h   help [cmd]              Show this help, or help for a command";
   print_endline "  i   interactive             Start an interactive session";
   print_endline "  l   lsp                     Start the language server (LSP over stdio)";
+  print_endline "  p   package <cmd>           Manage this package's wand.mod and wand.sum";
   print_endline "  s   test [<file>|<dir>]...  Run test_*.wand files (default: search from here)";
   print_endline "  t   type [<file>|<dir>]...  Typecheck files without running them";
   print_endline "  v   version                 Print the version and exit";
@@ -44,6 +45,22 @@ let usage_for sub =
     print_endline "";
     print_endline "Print the version and exit. Written bare, as `wand 0.1.0`,";
     print_endline "so an installer can compare it to what it meant to install."
+  | "p" | "package" ->
+    print_endline "Usage: wand p <command> [args]";
+    print_endline "";
+    print_endline "Manage the package this directory is in: the tree under";
+    print_endline "the nearest wand.mod.";
+    print_endline "";
+    print_endline "Commands:";
+    print_endline "  i   init <url>              Start a package here: write wand.mod";
+    print_endline "  t   tidy                    Make wand.mod and wand.sum match the imports,";
+    print_endline "                              and fetch what they need";
+    print_endline "  u   upgrade [url[@version]] Move dependencies to their newest version";
+    print_endline "                              within their major, or one to a version";
+    print_endline "";
+    print_endline "Only these commands change wand.mod. A script or `wand t`";
+    print_endline "fetches a version wand.mod names and the cache lacks, and";
+    print_endline "checks it against wand.sum."
   | "l" | "lsp" ->
     print_endline "Usage: wand l";
     print_endline "";
@@ -484,6 +501,7 @@ let no_such_file ?hint path =
    when a command was actually named. *)
 let is_a_command = function
   | "h" | "help" | "i" | "interactive" | "l" | "lsp" | "t" | "type"
+  | "p" | "package"
   | "d" | "doc" | "f" | "fmt" | "s" | "test"
   | "v" | "version" -> true
   | _ -> false
@@ -629,6 +647,32 @@ let main () =
       Wand.Repl.run ~base_dir:(Sys.getcwd ()) ~loads ()
     | "l" | "lsp" ->
       exit (Wand.Lsp.serve stdin stdout)
+    | "p" | "package" ->
+      let dir = Sys.getcwd () in
+      let run f =
+        try f () with
+        | Wand.Package_cmd.Failed msg | Wand.Package.Unresolved msg ->
+          Printf.eprintf "Error: %s\n" msg; exit 1
+        | Wand.Package.Error (loc, msg) ->
+          Printf.eprintf "Error: %s%s\n"
+            (match loc with
+             | Some l -> Printf.sprintf "%s:%d:%d: " l.Wand.Token.file l.line l.col
+             | None -> "")
+            msg;
+          exit 1
+      in
+      (match rest with
+       | [] -> usage_for "p"
+       | ("i" | "init") :: [url] -> run (fun () -> Wand.Package_cmd.init ~dir url)
+       | ("i" | "init") :: _ ->
+         Printf.eprintf "Error: expected the module's URL: wand p init <url>\n"; exit 1
+       | ["t"] | ["tidy"] -> run (fun () -> Wand.Package_cmd.tidy ~dir)
+       | ["u"] | ["upgrade"] -> run (fun () -> Wand.Package_cmd.upgrade ~dir None)
+       | ("u" | "upgrade") :: [target] ->
+         run (fun () -> Wand.Package_cmd.upgrade ~dir (Some target))
+       | cmd :: _ ->
+         Printf.eprintf "Error: no package command %s\nRun 'wand h p' for usage.\n" cmd;
+         exit 1)
     | "t" | "type" ->
       let (strict, json, fix, effects, rest) = parse_lint_flags rest in
       (* `--effects` answers one question about a file, so it does not also

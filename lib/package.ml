@@ -302,6 +302,7 @@ let check_private_path ~base_dir file =
 
 let run_git args =
   let log = Filename.temp_file "wand-git" ".log" in
+  let args = "-C" :: Filename.get_temp_dir_name () :: args in
   let code = Sys.command (Filename.quote_command "git" args ~stdout:log ~stderr:log) in
   let out = try In_channel.with_open_text log In_channel.input_all with Sys_error _ -> "" in
   (try Sys.remove log with Sys_error _ -> ());
@@ -397,10 +398,19 @@ let write_sums pkg sums =
     List.iter (fun ((url, version), hash) ->
       Printf.fprintf oc "%s %s %s\n" url version hash) sums)
 
+(* Set while `wand p tidy` or `upgrade` runs: every version checked is
+   collected here, and a version wand.sum has no line for is recorded rather
+   than refused. A mismatch is refused either way. *)
+let recording : ((string * string) * string) list ref option ref = ref None
+
 let verify pkg r =
   let h = cached_hash r in
+  (match !recording with
+   | Some seen -> seen := ((r.path, r.version), h) :: !seen
+   | None -> ());
   match List.assoc_opt (r.path, r.version) (read_sums pkg) with
   | Some want when want = h -> ()
+  | None when !recording <> None -> ()
   | Some want ->
     raise (Unresolved (Printf.sprintf
       "%s %s does not match wand.sum: wand.sum has %s, and the copy in %s \

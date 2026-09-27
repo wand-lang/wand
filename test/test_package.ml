@@ -279,6 +279,52 @@ let test_two_majors_in_a_type_error () =
     (run_in app "main.wand"
        "import https://x.dev/me/json\nimport json2\nlet v = json.make 1\njson2.get v")
 
+let read_file path = In_channel.with_open_text path In_channel.input_all
+
+let test_init_tidy_upgrade () =
+  with_repos [
+    ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5")]);
+    ("text", [("1.0.0", [
+       ("wand.mod", Printf.sprintf
+          "{ module = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0 } ] }"
+          Version.value);
+       ("text.wand", "import https://x.dev/me/json\nlet v = json.version") ])]) ]
+    (fun ~app ->
+      Package_cmd.init ~dir:app "https://x.dev/me/app";
+      Alcotest.(check bool) "init refuses a second wand.mod" true
+        (match Package_cmd.init ~dir:app "https://x.dev/me/app" with
+         | exception Package_cmd.Failed _ -> true
+         | () -> false);
+      let main = "import https://x.dev/me/json\nimport https://x.dev/me/text\n\"%{json.version} %{text.v}\"" in
+      write (Filename.concat app "main.wand") main;
+      Package_cmd.tidy ~dir:app;
+      let wmod = read_file (Filename.concat app "wand.mod") in
+      Alcotest.(check bool) "json at its latest" true
+        (contains wmod "{ path = https://x.dev/me/json, version = 1.5.0 }");
+      Alcotest.(check bool) "text added" true
+        (contains wmod "{ path = https://x.dev/me/text, version = 1.0.0 }");
+      let sums = read_file (Filename.concat app "wand.sum") in
+      Alcotest.(check int) "a line for every version the build reads" 3
+        (List.length (List.filter (( <> ) "") (String.split_on_char '\n' sums)));
+      Alcotest.(check (result string string)) "runs" (Ok "1.5 1.5")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      Package_cmd.upgrade ~dir:app (Some "https://x.dev/me/json@1.4.0");
+      Alcotest.(check (result string string)) "pinned" (Ok "1.4 1.4")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      Package_cmd.upgrade ~dir:app None;
+      Alcotest.(check (result string string)) "upgraded" (Ok "1.5 1.5")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      Alcotest.(check bool) "a new major is refused" true
+        (match Package_cmd.upgrade ~dir:app (Some "https://x.dev/me/json@2.0.0") with
+         | exception Package_cmd.Failed msg -> contains msg "different major"
+         | () -> false);
+      write (Filename.concat app "main.wand") "import https://x.dev/me/json\njson.version";
+      Package_cmd.tidy ~dir:app;
+      Alcotest.(check bool) "text removed" false
+        (contains (read_file (Filename.concat app "wand.mod")) "text");
+      Alcotest.(check bool) "and its lines" false
+        (contains (read_file (Filename.concat app "wand.sum")) "text"))
+
 let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
 
 let () =
@@ -306,5 +352,7 @@ let () =
       Alcotest.test_case "two majors need a name" `Quick test_two_majors_need_a_name;
       Alcotest.test_case "an unknown alias"   `Quick test_unknown_alias;
       Alcotest.test_case "two majors in a type error" `Quick test_two_majors_in_a_type_error;
+      Alcotest.test_case "init, tidy, upgrade" `Quick
+        (fun () -> if git_present then test_init_tidy_upgrade () else Alcotest.skip ());
     ];
   ]

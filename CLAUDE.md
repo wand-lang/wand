@@ -15,7 +15,7 @@ examples. Most tasks need only one part.
 
 ### Layout
 
-- `bin/wand.ml` — the CLI: dispatch for `t`/`i`/`d`/`v`/`f`/`s`, running a script by path or `-e` by expression, flags like `--dry-run` and `--trace`.
+- `bin/wand.ml` — the CLI: dispatch for `t`/`i`/`d`/`v`/`f`/`s`/`p`, running a script by path or `-e` by expression, flags like `--dry-run` and `--trace`.
 - `lib/` — the pipeline, one stage per module:
   - `token.ml`, `lexer.ml` — tokens and lexing, including domain literals (paths, globs, durations, sizes) and the string/command interpolation forms.
   - `parser.ml`, `ast.ml` — recursive-descent parser. A newline ends a statement unless the line below is indented past it, or opens with an operator; a bracket the statement opened suspends the rule until it closes. `stmt_col`/`stmt_depth` carry that anchor, and `clause_name` is what lets a function's next equation end the body above it.
@@ -23,6 +23,7 @@ examples. Most tasks need only one part.
   - `evaluator.ml` — tree-walking interpreter; effect handlers, `Par`, signals, shell execution.
   - `lint.ml`, `lint_rules.ml` — the `V-*`/`A-*` rules `wand t` reports.
   - `formatter.ml` — `wand f`; comments are never dropped or restyled.
+  - `package.ml` — `wand.mod` and `wand.sum`: reading, the `wand` range, URL imports, fetching with `git`, Minimal Version Selection. `package_cmd.ml` — `wand p init`, `tidy`, `upgrade`.
   - `runner.ml` — the public API (`Runner.run_string`, `typecheck_file`, sessions); `repl.ml`; `compile_cache.ml`; `module_types.ml`; `util.ml`.
 - `stdlib/*.wand` — the standard library, written in wand, embedded into the binary at build time by `tools/gen_stdlib_embed.ml`.
 - `test/` — Alcotest suites (`test_*.ml`, one per area) plus `test/wand/*.wand`, which are wand-language tests run by `wand s`.
