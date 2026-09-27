@@ -2974,15 +2974,23 @@ let rec net_accept_impl = function
        socket_wait ~write:false fd; net_accept_impl l)
   | _ -> raise (EvalError "Net.listen: expected a listener")
 
-let conn_chunk = Bytes.create 65536
+(* One read buffer per domain. A single buffer for the process was safe only
+   while every socket read ran on one domain: two reads on two domains would
+   fill it at once, and each connection would take the other's bytes into its
+   own `c_buf`, with no error to say so. *)
+let conn_chunk : Bytes.t Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> Bytes.create 65536)
 
-(* Read more into the buffer; false once the other end has finished. *)
+(* Read more into the buffer; false once the other end has finished. The
+   buffer is fetched on each attempt, so a wait in `socket_wait` never holds
+   it across a yield. *)
 let rec conn_fill c =
   if c.c_eof || c.c_closed then false
   else
-    match Unix.read c.c_fd conn_chunk 0 (Bytes.length conn_chunk) with
+    let chunk = Domain.DLS.get conn_chunk in
+    match Unix.read c.c_fd chunk 0 (Bytes.length chunk) with
     | 0 -> c.c_eof <- true; false
-    | n -> Buffer.add_subbytes c.c_buf conn_chunk 0 n; true
+    | n -> Buffer.add_subbytes c.c_buf chunk 0 n; true
     | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
       socket_wait ~write:false c.c_fd; conn_fill c
     | exception Unix.Unix_error (Unix.EINTR, _, _) -> conn_fill c
