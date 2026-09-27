@@ -1,4 +1,4 @@
-(* A package: the directory tree under a `wand.mod`, and what that file says. *)
+(* A package: the directory tree under a `wand.pkg`, and what that file says. *)
 
 type require = {
   path    : string;
@@ -10,7 +10,7 @@ type require = {
 type t = {
   root    : string;
   file    : string;
-  modul   : string;
+  url   : string;
   wand    : string;
   wand_at : Token.loc option;
   require : require list;
@@ -18,7 +18,7 @@ type t = {
 
 exception Error of Token.loc option * string
 
-let file_name = "wand.mod"
+let file_name = "wand.pkg"
 
 let fail loc msg = raise (Error (loc, msg))
 
@@ -65,11 +65,17 @@ let field ~what ~at kvs k =
   | Some v -> v
   | None -> fail at (Printf.sprintf "%s needs a `%s` field" what k)
 
+(* A URL that leaves out its scheme means https. *)
+let normalize_url u =
+  match String.index_opt u ':' with
+  | Some i when i + 2 < String.length u && String.sub u i 3 = "://" -> u
+  | _ -> "https://" ^ u
+
 let as_url ~what ~at k v = match Ast.strip_located v with
-  | Ast.URL (u, _) -> u
+  | Ast.URL (u, _) -> normalize_url u
   | _ ->
     fail (match located v with Some l -> Some l | None -> at)
-      (Printf.sprintf "`%s` in %s is a URL, such as https://github.com/you/%s, not %s"
+      (Printf.sprintf "`%s` in %s is a URL, such as github.com/you/%s, not %s"
          k what "pkg" (show_kind v))
 
 let as_version ~what ~at k v = match Ast.strip_located v with
@@ -116,7 +122,7 @@ let key_loc tokens key =
   go 0
 
 let parse ~file src =
-  let tokens = Lexer.tokenize ~file src in
+  let tokens = Lexer.tokenize ~file ~bare_urls:true src in
   let at = Some (Token.point ~file 1 1 0) in
   let at_key k = match key_loc (Array.of_list tokens) k with
     | Some l -> Some l
@@ -128,13 +134,13 @@ let parse ~file src =
   in
   let e = match prog.Ast.items with
     | [Ast.TLExpr e] -> e
-    | _ -> fail at "wand.mod holds one record, `{ module = ..., wand = ..., require = [...] }`, and nothing else"
+    | _ -> fail at "wand.pkg holds one record, `{ package = ..., wand = ..., require = [...] }`, and nothing else"
   in
-  let what = "wand.mod" in
+  let what = "wand.pkg" in
   let kvs =
     read_fields ~key_at:(fun k -> key_loc (Array.of_list tokens) k)
-      ~what ~allowed:["module"; "wand"; "require"] ~at e in
-  let modul = as_url ~what ~at:(at_key "module") "module" (field ~what ~at kvs "module") in
+      ~what ~allowed:["package"; "wand"; "require"] ~at e in
+  let url = as_url ~what ~at:(at_key "package") "package" (field ~what ~at kvs "package") in
   let wand_at = at_key "wand" in
   let wand = as_version ~what ~at:wand_at "wand" (field ~what ~at kvs "wand") in
   let require = match List.assoc_opt "require" kvs with
@@ -144,7 +150,7 @@ let parse ~file src =
        | Ast.List es -> List.map (read_require ~at) es
        | _ ->
          fail (match located v with Some l -> Some l | None -> at_key "require")
-           (Printf.sprintf "`require` in wand.mod is a list of entries, not %s"
+           (Printf.sprintf "`require` in wand.pkg is a list of entries, not %s"
               (show_kind v)))
   in
   let major v =
@@ -172,7 +178,7 @@ let parse ~file src =
       dups rest
   in
   dups require;
-  (modul, wand, wand_at, require)
+  (url, wand, wand_at, require)
 
 let read root =
   let file = Filename.concat root file_name in
@@ -180,8 +186,8 @@ let read root =
     try In_channel.with_open_text file In_channel.input_all
     with Sys_error msg -> fail None ("cannot read " ^ file ^ ": " ^ msg)
   in
-  let (modul, wand, wand_at, require) = parse ~file src in
-  { root; file; modul; wand; wand_at; require }
+  let (url, wand, wand_at, require) = parse ~file src in
+  { root; file; url; wand; wand_at; require }
 
 (* The versions a `wand` field accepts: from itself up to the next major,
    where before 1.0 each minor counts as a major. *)
@@ -204,7 +210,7 @@ let check_wand ?(running = Version.value) pkg =
          pkg.wand (upper_bound pkg.wand) running running)
 
 (* Read once for as long as the file is unchanged, which matters to the
-   language server: it outlives any one edit of wand.mod. *)
+   language server: it outlives any one edit of wand.pkg. *)
 let known : (string, float * t) Hashtbl.t = Hashtbl.create 4
 
 let of_dir dir =
@@ -243,10 +249,10 @@ let last_segment u =
 
 let cache_root () =
   match Sys.getenv_opt "XDG_CACHE_HOME" with
-  | Some d when d <> "" -> Filename.concat (Filename.concat d "wand") "mod"
+  | Some d when d <> "" -> Filename.concat (Filename.concat d "wand") "pkg"
   | _ ->
     let home = Option.value (Sys.getenv_opt "HOME") ~default:"." in
-    List.fold_left Filename.concat home [".cache"; "wand"; "mod"]
+    List.fold_left Filename.concat home [".cache"; "wand"; "pkg"]
 
 let cache_dir r =
   Filename.concat (cache_root ()) (url_path r.path ^ "@" ^ r.version)
@@ -492,7 +498,7 @@ let in_package ~base_dir what =
   | Some p -> p
   | None ->
     raise (Unresolved (Printf.sprintf
-      "`import %s` needs a wand.mod that requires it, and this file is in \
+      "`import %s` needs a wand.pkg that requires it, and this file is in \
        no package. Run `wand p init <url>` in the package's directory" what))
 
 let file_in main r rest =
@@ -510,6 +516,7 @@ let file_in main r rest =
   Filename.concat dir (file ^ ".wand")
 
 let resolve_url ~base_dir url =
+  let url = normalize_url url in
   let pkg = in_package ~base_dir url in
   let r = match entry_for pkg url with
     | Some r -> r

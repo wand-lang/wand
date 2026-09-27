@@ -23,10 +23,14 @@ type state = {
   (* The file this text came from, stamped onto every position it produces.
      "" for source with no file behind it -- `wand t -e`, a session line. *)
   file : string;
+  (* Where a URL may leave out its scheme: after `import`, and everywhere in
+     a wand.pkg, which holds no arithmetic for `a.b/c` to mean. *)
+  bare_urls : bool;
+  mutable after_import : bool;
 }
 
-let make ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) src =
-  { src; pos = 0; base; line; col; file;
+let make ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false) src =
+  { src; pos = 0; base; line; col; file; bare_urls; after_import = false;
     tok_start = Token.point ~file line col base }
 
 let len s = String.length s.src
@@ -909,7 +913,35 @@ let read_regex s =
 
 (* ── Identifiers ─────────────────────────────────────────────────────────── *)
 
+(* A URL without its scheme, as `github.com/me/json`: a host with a dot in
+   it, then `/`. The first character is already consumed. *)
+let bare_url_end s =
+  let start = s.pos - 1 in
+  let n = len s in
+  let host_char c = is_alnum_or_under c || c = '-' || c = '.' in
+  let rec host i = if i < n && host_char s.src.[i] then host (i + 1) else i in
+  let stop = host s.pos in
+  let h = String.sub s.src start (stop - start) in
+  if stop < n && s.src.[stop] = '/' && String.contains h '.'
+     && h.[String.length h - 1] <> '.' && h.[0] <> '.'
+  then Some stop
+  else None
+
+let read_bare_url s first_char =
+  let buf = Buffer.create 32 in
+  Buffer.add_char buf first_char;
+  while not (is_at_end s)
+     && not (List.mem (peek s) [' '; '\t'; '\n'; '\r'; ')'; ']'; '}'; ','; ';']) do
+    Buffer.add_char buf (advance s)
+  done;
+  let text = Buffer.contents buf in
+  (match url_error ("https://" ^ text) with Some why -> raise (Fail why) | None -> ());
+  URL text
+
 let read_ident s first_char =
+  if (s.bare_urls || s.after_import) && bare_url_end s <> None then
+    read_bare_url s first_char
+  else
   let buf = Buffer.create 8 in
   Buffer.add_char buf first_char;
   while not (is_at_end s) && is_alnum_or_under (peek s) do
@@ -1120,8 +1152,8 @@ let next_token s =
   in
   scan ()
 
-let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) src =
-  let s = make ~file ~line ~col ~base src in
+let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false) src =
+  let s = make ~file ~line ~col ~base ~bare_urls src in
   (* skip shebang line if present *)
   if String.length src >= 2 && src.[0] = '#' && src.[1] = '!' then
     while not (is_at_end s) && peek s <> '\n' do ignore (advance s) done;
@@ -1136,6 +1168,7 @@ let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) src =
                            end_col = s.col; end_offset = s.pos + s.base }, msg))
     in
     toks := (t, loc) :: !toks;
+    s.after_import <- (t = Import);
     if t <> EOF then loop ()
   in
   loop ();

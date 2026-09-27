@@ -3,22 +3,23 @@
 The second of three records for package management; `imports-design.md`
 lists all three. It needs a bare import to bind a name.
 
-A module is a URL. A build uses the lowest version that satisfies every
+A file is a module, and the directory tree under a `wand.pkg` is a
+package, named by its URL. A build uses the lowest version that satisfies every
 requirement (Minimal Version Selection), so there is no resolver and no
 surprise upgrade. There is no central registry, dependencies are verified
 by hash, and fetching or installing one never runs its code.
 
-## wand.mod
+## wand.pkg
 
-`wand.mod` sits at a package's root. It is a Wand record literal in a
+`wand.pkg` sits at a package's root. It is a Wand record literal in a
 data-only subset -- literals, records and lists, with no functions,
 imports or effects -- so tools read and rewrite it without running code.
 
 ```
-{ module  = https://github.com/mjstahl/json
+{ package = github.com/mjstahl/json
 , wand    = 0.4.0
 , require =
-    [ { path = https://github.com/mjstahl/text, version = 1.2.0 }
+    [ { path = github.com/mjstahl/text, version = 1.2.0 }
     ]
 }
 ```
@@ -35,27 +36,28 @@ imports or effects -- so tools read and rewrite it without running code.
   running wand.
 - **A local copy** is a `local` field on the entry. The build reads that
   directory instead of the cache, and `wand.sum` does not check it:
-  `{ path = https://github.com/mjstahl/json, version = 1.4.0, local = ../json }`.
+  `{ path = github.com/mjstahl/json, version = 1.4.0, local = ../json }`.
 - **The subset is fixed from the start**: never extended in a breaking
-  way, so any wand reads any package's file. `wand mod --json` is
+  way, so any wand reads any package's file. A JSON export of `wand.pkg` is
   deferred until something needs it.
 
-A package is the directory tree under a `wand.mod`. A file outside any
+A package is the directory tree under a `wand.pkg`. A file outside any
 package imports only by path, as now.
 
 ## URL imports
 
 ```
-import https://github.com/mjstahl/json          -- json.wand at the module's root
-import https://github.com/mjstahl/json/decode   -- decode.wand in it
+import github.com/mjstahl/json          -- json.wand at the module's root
+import github.com/mjstahl/json/decode   -- decode.wand in it
 ```
 
-- A URL always has its scheme; without one, `github.com/x` cannot be told
-  from field access or division.
+- The scheme is optional in an import and in `wand.pkg`, and a URL without
+  one is `https`. Only there: elsewhere `github.com/x` is already field
+  access and a path, so a URL keeps its scheme.
 - The longest `require` path that is a prefix of the import names the
   module, and the rest of the URL names the file in it. The module's root
   file is named for the URL's last segment.
-- An import line never carries a version: `wand.mod` does.
+- An import line never carries a version: `wand.pkg` does.
 
 ## Visibility across packages
 
@@ -72,14 +74,14 @@ With `git`, which does the HTTPS and the user's credentials:
 - `git ls-remote --tags <url>` lists the versions; a release is a tag
   (`v1.4.0`).
 - A shallow clone of the tag fetches one, into the shared cache,
-  `~/.cache/wand/mod/<host>/<path>@<version>`, which is read-only once
+  `~/.cache/wand/pkg/<host>/<path>@<version>`, which is read-only once
   written.
 - Fetching runs no code of the module's. Importing it later runs its
   bindings, as any import does; their effects are in the importer's types.
 
 ## wand.sum
 
-Tool-written, one line per module version and its hash, beside `wand.mod`.
+Tool-written, one line per module version and its hash, beside `wand.pkg`.
 A module read from the cache is checked against it; a mismatch is an
 error, never a refetch. `wand p tidy` adds the line for a version it
 fetches.
@@ -88,7 +90,7 @@ fetches.
 
 The build reads the `require` lists of the whole graph and takes, for each
 module, the highest version any of them requires -- the lowest that
-satisfies them all. Nothing newer is chosen unless a `wand.mod` says so.
+satisfies them all. Nothing newer is chosen unless a `wand.pkg` says so.
 
 ## Major versions
 
@@ -101,14 +103,14 @@ A module that imports two majors directly names one with an alias, a
 
 ```
 { require =
-    [ { path = https://github.com/mjstahl/json, version = 1.4.0 }
-    , { name = json2, path = https://github.com/mjstahl/json, version = 2.1.0 }
+    [ { path = github.com/mjstahl/json, version = 1.4.0 }
+    , { name = json2, path = github.com/mjstahl/json, version = 2.1.0 }
     ]
 }
 ```
 
 ```
-import https://github.com/mjstahl/json   -- json, the 1.x entry
+import github.com/mjstahl/json   -- json, the 1.x entry
 import json2                             -- the 2.x entry
 ```
 
@@ -127,7 +129,7 @@ message prints both qualified, with the exact version:
 
 ## Commands
 
-- `wand p init <url>` writes a `wand.mod` naming the module, with the
+- `wand p init <url>` writes a `wand.pkg` naming the module, with the
   running wand's range and no requirements. It refuses a directory that
   has one.
 - `wand p tidy` reads every import in the package: it adds a `require`
@@ -137,13 +139,13 @@ message prints both qualified, with the exact version:
   within its major; `wand p upgrade <url>` moves one; `<url>@<version>`
   pins one. A new major is a different module, so moving to one is a
   change of import, never an upgrade.
-- A script or `wand t` fetches a version `wand.mod` names and the cache
-  lacks, checked against `wand.sum`. An import `wand.mod` does not name is
+- A script or `wand t` fetches a version `wand.pkg` names and the cache
+  lacks, checked against `wand.sum`. An import `wand.pkg` does not name is
   an error that says to run `wand p tidy`.
 
 ## Order
 
-1. `wand.mod`: the data-only reader, the `wand` range check, packages.
+1. `wand.pkg`: the data-only reader, the `wand` range check, packages.
 2. URL imports resolved through `require` and `local`, with subpaths and
    the private-path check.
 3. Fetching with `git` into the cache, and `wand.sum`.

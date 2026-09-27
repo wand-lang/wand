@@ -1,25 +1,30 @@
-(* `wand p`: the commands that write wand.mod and wand.sum. *)
+(* `wand p`: the commands that write wand.pkg and wand.sum. *)
 
 exception Failed of string
 
 let fail msg = raise (Failed msg)
 
-(* ── Writing wand.mod ──────────────────────────────────────────────────── *)
+(* ── Writing wand.pkg ──────────────────────────────────────────────────── *)
+
+let short u =
+  let p = "https://" in
+  let n = String.length p in
+  if String.length u > n && String.sub u 0 n = p then String.sub u n (String.length u - n) else u
 
 let render_entry (r : Package.require) =
   let fields =
     (match r.name with Some n -> ["name = " ^ n] | None -> [])
-    @ ["path = " ^ r.path; "version = " ^ r.version]
+    @ ["path = " ^ short r.path; "version = " ^ r.version]
     @ (match r.local with Some l -> ["local = " ^ l] | None -> [])
   in
   "{ " ^ String.concat ", " fields ^ " }"
 
-let render ~modul ~wand (require : Package.require list) =
+let render ~url ~wand (require : Package.require list) =
   let require =
     List.sort (fun (a : Package.require) (b : Package.require) ->
       compare (a.path, a.version) (b.path, b.version)) require
   in
-  let head = Printf.sprintf "{ module  = %s\n, wand    = %s\n" modul wand in
+  let head = Printf.sprintf "{ package = %s\n, wand    = %s\n" (short url) wand in
   match require with
   | [] -> head ^ "}\n"
   | first :: rest ->
@@ -39,15 +44,15 @@ let init ~dir url =
   let file = Filename.concat dir Package.file_name in
   if Sys.file_exists file then fail (file ^ " already exists");
   let is_url =
-    List.exists (fun p ->
-      String.length url > String.length p && String.sub url 0 (String.length p) = p)
-      ["https://"; "http://"]
+    match Lexer.tokenize ~bare_urls:true url with
+    | [(Token.URL _, _); (Token.EOF, _)] -> true
+    | _ | exception Lexer.LexError _ -> false
   in
   if not is_url then
     fail (Printf.sprintf
-      "a module is named by its URL, such as https://github.com/you/%s, not %s"
+      "a package is named by its URL, such as github.com/you/%s, not %s"
       (Filename.basename dir) url);
-  write_file file (render ~modul:url ~wand:(running_range ()) [])
+  write_file file (render ~url:(Package.normalize_url url) ~wand:(running_range ()) [])
 
 (* ── Reading the imports ───────────────────────────────────────────────── *)
 
@@ -79,7 +84,7 @@ let imports_of_file file =
       fail (Printf.sprintf "%s:%d:%d: %s" file l.Token.line l.Token.col msg)
   in
   let of_kind = function
-    | Ast.ModuleURL u -> Some (Url u)
+    | Ast.ModuleURL u -> Some (Url (Package.normalize_url u))
     | Ast.ModuleAlias n -> Some (Alias n)
     | Ast.StdlibModule _ | Ast.UserPath _ -> None
   in
@@ -158,7 +163,7 @@ let find_module url =
 let package_here dir =
   match Package.find_root (Package.absolute dir) with
   | Some root -> Package.read root
-  | None -> fail "there is no wand.mod here or above. Run `wand p init <url>` first"
+  | None -> fail "there is no wand.pkg here or above. Run `wand p init <url>` first"
 
 (* Fetch every version the build reaches, and write wand.sum to hold
    exactly those. *)
@@ -175,7 +180,7 @@ let report say = List.iter print_endline (List.rev say)
 
 let rewrite (pkg : Package.t) require =
   if require <> pkg.require then
-    write_file pkg.file (render ~modul:pkg.modul ~wand:pkg.wand require);
+    write_file pkg.file (render ~url:pkg.url ~wand:pkg.wand require);
   let pkg = { pkg with require } in
   settle pkg
 

@@ -3686,20 +3686,20 @@ that imports this one does not see the names it imported.
 
 ## Packages
 
-A package is the directory tree under a `wand.mod`. A module that another
+A package is the directory tree under a `wand.pkg`. A module that another
 package can use is a package whose URL is its name. There is no central
 registry: the URL is where the module is, and `git` fetches it.
 
 ### Starting a package
 
 ```sh
-wand p init https://github.com/you/tool
+wand p init github.com/you/tool
 ```
 
-This writes `wand.mod` in the current directory:
+This writes `wand.pkg` in the current directory:
 
 ```ocaml
-{ module  = https://github.com/you/tool
+{ package = github.com/you/tool
 , wand    = 0.85.0
 }
 ```
@@ -3712,12 +3712,15 @@ range, and the error names the field to change.
 ### Importing a module by URL
 
 ```ocaml
-import https://github.com/mjstahl/json          -- json.wand at the module's root
-import https://github.com/mjstahl/json/decode   -- decode.wand in the module
+import github.com/mjstahl/json          -- json.wand at the module's root
+import github.com/mjstahl/json/decode   -- decode.wand in the module
 ```
 
-A URL import binds its last segment, as a path import does. The import line
-never holds a version; `wand.mod` does. Write the import, then run:
+The scheme is optional here and in `wand.pkg`: a URL without one is
+`https`, so `github.com/mjstahl/json` is `https://github.com/mjstahl/json`.
+Elsewhere a URL keeps its scheme. A URL import binds its last segment, as a
+path import does. The import line
+never holds a version; `wand.pkg` does. Write the import, then run:
 
 ```sh
 wand p tidy
@@ -3728,10 +3731,10 @@ latest version, removes an entry that no import uses, fetches what the build
 needs, and writes `wand.sum`. With nothing to change, it prints nothing.
 
 ```ocaml
-{ module  = https://github.com/you/tool
+{ package = github.com/you/tool
 , wand    = 0.85.0
 , require =
-    [ { path = https://github.com/mjstahl/json, version = 1.4.0 }
+    [ { path = github.com/mjstahl/json, version = 1.4.0 }
     ]
 }
 ```
@@ -3740,8 +3743,8 @@ The longest `require` path that is a prefix of the import's URL, segment by
 segment, names the module. The rest of the URL names a file in it, and the
 module's root file is named for the last segment of its path.
 
-An import that `wand.mod` does not name is an error that tells you to run
-`wand p tidy`. Only the `wand p` commands change `wand.mod`. You can edit it
+An import that `wand.pkg` does not name is an error that tells you to run
+`wand p tidy`. Only the `wand p` commands change `wand.pkg`. You can edit it
 by hand to pin a version or to use a local copy. The file is data: literals,
 records and lists, with no code.
 
@@ -3749,12 +3752,12 @@ records and lists, with no code.
 
 A version is a git tag: `v1.4.0` is version `1.4.0`. A run or `wand t` that
 needs a version the cache does not have fetches it: a shallow clone of the
-tag into `~/.cache/wand/mod/<host>/<path>@<version>` (`$XDG_CACHE_HOME` moves
+tag into `~/.cache/wand/pkg/<host>/<path>@<version>` (`$XDG_CACHE_HOME` moves
 it). The copy has no `.git`, and its files are read-only. `git` does the
 HTTPS and uses your git credentials. Fetching a module runs none of its code.
 
 `wand.sum` holds one line for each version the build reads, with the hash of
-its files. Commit it with `wand.mod`. A version that does not match its line
+its files. Commit it with `wand.pkg`. A version that does not match its line
 is an error, and wand does not fetch it again. A version with no line is an
 error that tells you to run `wand p tidy`.
 
@@ -3763,13 +3766,13 @@ error that tells you to run `wand p tidy`.
 Each package lists the versions it needs. The build reads every `require`
 list it reaches and uses, for each module, the highest version that any of
 them requires. This is the lowest version that satisfies all of them
-(Minimal Version Selection). A newer version is used only when a `wand.mod`
+(Minimal Version Selection). A newer version is used only when a `wand.pkg`
 asks for it:
 
 ```sh
 wand p upgrade                                      # every dependency, within its major
-wand p upgrade https://github.com/mjstahl/json      # one
-wand p upgrade https://github.com/mjstahl/json@1.4.0  # one, to that version
+wand p upgrade github.com/mjstahl/json      # one
+wand p upgrade github.com/mjstahl/json@1.4.0  # one, to that version
 ```
 
 The package that the run or the check starts from decides two things for the
@@ -3791,14 +3794,14 @@ in one package, give one of them a `name`, and import it by that name:
 
 ```ocaml
 { require =
-    [ { path = https://github.com/mjstahl/json, version = 1.4.0 }
-    , { name = json2, path = https://github.com/mjstahl/json, version = 2.1.0 }
+    [ { path = github.com/mjstahl/json, version = 1.4.0 }
+    , { name = json2, path = github.com/mjstahl/json, version = 2.1.0 }
     ]
 }
 ```
 
 ```ocaml
-import https://github.com/mjstahl/json   -- json, the 1.x entry
+import github.com/mjstahl/json   -- json, the 1.x entry
 import json2                             -- the 2.x entry
 ```
 
@@ -3810,7 +3813,7 @@ To work on a dependency beside the package that uses it, add a `local` field
 to its entry:
 
 ```ocaml
-{ path = https://github.com/mjstahl/json, version = 1.4.0, local = ../json }
+{ path = github.com/mjstahl/json, version = 1.4.0, local = ../json }
 ```
 
 The build reads that directory in place of the cache, and `wand.sum` does not

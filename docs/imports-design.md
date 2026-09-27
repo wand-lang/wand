@@ -6,7 +6,7 @@ Design" (claude.ai artifact DxkH3xhhDYxLZJaTP4Vx3R). The three records,
 each released once:
 
 1. `imports-design.md` (this record): an import binds a name of its own.
-2. `modules-design.md`: `wand.mod`, URL imports, fetching with `git`,
+2. `modules-design.md`: `wand.pkg`, URL imports, fetching with `git`,
    `wand.sum`, Minimal Version Selection and `wand p tidy`.
 3. `release-design.md`: `wand.api`, the version bump the types decide,
    and `wand p release`.
@@ -18,16 +18,16 @@ The commands are one group, `p package`, each with its short form:
 
 | Command | Does | Record |
 |---|---|---|
-| `wand p i` / `init <url>` | starts a package: writes `wand.mod` | modules |
-| `wand p t` / `tidy` | makes `wand.mod` and `wand.sum` match the imports, fetching what they need | modules |
+| `wand p i` / `init <url>` | starts a package: writes `wand.pkg` | modules |
+| `wand p t` / `tidy` | makes `wand.pkg` and `wand.sum` match the imports, fetching what they need | modules |
 | `wand p u` / `upgrade [url[@version]]` | moves dependencies to newer versions within their major | modules |
 | `wand p a` / `api [--check]` | writes `wand.api` from the code, or checks it | release |
 | `wand p r` / `release [major\|minor\|patch]` | checks the bump, writes `wand.api`, tags | release |
 
 `wand h p` lists them. A script or `wand t` that needs a version
-`wand.mod` names and the cache lacks fetches it, checked against
-`wand.sum`; an import `wand.mod` does not name is an error that says to
-run `wand p tidy`. Only the package commands change `wand.mod`.
+`wand.pkg` names and the cache lacks fetches it, checked against
+`wand.sum`; an import `wand.pkg` does not name is an error that says to
+run `wand p tidy`. Only the package commands change `wand.pkg`.
 
 ## An import binds the last segment of its path
 

@@ -12,7 +12,7 @@ let fresh_dir () =
 
 let write path text = Out_channel.with_open_text path (fun oc -> output_string oc text)
 
-let parse src = Package.parse ~file:"wand.mod" src
+let parse src = Package.parse ~file:"wand.pkg" src
 
 let parse_error label needle src =
   match parse src with
@@ -22,14 +22,14 @@ let parse_error label needle src =
   | _ -> Alcotest.failf "%s: expected an error" label
 
 let test_reads_the_file () =
-  let (modul, wand, _, require) = parse {|{ module  = https://github.com/mjstahl/json
+  let (url, wand, _, require) = parse {|{ package = https://github.com/mjstahl/json
 , wand    = 0.4.0
 , require =
     [ { path = https://github.com/mjstahl/text, version = 1.2.0 }
     , { name = json2, path = https://github.com/mjstahl/json, version = 2.1.0, local = ../json }
     ]
 }|} in
-  Alcotest.(check string) "module" "https://github.com/mjstahl/json" modul;
+  Alcotest.(check string) "package" "https://github.com/mjstahl/json" url;
   Alcotest.(check string) "wand" "0.4.0" wand;
   match require with
   | [a; b] ->
@@ -41,25 +41,25 @@ let test_reads_the_file () =
   | _ -> Alcotest.fail "expected two entries"
 
 let test_require_is_optional () =
-  let (_, _, _, require) = parse "{ module = https://x.dev/a, wand = 0.85.0 }" in
+  let (_, _, _, require) = parse "{ package = https://x.dev/a, wand = 0.85.0 }" in
   Alcotest.(check int) "no entries" 0 (List.length require)
 
 let test_refuses_what_is_not_data () =
-  parse_error "a list" "wand.mod is a record" "[1]";
-  parse_error "two items" "holds one record" "let x = 1\n{ module = https://x.dev/a }";
+  parse_error "a list" "wand.pkg is a record" "[1]";
+  parse_error "two items" "holds one record" "let x = 1\n{ package = https://x.dev/a }";
   parse_error "unknown field" "has no field `extra`"
-    "{ module = https://x.dev/a, wand = 0.85.0, extra = 1 }";
-  parse_error "missing wand" "needs a `wand` field" "{ module = https://x.dev/a }";
+    "{ package = https://x.dev/a, wand = 0.85.0, extra = 1 }";
+  parse_error "missing wand" "needs a `wand` field" "{ package = https://x.dev/a }";
   parse_error "a string version" "is a version, such as 1.2.0, not a string"
-    {|{ module = https://x.dev/a, wand = "0.85.0" }|};
-  parse_error "a module that is not a URL" "is a URL"
-    "{ module = ./a, wand = 0.85.0 }";
+    {|{ package = https://x.dev/a, wand = "0.85.0" }|};
+  parse_error "a package that is not a URL" "is a URL"
+    "{ package = ./a, wand = 0.85.0 }";
   parse_error "an entry field" "has no field `tag`"
-    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, tag = 1 } ] }";
+    "{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, tag = 1 } ] }";
   parse_error "an uppercase alias" "lowercase name"
-    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, name = Json } ] }";
+    "{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, name = Json } ] }";
   parse_error "a local that is not a path" "is a path"
-    {|{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, local = "x" } ] }|}
+    {|{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0, local = "x" } ] }|}
 
 let test_the_wand_range () =
   let yes range running =
@@ -73,17 +73,17 @@ let test_found_above_the_file () =
   let root = fresh_dir () in
   let sub = Filename.concat root "lib" in
   Unix.mkdir sub 0o755;
-  write (Filename.concat root "wand.mod") "{ module = https://x.dev/a, wand = 0.4.0 }";
+  write (Filename.concat root "wand.pkg") "{ package = https://x.dev/a, wand = 0.4.0 }";
   let file = Filename.concat sub "main.wand" in
   write file "1 + 1";
   (match Runner.run_file file with
    | Error e ->
      Alcotest.(check bool) "names the range" true
        (contains e "needs wand 0.4.0 or later, before 0.5.0");
-     Alcotest.(check bool) "names the file" true (contains e "wand.mod:1:")
+     Alcotest.(check bool) "names the file" true (contains e "wand.pkg:1:")
    | Ok _ -> Alcotest.fail "expected the range to refuse this wand");
-  write (Filename.concat root "wand.mod")
-    (Printf.sprintf "{ module = https://x.dev/a, wand = %s }" Version.value);
+  write (Filename.concat root "wand.pkg")
+    (Printf.sprintf "{ package = https://x.dev/a, wand = %s }" Version.value);
   Alcotest.(check (result string string)) "runs in range" (Ok "2") (Runner.run_file file)
 
 (* An app requiring json through a local copy, as a directory tree. *)
@@ -92,15 +92,15 @@ let with_two_packages f =
   let app = Filename.concat root "app" and json = Filename.concat root "json" in
   List.iter (fun d -> Unix.mkdir d 0o755)
     [app; json; Filename.concat json "_internal"];
-  write (Filename.concat json "wand.mod")
-    (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  write (Filename.concat json "wand.pkg")
+    (Printf.sprintf "{ package = https://x.dev/me/json, wand = %s }" Version.value);
   write (Filename.concat json "json.wand") {|let parse s = "parsed %{s}"|};
   write (Filename.concat json "decode.wand") "let decode s = s";
   write (Filename.concat (Filename.concat json "_internal") "p.wand") "let x = 1";
   write (Filename.concat json "inside.wand") "import ./_internal/p\np.x";
-  write (Filename.concat app "wand.mod")
+  write (Filename.concat app "wand.pkg")
     (Printf.sprintf
-       "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../json } ] }"
+       "{ package = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../json } ] }"
        Version.value);
   f ~app ~json
 
@@ -127,7 +127,7 @@ let test_url_imports () =
 
 let test_url_import_outside_a_package () =
   let dir = fresh_dir () in
-  error_says "no wand.mod" "this file is in no package"
+  error_says "no wand.pkg" "this file is in no package"
     (run_in dir "loose.wand" "import https://x.dev/me/json\n1")
 
 let test_private_by_path () =
@@ -144,8 +144,8 @@ let with_remote f =
   let repo = Filename.concat root "repos/me/json" in
   ignore (Sys.command (Filename.quote_command "mkdir" ["-p"; repo]));
   write (Filename.concat repo "json.wand") {|let parse s = "parsed %{s}"|};
-  write (Filename.concat repo "wand.mod")
-    (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  write (Filename.concat repo "wand.pkg")
+    (Printf.sprintf "{ package = https://x.dev/me/json, wand = %s }" Version.value);
   let git args = ignore (Sys.command (Filename.quote_command "git" ("-C" :: repo :: args)
       ~stdout:"/dev/null" ~stderr:"/dev/null")) in
   git ["init"; "-q"];
@@ -162,12 +162,12 @@ let with_remote f =
 
 let app_mod version =
   Printf.sprintf
-    "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = %s } ] }"
+    "{ package = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = %s } ] }"
     Version.value version
 
 let test_fetch_and_sum () =
   with_remote (fun ~app ~repo:_ ->
-    write (Filename.concat app "wand.mod") (app_mod "1.4.0");
+    write (Filename.concat app "wand.pkg") (app_mod "1.4.0");
     let main = "import https://x.dev/me/json\njson.parse \"x\"" in
     error_says "fetched, and no line in wand.sum" "wand.sum has no line for https://x.dev/me/json 1.4.0"
       (run_in app "main.wand" main);
@@ -184,7 +184,7 @@ let test_fetch_and_sum () =
     Hashtbl.reset Package.hashes;
     write (Filename.concat app "wand.sum") "https://x.dev/me/json 1.4.0 sha256:00\n";
     error_says "a mismatch" "does not match wand.sum" (run_in app "main.wand" main);
-    write (Filename.concat app "wand.mod") (app_mod "1.5.0");
+    write (Filename.concat app "wand.pkg") (app_mod "1.5.0");
     error_says "no such tag" "git clone of the tag v1.5.0 failed" (run_in app "main.wand" main))
 
 (* Repositories under root/repos, each a list of tags and the files at
@@ -221,20 +221,20 @@ let record_sums app entries =
        Printf.sprintf "%s %s %s\n" path version h) entries))
 
 let json_at v = [
-  ("wand.mod", Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  ("wand.pkg", Printf.sprintf "{ package = https://x.dev/me/json, wand = %s }" Version.value);
   ("json.wand", Printf.sprintf "let version = \"%s\"" v) ]
 
 let test_minimal_version_selection () =
   with_repos [
     ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5"); ("2.0.0", json_at "2.0")]);
     ("text", [("1.0.0", [
-       ("wand.mod", Printf.sprintf
-          "{ module = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.5.0 } ] }"
+       ("wand.pkg", Printf.sprintf
+          "{ package = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.5.0 } ] }"
           Version.value);
        ("text.wand", "import https://x.dev/me/json\nlet v = json.version") ])]) ]
     (fun ~app ->
-      write (Filename.concat app "wand.mod") (Printf.sprintf
-        "{ module = https://x.dev/me/app, wand = %s, require =\n\
+      write (Filename.concat app "wand.pkg") (Printf.sprintf
+        "{ package = https://x.dev/me/app, wand = %s, require =\n\
         \  [ { path = https://x.dev/me/json, version = 1.4.0 }\n\
         \  , { path = https://x.dev/me/text, version = 1.0.0 }\n\
         \  , { name = json2, path = https://x.dev/me/json, version = 2.0.0 }\n\
@@ -250,12 +250,12 @@ let test_minimal_version_selection () =
             \"%{json.version} %{text.v} %{json2.version}\""))
 
 let test_two_majors_need_a_name () =
-  let src = "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 2.0.0 } ] }" in
+  let src = "{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 2.0.0 } ] }" in
   parse_error "two majors" "give one of them a name, such as `name = b2`" src;
   parse_error "one major twice" "is required twice at major 1"
-    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 1.2.0 } ] }";
+    "{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 1.2.0 } ] }";
   parse_error "before 1.0 a minor is a major" "such as `name = b0_1`"
-    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 0.2.0 }, { path = https://x.dev/b, version = 0.1.0 } ] }"
+    "{ package = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 0.2.0 }, { path = https://x.dev/b, version = 0.1.0 } ] }"
 
 let test_unknown_alias () =
   with_two_packages (fun ~app ~json:_ ->
@@ -269,10 +269,10 @@ let test_two_majors_in_a_type_error () =
   List.iter (fun d ->
     write (Filename.concat d "json.wand")
       "type Value = V Int\nlet make n = V n\nlet get v = match v with\n  | V n -> n\n";
-    write (Filename.concat d "wand.mod")
-      (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value)) [j1; j2];
-  write (Filename.concat app "wand.mod") (Printf.sprintf
-    "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../j1 }, { name = json2, path = https://x.dev/me/json, version = 2.1.0, local = ../j2 } ] }"
+    write (Filename.concat d "wand.pkg")
+      (Printf.sprintf "{ package = https://x.dev/me/json, wand = %s }" Version.value)) [j1; j2];
+  write (Filename.concat app "wand.pkg") (Printf.sprintf
+    "{ package = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../j1 }, { name = json2, path = https://x.dev/me/json, version = 2.1.0, local = ../j2 } ] }"
     Version.value);
   error_says "both named with their versions"
     "expected a `Value` from https://x.dev/me/json 2.1.0, got a `Value` from https://x.dev/me/json 1.4.0"
@@ -285,24 +285,24 @@ let test_init_tidy_upgrade () =
   with_repos [
     ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5")]);
     ("text", [("1.0.0", [
-       ("wand.mod", Printf.sprintf
-          "{ module = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0 } ] }"
+       ("wand.pkg", Printf.sprintf
+          "{ package = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0 } ] }"
           Version.value);
        ("text.wand", "import https://x.dev/me/json\nlet v = json.version") ])]) ]
     (fun ~app ->
       Package_cmd.init ~dir:app "https://x.dev/me/app";
-      Alcotest.(check bool) "init refuses a second wand.mod" true
+      Alcotest.(check bool) "init refuses a second wand.pkg" true
         (match Package_cmd.init ~dir:app "https://x.dev/me/app" with
          | exception Package_cmd.Failed _ -> true
          | () -> false);
       let main = "import https://x.dev/me/json\nimport https://x.dev/me/text\n\"%{json.version} %{text.v}\"" in
       write (Filename.concat app "main.wand") main;
       Package_cmd.tidy ~dir:app;
-      let wmod = read_file (Filename.concat app "wand.mod") in
+      let wmod = read_file (Filename.concat app "wand.pkg") in
       Alcotest.(check bool) "json at its latest" true
-        (contains wmod "{ path = https://x.dev/me/json, version = 1.5.0 }");
+        (contains wmod "{ path = x.dev/me/json, version = 1.5.0 }");
       Alcotest.(check bool) "text added" true
-        (contains wmod "{ path = https://x.dev/me/text, version = 1.0.0 }");
+        (contains wmod "{ path = x.dev/me/text, version = 1.0.0 }");
       let sums = read_file (Filename.concat app "wand.sum") in
       Alcotest.(check int) "a line for every version the build reads" 3
         (List.length (List.filter (( <> ) "") (String.split_on_char '\n' sums)));
@@ -321,16 +321,37 @@ let test_init_tidy_upgrade () =
       write (Filename.concat app "main.wand") "import https://x.dev/me/json\njson.version";
       Package_cmd.tidy ~dir:app;
       Alcotest.(check bool) "text removed" false
-        (contains (read_file (Filename.concat app "wand.mod")) "text");
+        (contains (read_file (Filename.concat app "wand.pkg")) "text");
       Alcotest.(check bool) "and its lines" false
         (contains (read_file (Filename.concat app "wand.sum")) "text"))
+
+let test_schemeless_urls () =
+  let (url, _, _, require) =
+    parse "{ package = x.dev/me/app, wand = 0.85.0, require = [ { path = x.dev/me/json, version = 1.4.0 } ] }" in
+  Alcotest.(check string) "the package gains https" "https://x.dev/me/app" url;
+  (match require with
+   | [r] -> Alcotest.(check string) "an entry gains https" "https://x.dev/me/json" r.Package.path
+   | _ -> Alcotest.fail "expected one entry");
+  with_two_packages (fun ~app ~json:_ ->
+    Alcotest.(check (result string string)) "an import without its scheme"
+      (Ok "parsed x")
+      (run_in app "bare.wand" "import x.dev/me/json\njson.parse \"x\""));
+  Alcotest.(check bool) "outside an import, a dotted word before / is no URL" true
+    (match Lexer.tokenize_plain "r.a/b" with
+     | Token.Ident "r" :: _ -> true
+     | _ -> false);
+  let dir = fresh_dir () in
+  Package_cmd.init ~dir "x.dev/me/tool";
+  Alcotest.(check bool) "init writes the short form" true
+    (contains (In_channel.with_open_text (Filename.concat dir "wand.pkg") In_channel.input_all)
+       "{ package = x.dev/me/tool\n")
 
 let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
 
 let () =
   Random.self_init ();
   Alcotest.run "Package" [
-    "wand.mod", [
+    "wand.pkg", [
       Alcotest.test_case "reads the file"      `Quick test_reads_the_file;
       Alcotest.test_case "require is optional" `Quick test_require_is_optional;
       Alcotest.test_case "refuses what is not data" `Quick test_refuses_what_is_not_data;
@@ -341,6 +362,7 @@ let () =
       Alcotest.test_case "by URL"              `Quick test_url_imports;
       Alcotest.test_case "by URL, no package"  `Quick test_url_import_outside_a_package;
       Alcotest.test_case "private by path"     `Quick test_private_by_path;
+      Alcotest.test_case "without a scheme"    `Quick test_schemeless_urls;
     ];
     "fetching", [
       Alcotest.test_case "fetch and wand.sum"  `Quick

@@ -1,7 +1,7 @@
 # Releasing a package
 
 The third of three records for package management; `imports-design.md`
-lists all three. It needs packages and `wand.mod`.
+lists all three. It needs packages and `wand.pkg`.
 
 The type system decides the minimum version bump. The author can raise it
 but never lower it.
@@ -34,7 +34,7 @@ digest.read_file : Algorithm -> Path -> Result String Digest ! {FS.Read}
 - A change to the public interface shows as a diff in `wand.api`, for
   human and LLM reviewers.
 
-It is kept apart from `wand.mod`, which is hand-edited, for the reason Go
+It is kept apart from `wand.pkg`, which is hand-edited, for the reason Go
 keeps `go.sum` apart from `go.mod`. It is signatures rather than a record
 because a record would hold types as strings, which need a second parse,
 or as a syntax tree, which no one can review.

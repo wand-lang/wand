@@ -49,8 +49,8 @@ type type_expr =
 type import_kind =
   | StdlibModule of string   (* import List        — resolves to stdlib/List.wand *)
   | UserPath     of string   (* import ./utils     — resolves relative to caller  *)
-  | ModuleURL    of string   (* import https://…   — resolves through wand.mod    *)
-  | ModuleAlias  of string   (* import json2       — a `name` in wand.mod         *)
+  | ModuleURL    of string   (* import https://…   — resolves through wand.pkg    *)
+  | ModuleAlias  of string   (* import json2       — a `name` in wand.pkg         *)
 
 type pat =
   | Int      of int

@@ -20,7 +20,7 @@ let usage () =
   print_endline "  h   help [cmd]              Show this help, or help for a command";
   print_endline "  i   interactive             Start an interactive session";
   print_endline "  l   lsp                     Start the language server (LSP over stdio)";
-  print_endline "  p   package <cmd>           Manage this package's wand.mod and wand.sum";
+  print_endline "  p   package <cmd>           Manage this package's wand.pkg and wand.sum";
   print_endline "  s   test [<file>|<dir>]...  Run test_*.wand files (default: search from here)";
   print_endline "  t   type [<file>|<dir>]...  Typecheck files without running them";
   print_endline "  v   version                 Print the version and exit";
@@ -49,17 +49,17 @@ let usage_for sub =
     print_endline "Usage: wand p <command> [args]";
     print_endline "";
     print_endline "Manage the package this directory is in: the tree under";
-    print_endline "the nearest wand.mod.";
+    print_endline "the nearest wand.pkg.";
     print_endline "";
     print_endline "Commands:";
-    print_endline "  i   init <url>              Start a package here: write wand.mod";
-    print_endline "  t   tidy                    Make wand.mod and wand.sum match the imports,";
+    print_endline "  i   init <url>              Start a package here: write wand.pkg";
+    print_endline "  t   tidy                    Make wand.pkg and wand.sum match the imports,";
     print_endline "                              and fetch what they need";
     print_endline "  u   upgrade [url[@version]] Move dependencies to their newest version";
     print_endline "                              within their major, or one to a version";
     print_endline "";
-    print_endline "Only these commands change wand.mod. A script or `wand t`";
-    print_endline "fetches a version wand.mod names and the cache lacks, and";
+    print_endline "Only these commands change wand.pkg. A script or `wand t`";
+    print_endline "fetches a version wand.pkg names and the cache lacks, and";
     print_endline "checks it against wand.sum."
   | "l" | "lsp" ->
     print_endline "Usage: wand l";
