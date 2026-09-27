@@ -2119,6 +2119,7 @@ let run_item ?modul env item =
       let ident = ident ctor.Ast.name in
       Hashtbl.replace Evaluator.constr_fields ident field_names;
       Hashtbl.replace Evaluator.constr_defaults ident ctor.Ast.defaults;
+      Hashtbl.replace Evaluator.constr_keys ident ctor.Ast.keys;
       (* Where it stands in the declaration, which is the order it sorts in. *)
       Hashtbl.replace Evaluator.constr_index ident !position;
       Evaluator.register_ctor ident;
@@ -3965,6 +3966,7 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
                   :: !env_ref;
                 Hashtbl.replace constr_fields ident (List.map fst ctor.Ast.fields);
                 Hashtbl.replace constr_defaults ident ctor.Ast.defaults;
+                Hashtbl.replace constr_keys ident ctor.Ast.keys;
                 register_ctor ident;
                 forget_ctor_env ();
                 env_ref := (ctor.Ast.name,

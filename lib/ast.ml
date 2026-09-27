@@ -477,6 +477,12 @@ type ctor_def = {
      named field can carry one -- a positional payload has no name to leave
      out. *)
   defaults : (string * expr) list;
+  (* `port "Port": Int`. The key a named field has in a document, where the
+     document spells it in a way a field name cannot be: capitalised, or
+     with `-`, `.` or `$`. Only a derived decoder and encoder read it; in
+     wand code the field is its name. Keyed by field name, and absent for a
+     field whose key is its name. *)
+  keys : (string * string) list;
 }
 
 type type_def =

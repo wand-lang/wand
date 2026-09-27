@@ -5282,8 +5282,8 @@ let stdlib_type_env : env = [
    declaration. *)
 let option_tdef : type_def =
   Variants ("Option", ["a"], [
-    { name = "None"; loc = None; fields = []; defaults = [] };
-    { name = "Some"; loc = None; fields = [ (None, TEVar ("a", None)) ]; defaults = [] };
+    { name = "None"; loc = None; fields = []; defaults = []; keys = [] };
+    { name = "Some"; loc = None; fields = [ (None, TEVar ("a", None)) ]; defaults = []; keys = [] };
   ])
 
 let shell_result_tdef : type_def =
@@ -5293,7 +5293,7 @@ let shell_result_tdef : type_def =
     fields = [ (Some "stdout", TEName "String");
                (Some "stderr", TEName "String");
                (Some "code",   TEName "Int") ];
-    defaults = [];
+    defaults = []; keys = [];
   }])
 
 (* Everything needed to read one command line and to describe it: what the
@@ -5315,7 +5315,7 @@ let command_line_tdef : type_def =
     fields = [ (Some "spec",   TEApp (TEName "Map", TEName "String"));
                (Some "reader", TEApp (TEName "Decoder", TEVar ("a", None)));
                (Some "usage",  TEName "String") ];
-    defaults = [];
+    defaults = []; keys = [];
   }])
 
 (* What a request is made of, and what one answers with.
@@ -5345,7 +5345,7 @@ let command_line_tdef : type_def =
    builder pattern does elsewhere and record update gives the chaining. *)
 let http_method_tdef : type_def =
   Variants ("HTTPMethod", [],
-    List.map (fun n -> { name = n; loc = None; fields = []; defaults = [] })
+    List.map (fun n -> { name = n; loc = None; fields = []; defaults = []; keys = [] })
       ["GET"; "POST"; "PUT"; "PATCH"; "DELETE"; "HEAD"])
 
 let http_request_tdef : type_def =
@@ -5363,6 +5363,7 @@ let http_request_tdef : type_def =
                  ("body",      Ast.String "");
                  ("timeout",   Ast.Duration "30s");
                  ("redirects", Ast.Int 5) ];
+    keys = [];
   }])
 
 (* A body is a `String` because a wand `String` is a byte string, and
@@ -5376,7 +5377,7 @@ let http_response_tdef : type_def =
     fields = [ (Some "status",  TEName "Int");
                (Some "headers", TEApp (TEName "Map", TEName "String"));
                (Some "body",    TEName "String") ];
-    defaults = [];
+    defaults = []; keys = [];
   }])
 
 let builtin_tenv : typedef_env = [
@@ -5987,6 +5988,21 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
               fail_at_opt c.loc (Printf.sprintf
                 "constructor '%s' declares field '%s' twice" c.name f);
             Hashtbl.add seen_fields f ()) c.fields;
+        (* Two fields cannot read one key of a document: a decoder would
+           fill both from it, and an encoder would write it twice. A field
+           with no key of its own reads its name. *)
+        let seen_keys = Hashtbl.create 8 in
+        List.iter (fun (fname, _) ->
+          match fname with
+          | None -> ()
+          | Some f ->
+            let k = Option.value (List.assoc_opt f c.keys) ~default:f in
+            (match Hashtbl.find_opt seen_keys k with
+             | Some other ->
+               fail_at_opt c.loc (Printf.sprintf
+                 "fields '%s' and '%s' of '%s' both read the key \"%s\" in \
+                  a document; give one of them another key" other f c.name k)
+             | None -> Hashtbl.add seen_keys k f)) c.fields;
         (* A built-in constructor is in scope in every file, so a
            declaration cannot take its name. `type A = None | Other` used to
            be accepted, and after it every `None` in the file was an `A`:

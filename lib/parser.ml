@@ -2326,14 +2326,24 @@ let parse_type_def s =
         fail_at (peek_loc s)
           "only a named field takes a default: give the field a name, as in \
            'A(n: Int = 3)'";
-      (!fields, [])
+      (!fields, [], [])
     | Token.LParen when not (newline_breaks_expr s) ->
       let saved = mark s in
       ignore (advance s);
       (match peek s with
-       | t when is_field_name t && peek2 s = Token.Colon ->
+       | t when is_field_name t
+                && (peek2 s = Token.Colon
+                    || (match peek2 s with
+                        | Token.String _ -> peek3 s = Token.Colon
+                        | _ -> false)) ->
          let parse_named () =
            let fname = expect_field_name s in
+           (* `port "Port": Int`: the key the field has in a document. *)
+           let key =
+             match peek s with
+             | Token.String k -> ignore (advance s); Some (fname, k)
+             | _ -> None
+           in
            expect s Token.Colon;
            (* An applied type -- `List String`, `Option Node` -- and a
               function type -- `max: 'a -> 'a -> 'a` -- both read as one
@@ -2350,7 +2360,7 @@ let parse_type_def s =
                Some (locate s (fun () -> expr_ 0 s))
              end else None
            in
-           ((Some fname, ftype), Option.map (fun d -> (fname, d)) dflt)
+           ((Some fname, ftype), Option.map (fun d -> (fname, d)) dflt, key)
          in
          let first = parse_named () in
          let rest = ref [] in
@@ -2360,20 +2370,22 @@ let parse_type_def s =
          done;
          expect s Token.RParen;
          let named = first :: !rest in
-         (List.map fst named, List.filter_map snd named)
+         (List.map (fun (f, _, _) -> f) named,
+          List.filter_map (fun (_, d, _) -> d) named,
+          List.filter_map (fun (_, _, k) -> k) named)
        | _ ->
          rewind s saved;
-         ([(None, parse_type_atom s)], []))
-    | _ -> ([], [])
+         ([(None, parse_type_atom s)], [], []))
+    | _ -> ([], [], [])
   in
   (* Single-constructor shorthand: type Foo (fields...) desugars to type Foo = Foo (fields...) *)
   (* Same newline rule as the payload below: a `(` back at the declaration's
      own column opens the next item, not this one's field list. A field list
      indented past the `type` is still read as one. *)
   if peek s = Token.LParen && not (newline_breaks_expr s) then begin
-    let (fields, defaults) = parse_ctor_fields () in
+    let (fields, defaults, keys) = parse_ctor_fields () in
     Ast.Variants (type_name, !params,
-      [{ Ast.name = type_name; loc = Some type_loc; fields; defaults }])
+      [{ Ast.name = type_name; loc = Some type_loc; fields; defaults; keys }])
   end else begin
     expect s Token.Eq;
     (* After `=`, a shape that cannot be a constructor is a type expression,
@@ -2421,8 +2433,8 @@ let parse_type_def s =
          fail_at (peek_loc s)
            "a constructor takes its payload directly: 'Circle Int', not \
             'Circle of Int'");
-      let (fields, defaults) = parse_ctor_fields () in
-      { Ast.name; loc = Some ctor_loc; fields; defaults }
+      let (fields, defaults, keys) = parse_ctor_fields () in
+      { Ast.name; loc = Some ctor_loc; fields; defaults; keys }
     in
     let ctors = ref [parse_ctor ()] in
     while peek s = Token.Pipe do

@@ -2451,13 +2451,20 @@ let emit_field_default defaults n =
   | Some d -> " = " ^ Doc.to_string (emit_expr 0 d)
   | None -> ""
 
-let emit_ctor_fields ?(defaults = []) fields =
+(* ` "Port"` where the field names its key in a document. *)
+let emit_field_key keys n =
+  match List.assoc_opt n keys with
+  | Some k -> " \"" ^ escape_string_body k ^ "\""
+  | None -> ""
+
+let emit_ctor_fields ?(defaults = []) ?(keys = []) fields =
   if fields = [] then ""
   else match fields with
     | (Some _, _) :: _ ->
       "(" ^ String.concat ", " (List.map (fun (n, t) ->
         let n = Option.get n in
-        n ^ ": " ^ emit_named_field_type t ^ emit_field_default defaults n)
+        n ^ emit_field_key keys n ^ ": " ^ emit_named_field_type t
+        ^ emit_field_default defaults n)
         fields) ^ ")"
     | _ ->
       " " ^ String.concat " " (List.map (fun (_, t) -> emit_type_atom t) fields)
@@ -2466,14 +2473,14 @@ let emit_ctor_fields ?(defaults = []) fields =
    fields are left alone: they are type atoms, so a long positional
    constructor is long because its types are, and breaking it up does not
    help. *)
-let emit_ctor_fields_wrapped ?(defaults = []) name fields =
+let emit_ctor_fields_wrapped ?(defaults = []) ?(keys = []) name fields =
   match fields with
   | (Some _, _) :: _ ->
     name ^ "(\n"
     ^ String.concat ",\n"
         (List.map (fun (n, t) ->
            let n = Option.get n in
-           "  " ^ n ^ ": " ^ emit_named_field_type t
+           "  " ^ n ^ emit_field_key keys n ^ ": " ^ emit_named_field_type t
            ^ emit_field_default defaults n) fields)
     ^ "\n)"
   | _ -> name ^ emit_ctor_fields fields
@@ -2501,23 +2508,23 @@ let emit_type_def = function
           && (match c.fields with (Some _, _) :: _ -> true | _ -> false) ->
     let oneline =
       "type " ^ name_and_params
-      ^ emit_ctor_fields ~defaults:c.defaults c.fields in
+      ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields in
     if fits_text 0 oneline then oneline
     else "type "
-         ^ emit_ctor_fields_wrapped ~defaults:c.defaults name_and_params c.fields
+         ^ emit_ctor_fields_wrapped ~defaults:c.defaults ~keys:c.keys name_and_params c.fields
   | _ ->
   let head = "type " ^ name_and_params ^ " = " in
   let oneline =
     head ^ String.concat " | "
       (List.map (fun c ->
-         c.name ^ emit_ctor_fields ~defaults:c.defaults c.fields) ctors)
+         c.name ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
   in
   if fits_text 0 oneline then oneline
   else match ctors with
     (* A single constructor with named fields is a record: widen it down the
        page rather than past the margin. Several constructors wrap at the
        alternatives instead, which is where a reader looks first. *)
-    | [c] -> head ^ emit_ctor_fields_wrapped ~defaults:c.defaults c.name c.fields
+    | [c] -> head ^ emit_ctor_fields_wrapped ~defaults:c.defaults ~keys:c.keys c.name c.fields
     (* The `=` ends the line, and nothing follows it there: `head` ends in
        the space that the one-line form puts before the first constructor,
        and here that space was left at the end of the line. *)
@@ -2525,7 +2532,7 @@ let emit_type_def = function
       "type " ^ name_and_params ^ " =\n  "
       ^ String.concat "\n  | "
           (List.map (fun c ->
-             c.name ^ emit_ctor_fields ~defaults:c.defaults c.fields) ctors)
+             c.name ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
 
 (* An interface declares its members the way a record declares its fields,
    so it wraps the same way: one to a line past the margin, with the closing

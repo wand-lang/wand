@@ -250,6 +250,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `Pod(name, restarts)` fields, punned in a pattern or a construction | `Pod{name}`, positional fields |
 | `Foo.Status`, `Foo.Live`; or `let {Status, Live} = import ./foo` | a bare imported type or constructor |
 | `type Pod(name: String, tries: Int = 3)` field default | a second constructor, an `Option` for "not given" |
+| `type D(port "Port": Int)` a field's key in a document | a hand-written decoder for one odd key |
 | `type Shape = Circle Int \| Rect Int Int` | `Circle of Int` |
 | `try e` yields a `Result` | `try ... with`, `raise` |
 | no mutation — bind a new name | `ref`, `mutable`, `:=` |

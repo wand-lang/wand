@@ -717,6 +717,21 @@ let test_lines_read_as_one_expression () =
     "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"
     "[2, 3]"
 
+(* A field may name its key in a document. Two fields of one constructor
+   cannot read one key, whether the key is written or is the field's own
+   name: a decoder would fill both from it, and an encoder would write it
+   twice. *)
+let test_two_fields_cannot_share_a_key () =
+  err_contains "two written keys"
+    "type A(port \"Port\": Int, other \"Port\": Int)\n1"
+    "fields 'port' and 'other' of 'A' both read the key \"Port\" in a document";
+  err_contains "a written key and a field's own name"
+    "type A(port \"x\": Int, x: Int)\n1"
+    "fields 'port' and 'x' of 'A' both read the key \"x\" in a document";
+  ok "different keys"
+    "type A(port \"Port\": Int, host: String)\nlet a = A(port = 1, host = \"h\")\na.port"
+    "1"
+
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
     {|type Pod (name: String, restarts: Int)
@@ -2449,6 +2464,8 @@ let () =
         test_constructors_qualified_by_type;
       Alcotest.test_case "lines read as one expression" `Quick
         test_lines_read_as_one_expression;
+      Alcotest.test_case "two fields cannot share a key" `Quick
+        test_two_fields_cannot_share_a_key;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];

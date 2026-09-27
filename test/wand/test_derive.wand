@@ -1,4 +1,5 @@
 let {test} = import Test
+import Args
 import Decode
 import JSON
 
@@ -284,3 +285,33 @@ test "a JSON field keeps what the document holds" (fn t ->
     | Ok l -> JSON.stringify (Limits.encoder l)
     | Error e -> e
     ))
+
+-- A field may name the key it has in a document, where the document spells
+-- it in a way a field name cannot be. In wand code the field is its name.
+type DaemonEndpoint(port "Port": Int)
+type Props(
+  ref "$ref": Option String = None,
+  list_type "x-kubernetes-list-type": Option String = None
+)
+type NodeInfo(endpoint: DaemonEndpoint, props: List Props)
+
+test "a field is read by its key" (fn t ->
+  t.eq
+    (Ok NodeInfo(endpoint = DaemonEndpoint(port = 10250), props = [Props(ref = Some "#/a")]))
+    (JSON.decode
+      NodeInfo.decoder
+      (JSON.parse! `{"endpoint": {"Port": 10250}, "props": [{"$ref": "#/a"}]}`)))
+
+test "and written by it" (fn t ->
+  t.eq `{"Port":7}` (JSON.stringify (DaemonEndpoint.encoder DaemonEndpoint(port = 7))))
+
+test "a missing field is named by its key" (fn t ->
+  t.eq
+    (Error ".Port: no such field")
+    (JSON.decode DaemonEndpoint.decoder (JSON.parse! `{"port": 1}`)))
+
+-- A command line is not a document: its flags are the fields' names.
+type Flags(dry_run "dry-run": Bool = false)
+
+test "a flag keeps the field's name" (fn t ->
+  t.eq (Ok Flags(dry_run = true)) (Args.read Flags.parser ["--dry_run"]))

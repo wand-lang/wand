@@ -105,6 +105,17 @@ let defaults_of name =
   | Some ds -> ds
   | None -> []
 
+(* The keys a constructor's fields have in a document, by field name, where
+   the declaration gives one: `port "Port": Int`. Only a derived decoder and
+   encoder read them. *)
+let constr_keys : (Ctor.t, (string * string) list) Hashtbl.t = Hashtbl.create 16
+
+(* The key field `name` of `ctor` has in a document: its own, or its name. *)
+let doc_key ctor name =
+  match Hashtbl.find_opt constr_keys ctor with
+  | Some ks -> Option.value (List.assoc_opt name ks) ~default:name
+  | None -> name
+
 (* Type definitions, kept for derivation.
    A decoder derived from a type has to find the decoders of the types its
    fields mention, and a type may mention itself. Those are looked up when a
@@ -7138,7 +7149,9 @@ and scalar_decoder name j path =
   | Some (VDecoder d) -> d j path
   | _ -> raise (EvalError ("derive: no builtin decoder " ^ name))
 
-and derived_decoder tname arg_decoders j path =
+(* `by_name` reads each field by its name rather than by its key in a
+   document: a command line's flags are the fields' names. *)
+and derived_decoder ?(by_name = false) tname arg_decoders j path =
   match Hashtbl.find_opt derivable tname with
   | None ->
     Error (Printf.sprintf "no decoder for type '%s'" tname)
@@ -7153,8 +7166,9 @@ and derived_decoder tname arg_decoders j path =
     let rec go acc = function
       | [] -> Ok (VConstr (ctor, List.rev acc))
       | (fname, te) :: rest ->
-        let key = match fname with Some n -> n | None -> "" in
-        (match read_field venv ~defaults key te j path with
+        let name = match fname with Some n -> n | None -> "" in
+        let key = if by_name then name else doc_key ctor name in
+        (match read_field venv ~defaults ~name key te j path with
          | Ok v      -> go (v :: acc) rest
          | Error msg -> Error msg)
     in
@@ -7169,10 +7183,13 @@ and derived_decoder tname arg_decoders j path =
    value. A document has null where the language has nothing, and
    `Decode.optional` already reads absent and null alike, so a default
    answers for both. *)
-and read_field venv ?(defaults = []) key te j path =
+and read_field venv ?(defaults = []) ?name key te j path =
   let kvs = match j with `Assoc kvs -> kvs | _ -> [] in
+  (* A default belongs to the field, so it is found by the field's name,
+     which the key of a document need not be. *)
+  let name = Option.value name ~default:key in
   let absent () =
-    match List.assoc_opt key defaults with
+    match List.assoc_opt name defaults with
     | Some d -> Some (eval (ctor_env ()) d)
     | None -> None
   in
@@ -7287,7 +7304,7 @@ and json_of_value (v : value) : Yojson.Basic.t =
          List.concat (List.map2 (fun n v ->
            match n, v with
            | Some _, VConstr (Ctor.Builtin "None", []) -> []   (* absent, not null *)
-           | Some name, v -> [(name, json_of_value v)]
+           | Some name, v -> [(doc_key ctor name, json_of_value v)]
            | None, _ -> []) names vals)
        in
        `Assoc pairs
@@ -7322,13 +7339,13 @@ and encoded_with tname arg_encoders v =
           "'%s' takes %d type argument(s)" tname (List.length params)))
     in
     (match v with
-     | VConstr (_, vals) when List.length vals = List.length fields ->
+     | VConstr (vc, vals) when List.length vals = List.length fields ->
        let pairs =
          List.concat (List.map2 (fun (fname, te) x ->
            match fname, x with
            (* A field holding None is left out rather than written as null. *)
            | Some _, VConstr (Ctor.Builtin "None", []) -> []
-           | Some name, x -> [(name, json_of_typed venv te x)]
+           | Some name, x -> [(doc_key vc name, json_of_typed venv te x)]
            | None, _ -> []) fields vals)
        in
        VJson (`Assoc pairs)
@@ -7363,14 +7380,14 @@ and reader_value tname =
   | None -> raise (EvalError (Printf.sprintf "no reader for type '%s'" tname))
   | Some (ctor, _, fields) ->
     (match cmdline_parts fields with
-     (* No record field: every field is a flag, which is what the decoder
-        already reads. *)
-     | None -> decoder_value tname
+     (* No record field: every field is a flag, read by its name. *)
+     | None ->
+       VDecoder (fun j path -> derived_decoder ~by_name:true tname [] j path)
      | Some (fname, ftype, aname, ate) ->
        VDecoder (fun j path ->
          (* The flags are read from the same object, not from a key of their
             own: `--port` is at the top of what `Args` built. *)
-         match derived_decoder ftype [] j path with
+         match derived_decoder ~by_name:true ftype [] j path with
          | Error msg -> Error msg
          | Ok flags ->
            let written =

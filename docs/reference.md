@@ -2702,6 +2702,45 @@ names: with `type Quantity = String`, a `Quantity` field is a string in the
 document. A field of type `JSON` holds whatever the document holds there,
 unread.
 
+### A field's key in a document
+
+A document can spell a key in a way a field name cannot be: capitalised, as
+`Port`, or with `$`, `-` or `.`, as `$ref` or `x-kubernetes-list-type`.
+Write the key as a string between the field's name and its type:
+
+```ocaml
+type DaemonEndpoint(port "Port": Int)
+type Props(ref "$ref": Option String = None, list_type "x-kubernetes-list-type": Option String = None)
+```
+
+The derived decoder reads the field from that key, and the derived encoder
+and `JSON.of` write it there. The same holds for TOML and YAML. A field with
+no key is read and written by its name, as before.
+
+The key is for documents only. In wand code the field is its name:
+`DaemonEndpoint(port = 10250)`, `e.port`, patterns and updates. A command
+line is not a document either, so `T.parser` reads the flag by the field's
+name: `--port`.
+
+An error names the key, since it describes the document:
+
+```ocaml
+JSON.decode DaemonEndpoint.decoder (JSON.parse! `{"port": 1}`)
+-- Error(".Port: no such field")
+```
+
+Two fields of one constructor cannot read one key, whether the key is
+written or is a field's own name:
+
+```ocaml
+type A(port "x": Int, x: Int)
+-- fields 'port' and 'x' of 'A' both read the key "x" in a document;
+-- give one of them another key
+```
+
+The key is part of the type's shape: `wand f` keeps it, and the interface
+section of `wand.pkg` records it.
+
 ### Writing it back out
 
 The same type gives an encoder. It is an ordinary function, not a type of

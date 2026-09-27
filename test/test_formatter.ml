@@ -1036,6 +1036,19 @@ let test_wrapped_sum_has_no_trailing_space () =
   assert_contains "the = ends the first line" out "type DeploymentStrategyType =\n  A";
   assert_idempotent "wrapped sum" src
 
+(* A field's key in a document is written between its name and its type,
+   and survives formatting in both layouts. *)
+let test_a_field_key_is_kept () =
+  assert_contains "on one line" (fmt "type D(port   \"Port\" : Int)\n1")
+    "type D(port \"Port\": Int)";
+  assert_idempotent "one line" "type D(port \"Port\": Int)\n1";
+  let wide =
+    "type S(ref \"$ref\": Option String = None, list_type \"x-kubernetes-list-type\": \
+     Option String = None, kind: Option String = None)\n1" in
+  assert_contains "wrapped" (fmt wide)
+    "  list_type \"x-kubernetes-list-type\": Option String = None,";
+  assert_idempotent "wrapped" wide
+
 (* A named field's type may be a function, written bare: the comma or the
    closing parenthesis ends the field, so the parentheses say nothing. The
    formatter has to print it bare once the parser takes it, or a writer puts
@@ -1992,6 +2005,7 @@ let () =
       Alcotest.test_case "no blank after doc" `Quick test_no_blank_between_doc_and_binding;
       Alcotest.test_case "wide type wraps" `Quick test_wide_type_definition_wraps;
       Alcotest.test_case "a wrapped sum has no trailing space" `Quick test_wrapped_sum_has_no_trailing_space;
+      Alcotest.test_case "a field key is kept" `Quick test_a_field_key_is_kept;
       Alcotest.test_case "named field arrow" `Quick test_named_field_arrow_loses_brackets;
       Alcotest.test_case "interface settles" `Quick test_interface_and_implement_settle;
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;
