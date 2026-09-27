@@ -3985,6 +3985,16 @@ let rec infer tenv (env : env) (e : expr) : typ =
     let env' = infer_pat tenv p held env in
     infer tenv env' body
   | Annot (te, e) ->
+    (* A top-level `let x : Int = "s"` is an `Annot` with no location of its
+       own, so a mismatch between the written type and the value was
+       reported with no line or column. It takes the value's. An error
+       found deeper inside the value keeps the location it already has. *)
+    let at f =
+      match loc_of_expr e with
+      | Some l -> (try f () with TypeError msg -> raise (TypeErrorAt (l, msg)))
+      | None -> f ()
+    in
+    at (fun () ->
     let (t, written) = type_of_te_bound_with_vars [] te in
     (* A written signature over a lambda says what the parameters are, so the
        parameters are bound to it before the body is read. Inferring the body
@@ -4042,7 +4052,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
           Int` readable at all. *)
        unify_expected ~expected:t ~got:(infer tenv env e);
        check_written_vars written;
-       t)
+       t))
   | Located (loc, e) ->
     let outer = !cur_loc in
     cur_loc := Some loc;
@@ -5188,6 +5198,21 @@ let builtin_tenv : typedef_env = [
   ("CommandLine", command_line_tdef);
 ]
 
+(* The built-in type a constructor written bare belongs to. `Ok` and
+   `Error` are `Result`'s, which is not in the table above. A type whose
+   constructors are written with their module (`HTTP.GET`) leaves the bare
+   name free. *)
+let builtin_ctor_owner name =
+  match name with
+  | "Ok" | "Error" -> Some "Result"
+  | _ ->
+    List.find_map (fun (tname, tdef) ->
+      match tdef with
+      | Variants (_, _, ctors)
+        when not (List.mem_assoc tname module_only_ctors)
+             && List.exists (fun c -> c.name = name) ctors -> Some tname
+      | _ -> None) builtin_tenv
+
 (* Every function a file calls comes from a module it imported, so nothing
    is in scope here. `Ok` and `Error` are constructors of a built-in type,
    which the typechecker knows about elsewhere. *)
@@ -5771,6 +5796,16 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
               fail_at_opt c.loc (Printf.sprintf
                 "constructor '%s' declares field '%s' twice" c.name f);
             Hashtbl.add seen_fields f ()) c.fields;
+        (* A built-in constructor is in scope in every file, so a
+           declaration cannot take its name. `type A = None | Other` used to
+           be accepted, and after it every `None` in the file was an `A`:
+           `let x : Option Int = None` said "expected Option Int, got A". *)
+        (match builtin_ctor_owner c.name with
+         | Some owner ->
+           fail_at_opt c.loc (Printf.sprintf
+             "'%s' is a constructor of the built-in type '%s', so a \
+              declaration cannot take its name; rename this one" c.name owner)
+         | None -> ());
         (match Hashtbl.find_opt seen_ctors c.name with
          | Some owner ->
            let where =

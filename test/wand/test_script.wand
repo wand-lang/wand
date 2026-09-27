@@ -86,11 +86,11 @@ let madd x y = x + y
 test "multi-equation two args" (fn t ->
   t.eq "7, 9, 5" "%{madd 3 4}, %{madd 0 9}, %{madd 5 0}")
 
-type Opt = None | Some Int
-let show_opt None = "nothing"
-let show_opt (Some n) = "just %{n}"
+type Opt = Nothing | Just Int
+let show_opt Nothing = "nothing"
+let show_opt (Just n) = "just %{n}"
 test "constructor patterns" (fn t ->
-  t.eq "nothing, just 42" "%{show_opt None}, %{show_opt (Some 42)}")
+  t.eq "nothing, just 42" "%{show_opt Nothing}, %{show_opt (Just 42)}")
 
 let label 1 = "one"
 let label 2 = "two"

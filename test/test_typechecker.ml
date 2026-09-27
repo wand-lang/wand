@@ -631,6 +631,29 @@ match Color.decoder with
 | _ -> "ok"|}
     "ok"
 
+(* A built-in constructor is in scope everywhere, so a declaration cannot
+   take its name. `type A = None | Other` was accepted, and every `None`
+   after it was an `A`. *)
+let test_builtin_constructor_names_are_taken () =
+  err_contains "None"
+    "type A = None | Other\n1"
+    "'None' is a constructor of the built-in type 'Option'";
+  err_contains "Some"
+    "type A = Some | Other\n1"
+    "'Some' is a constructor of the built-in type 'Option'";
+  err_contains "Ok"
+    "type A = Ok | Other\n1"
+    "'Ok' is a constructor of the built-in type 'Result'";
+  ok "a constructor written with its module leaves the bare name free"
+    "type M = GET | Other\nmatch GET with\n| GET -> 1\n| Other -> 2" "1"
+
+(* A written type on a top-level binding has no location of its own, so a
+   mismatch between it and the value was reported with no line or column. *)
+let test_annotation_mismatch_has_a_position () =
+  err_contains "a binding's written type"
+    "1\nlet x : Int = \"s\"\nx"
+    "2:15: expected Int, got String"
+
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
     {|type Pod (name: String, restarts: Int)
@@ -2332,6 +2355,10 @@ let () =
     ];
     "derived decoders", [
       Alcotest.test_case "underivable types say why" `Quick test_underivable_types_say_why;
+      Alcotest.test_case "built-in constructor names are taken" `Quick
+        test_builtin_constructor_names_are_taken;
+      Alcotest.test_case "an annotation mismatch has a position" `Quick
+        test_annotation_mismatch_has_a_position;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];

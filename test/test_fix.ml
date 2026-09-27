@@ -124,16 +124,16 @@ let test_refuses_unfixable_type_error () =
 
 (* ── A constructor that swallowed an argument ────────────────────────────── *)
 
-(* Parentheses after a constructor are its payload, so `f None (1)` parsed
-   as `f (None 1)`. A nullary constructor cannot own the bracket, so the
+(* Parentheses after a constructor are its payload, so `f Nothing (1)` parsed
+   as `f (Nothing 1)`. A nullary constructor cannot own the bracket, so the
    checker hands it back to the call around it: the file is what it looks
    like and there is nothing to correct. It used to be an error carrying a
    correction that bracketed the constructor. *)
 let test_bare_constructor_needs_no_fix () =
   let (fixed, applied) =
-    fix "type Opt = None | Some Int\nlet f a b = b\nlet r = f None (1)\n" in
+    fix "type Opt = Nothing | Just Int\nlet f a b = b\nlet r = f Nothing (1)\n" in
   Alcotest.(check string) "left exactly as written"
-    "type Opt = None | Some Int\nlet f a b = b\nlet r = f None (1)\n" fixed;
+    "type Opt = Nothing | Just Int\nlet f a b = b\nlet r = f Nothing (1)\n" fixed;
   Alcotest.(check (list string)) "nothing reported" [] (codes applied)
 
 (* The qualified spelling too, which is the one a stdlib type gets. The
@@ -147,10 +147,10 @@ let test_qualified_constructor_needs_no_fix () =
   Alcotest.(check (list string)) "nothing reported" [] (codes applied)
 
 (* With no call to hand the argument to there is still an error, and
-   bracketing does not answer it -- `(None) (1)` applies it just the same --
+   bracketing does not answer it -- `(Nothing) (1)` applies it just the same --
    so no correction is carried. *)
 let test_payload_with_no_call () =
-  let d = refuse "type Opt = None | Some Int\nlet r = None (1)\n" in
+  let d = refuse "type Opt = Nothing | Just Int\nlet r = Nothing (1)\n" in
   Alcotest.(check bool) "says the one thing there is to say" true
     (Lint.contains (Diag.legacy d) "with nothing after it")
 
