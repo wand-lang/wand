@@ -2578,7 +2578,10 @@ and load_module src_ref ~cache ~loading ~evaluate =
          |> List.filter (fun (n, _) -> not (is_private n)) in
        let own_type = List.filter (fun (n, _) -> not (is_private n)) own_type in
        let own = local_tenv_of prog in
-       let own_names = List.map fst own in
+       (* What this module's declarations mean, read the way its own
+          typecheck read them: its types first, then its imports under the
+          names it gave them. *)
+       let module_names = own_type_names @ imported.type_names in
        (* A derived decoder reads the field types off the declaration, and a
           field that names one of the module's own types has to name it
           canonically: two modules may each declare a `Meta`, and the
@@ -2588,7 +2591,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
           here, where the canonicalised declaration is. *)
        if evaluate then
          List.iter (fun (n, d) ->
-           match Module_types.canonicalise_tdef ~modul:path own_names d with
+           match Module_types.canonicalise_tdef module_names d with
            | Ast.Variants (_, params, [ctor])
              when ctor.Ast.fields <> []
                   && List.for_all (fun (fn, _) -> fn <> None) ctor.Ast.fields ->
@@ -2599,7 +2602,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
        let full_import =
          { tenv = List.map (fun (n, d) ->
                     (Module_types.canonical_type ~modul:path n,
-                     Module_types.canonicalise_tdef ~modul:path own_names d))
+                     Module_types.canonicalise_tdef module_names d))
                     own
                   @ imported.tenv;
            type_env;
@@ -2617,7 +2620,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
            load_effects = own_load_eff } in
        (full_import, own_type, own_eval,
         List.map (fun (n, d) ->
-          (n, Module_types.canonicalise_tdef ~modul:path own_names d)) own,
+          (n, Module_types.canonicalise_tdef module_names d)) own,
         prog.Ast.docs @ imp_docs, own_load_eff))
   in
   Hashtbl.replace cache (module_cache_key ~evaluate path) result;

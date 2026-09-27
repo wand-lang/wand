@@ -272,6 +272,66 @@ let test_load_effects_are_transitive () =
       if not (Lint.contains m "performs Shell") then
         Alcotest.failf "expected Shell in: %s" m)
 
+(* ── A declaration means what its own module meant ─────────────── *)
+
+(* A module's type declarations travel to the importer, and a field that
+   named a type through one of the module's own imports was read with the
+   importer's names instead. `core` writes `metadata : M.Meta` with
+   `let M = import ./meta`; a file that bound the same module as `X` got
+   "unknown type 'M.Meta'", and it worked only when both files happened to
+   use one alias. Kubernetes types generated one module per group-version
+   refer across modules like this in nearly every kind. *)
+let with_meta_core core f =
+  with_module_dir (fun dir ->
+    write_file (Filename.concat dir "meta.wand") "type Meta(name: String)\n";
+    write_file (Filename.concat dir "core.wand") core;
+    f (Filename.concat dir "meta") (Filename.concat dir "core"))
+
+let test_qualified_field_type_resolves_in_its_module () =
+  with_meta_core
+    "let M = import ./meta\ntype Pod(metadata: M.Meta, image: String)\n"
+    (fun meta core ->
+      Alcotest.(check (result string string))
+        "the importer's alias for the module does not matter"
+        (Ok "web")
+        (run (Printf.sprintf {|let X = import %s
+let Core = import %s
+let p = Core.Pod(metadata = X.Meta(name = "web"), image = "nginx")
+p.metadata.name|} meta core));
+      Alcotest.(check (result string string))
+        "and its derived decoder reads the field as the module's own type"
+        (Ok "true")
+        (run (Printf.sprintf {|import JSON
+let X = import %s
+let Core = import %s
+let doc = JSON.parse! `{"metadata":{"name":"db"},"image":"pg"}`
+match JSON.decode Core.Pod.decoder doc with
+  | Ok p -> p == Core.Pod(metadata = X.Meta(name = "db"), image = "pg")
+  | Error _ -> false|} meta core)))
+
+(* The same for a name the module selected with a destructuring import: the
+   importer has no `Meta` of its own, so the bare name meant nothing. *)
+let test_selected_field_type_resolves_in_its_module () =
+  with_meta_core
+    "let {Meta} = import ./meta\ntype Pod(metadata: Meta, image: String)\n"
+    (fun meta core ->
+      Alcotest.(check (result string string))
+        "a type the module selected is the module's, not the importer's"
+        (Ok "web")
+        (run (Printf.sprintf {|let X = import %s
+let Core = import %s
+let p = Core.Pod(metadata = X.Meta(name = "web"), image = "nginx")
+p.metadata.name|} meta core));
+      Alcotest.(check (result string string))
+        "and a file that never imports the module can still decode it"
+        (Ok "db")
+        (run (Printf.sprintf {|import JSON
+let Core = import %s
+let doc = JSON.parse! `{"metadata":{"name":"db"},"image":"pg"}`
+match JSON.decode Core.Pod.decoder doc with
+  | Ok p -> p.metadata.name
+  | Error e -> e|} core)))
+
 (* ── Suite ───────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -310,5 +370,11 @@ let () =
     "aliases", [
       Alcotest.test_case "used inside its module"   `Quick test_module_alias_used_inside;
       Alcotest.test_case "matched from outside"     `Quick test_module_alias_pattern;
+    ];
+    "declarations", [
+      Alcotest.test_case "a qualified field type is its module's" `Quick
+        test_qualified_field_type_resolves_in_its_module;
+      Alcotest.test_case "a selected field type is its module's" `Quick
+        test_selected_field_type_resolves_in_its_module;
     ];
   ]

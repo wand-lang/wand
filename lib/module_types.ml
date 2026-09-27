@@ -70,15 +70,27 @@ let stdlib_base_dir = "<stdlib>"
    own keep their short names. *)
 let canonical_type ~modul name = modul ^ "#" ^ name
 
-(* A declaration as it travels: references to the module's own types are
-   canonical, so rebuilding a constructor's type anywhere resolves to the
-   same type. A file that reads the declaration never writes these names. *)
-let canonicalise_tdef ~modul (own : string list) (tdef : Ast.type_def) =
+(* A declaration as it travels: every type it names is canonical, so
+   rebuilding a constructor's type anywhere resolves to the same type. A file
+   that reads the declaration never writes these names.
+
+   `names` is the declaring module's own map from what it writes to what
+   that means -- its own types, and `M.Meta` for an import it bound as `M`.
+   Reading the declaration against the importer's map instead made
+   `metadata : M.Meta` mean whatever the importer called `M`, or nothing:
+   a file that bound the same module as `Meta` got "unknown type 'M.Meta'". *)
+let canonicalise_tdef (names : (string * string) list) (tdef : Ast.type_def) =
   let rec te (t : Ast.type_expr) : Ast.type_expr =
     match t with
-    | Ast.TEName n when List.mem n own -> Ast.TEName (canonical_type ~modul n)
-    | Ast.TEName _ | Ast.TEVar _ -> t
-    | Ast.TEQual (_, _) -> t
+    | Ast.TEName n ->
+      (match List.assoc_opt n names with
+       | Some c -> Ast.TEName c
+       | None -> t)
+    | Ast.TEQual (m, n) ->
+      (match List.assoc_opt (m ^ "." ^ n) names with
+       | Some c -> Ast.TEName c
+       | None -> t)
+    | Ast.TEVar _ -> t
     | Ast.TEApp (f, a) -> Ast.TEApp (te f, te a)
     | Ast.TETuple ts -> Ast.TETuple (List.map te ts)
     | Ast.TEFun (a, b, e) -> Ast.TEFun (te a, te b, e)
