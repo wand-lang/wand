@@ -4694,7 +4694,7 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     if !exhausted then flush_from stages;
     finish ~early:(not !exhausted))
 
-(* What an item of `each_par` gives back when its work ends: a connection
+(* What an item of `Par.each_stream` gives back when its work ends: a connection
    is closed. Set where connections are made. *)
 let each_par_release : (value -> unit) ref = ref (fun _ -> ())
 
@@ -4926,8 +4926,8 @@ let stream_builtins : env = [
     | VStream d ->
       (match limit with
        | VInt n -> stream_each_par n f d; VUnit
-       | _ -> raise (EvalError "Stream.each_par: expected a limit"))
-    | _ -> raise (EvalError "Stream.each_par: expected Stream")))));
+       | _ -> raise (EvalError "Par.each_stream: expected a limit"))
+    | _ -> raise (EvalError "Par.each_stream: expected Stream")))));
   ("stream_serve", VBuiltin (fun grace -> VBuiltin (fun limit ->
     VBuiltin (fun f -> VBuiltin (function
     | VStream d ->

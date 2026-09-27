@@ -51,7 +51,7 @@ type typ =
      which is what makes a function taking one safe. *)
   | TCommand
   (* A connection a listening port accepted, open for the length of the
-     work `Stream.each_par` gives it. *)
+     work `Par.each_stream` gives it. *)
   | TConnection
   (* A resource: how to acquire an 'a and give it back, and what doing
      either performs. The effects are carried rather than hidden -- a bracket

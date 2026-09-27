@@ -2,12 +2,12 @@ uses {Clock}
 
 -- Fork-join parallelism, and nothing else.
 --
--- Both functions take the most workers to run at once as their first
--- argument, stated rather than inferred: how much a script may do at the
--- same time is a decision about the machine it runs on.
+-- `map`, `each` and `each_stream` take the most workers to run at once as
+-- their first argument, stated rather than inferred: how much a script may
+-- do at the same time is a decision about the machine it runs on.
 --
 -- Workers never outlive the call. There is no handle to a running one, no
--- way to start one outside these two functions, and nothing to await -- so
+-- way to start one outside this module, and nothing to await -- so
 -- there is no unstructured concurrency to build out of them, and no
 -- function needs a different colour for being called from one.
 --
@@ -53,6 +53,25 @@ let map limit f xs = par_map limit f xs
 -- 1
 -- 2
 let each limit f xs = par_each limit f xs
+
+-- Read a stream and run `f` on each element, at most `limit` at a time,
+-- side by side: `each` for a stream. At the limit it stops reading until
+-- one finishes, so a source that waits -- a port accepting connections --
+-- waits too.
+--
+-- Net.listen :9000 |> Par.each_stream 64 echo!
+--
+-- The elements run on the calling domain, as items do once they perform an
+-- effect. It runs until the stream ends. An element whose `f` raises stops
+-- the others and the read, and the failure is raised; to go on past a
+-- failed element, catch it in `f`. An element that is a connection is
+-- closed when `f` ends.
+--
+-- >> Stream.of_list [1, 2, 3] |> Par.each_stream 2 (fn x -> IO.println "%{x}")
+-- 1
+-- 2
+-- 3
+let each_stream limit f s = stream_each_par limit f s
 
 -- Run every thunk at once and answer with the first to finish. The rest
 -- are told to stop, and every one of them is joined before this returns.

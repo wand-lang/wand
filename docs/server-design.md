@@ -8,7 +8,7 @@ in four records, each released once:
    that exists. Released in 0.81.0.
 2. Shared state: `Shared`, `Par.all!` and `Clock.every`. Released in
    0.82.0.
-3. `server-design.md` (this record): `Net.listen`, `Stream.each_par` and
+3. `server-design.md` (this record): `Net.listen`, `Par.each_stream` and
    `HTTP.serve`.
 4. `child-process-design.md`: two-way child processes and stderr streams.
 
@@ -27,12 +27,12 @@ other. Erlang/BEAM does that better, and wand does not compete there.
 uses {Net.Listen(:8080), Shared, IO}
 
 Net.listen :8080
-|> Stream.each_par 256 handle
+|> Par.each_stream 256 handle
 ```
 
 - `Net.listen port`: a `Stream` of connections. A new manifest label
   `Net.Listen(port)`, separate from egress `Net(host)`.
-- `Stream.each_par limit f s`: runs `f` on each element side by side, on
+- `Par.each_stream limit f s`: runs `f` on each element side by side, on
   the calling domain. `limit` is the most handled at once. At the limit,
   reading stops, so accepting stops and new clients wait in the OS queue
   (backpressure). An element that raises stops the others and the read,
@@ -41,7 +41,7 @@ Net.listen :8080
   into a 500. An element that is a connection is closed when `f` ends.
 - Connections: `Net.read_line`, `Net.read`, `Net.write`, `Net.write!` and
   `Net.peer`. Reads and writes are operations under `Net.Listen`.
-- `HTTP.serve! server handler`: `Net.listen` + `Stream.each_par` + HTTP
+- `HTTP.serve! server handler`: `Net.listen` + `Par.each_stream` + HTTP
   parsing, as an `HTTP.Server` record says.
 - TLS is out of scope for v1; terminate it at a proxy.
 
@@ -83,7 +83,7 @@ test "unknown user is 404" (fn t ->
 
 Outbound calls from a handler are mocked with `Test.with_http` as today.
 
-New names: `Net.listen`, `Net.Listen`, `Stream.each_par`, `HTTP.serve`,
+New names: `Net.listen`, `Net.Listen`, `Par.each_stream`, `HTTP.serve`,
 `HTTP.Incoming`, `HTTP.incoming`, `HTTP.segments`, `HTTP.reply`.
 
 ## Service needs
@@ -195,7 +195,7 @@ stay in 0.x minors until 1.0.
 
 ## Order
 
-1. `Net.listen` and `Stream.each_par`, with the `Net.Listen(port)` label.
+1. `Net.listen` and `Par.each_stream`, with the `Net.Listen(port)` label.
    Done (10ab71b).
 2. `HTTP.serve`, with request limits, a per-request deadline and graceful
    shutdown. Done: `HTTP.serve! HTTP.Server(port = :8080) route`. The
@@ -220,7 +220,7 @@ Measured with `ab` against `HTTP.serve!` on this machine (16 cores, OCaml
 
 For scale, Python's `ThreadingHTTPServer` answered about 3,500 a second
 with p99 32 ms and worst cases over a second; a bare `Net.listen` and
-`Stream.each_par` answers about 22,000.
+`Par.each_stream` answers about 22,000.
 
 - **Correct under load.** No request failed at 1 to 256 clients; 5,000
   concurrent `Shared` updates counted 5,000; 5,000 concurrent log lines

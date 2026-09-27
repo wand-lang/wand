@@ -8,13 +8,13 @@ uses {Net.Listen}
 --
 -- uses {Net.Listen(:8080), IO}
 --
--- A connection is open for the length of the work `Stream.each_par` gives
+-- A connection is open for the length of the work `Par.each_stream` gives
 -- it, and closed when that work ends.
 
 -- The connections accepted on `port`, one at a time, for as long as the
 -- stream is read. Nothing listens until a terminal operation reads it.
 --
--- Net.listen :8080 |> Stream.each_par 256 (fn conn -> serve conn)
+-- Net.listen :8080 |> Par.each_stream 256 (fn conn -> serve conn)
 --
 -- A port another process holds, or one below 1024 without the privilege
 -- for it, raises when the read begins.

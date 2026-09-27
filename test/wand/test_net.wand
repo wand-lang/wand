@@ -5,7 +5,6 @@ import List
 import Net
 import Option
 import Par
-import Stream
 
 let {test, group} = import Test
 
@@ -29,7 +28,7 @@ group "serving" (fn () -> [
     t.eq
       (List.map (fn i -> Ok "GET /%{i} HTTP/1.1") (List.range 1 20))
       (Par.all! [
-        fn () -> (Net.listen :18471 |> Stream.each_par 8 answer!; []),
+        fn () -> (Net.listen :18471 |> Par.each_stream 8 answer!; []),
         fn () -> (
           Clock.sleep 200ms;
           Par.map 20 (fn i -> $(curl -s http://127.0.0.1:18471/%{i})) (List.range 1 20)
@@ -39,11 +38,11 @@ group "serving" (fn () -> [
     t.eq
       "GET /once HTTP/1.1"
       (Par.all! [
-        fn () -> (Net.listen :18472 |> Stream.each_par 1 answer!; ""),
+        fn () -> (Net.listen :18472 |> Par.each_stream 1 answer!; ""),
         fn () -> (Clock.sleep 200ms; $(curl -s --max-time 5 http://127.0.0.1:18472/once))
       ])),
   test "a port the manifest does not name is refused" (fn t ->
-    t.raises (fn () -> Net.listen :18479 |> Stream.each_par 1 (fn _ -> ())))
+    t.raises (fn () -> Net.listen :18479 |> Par.each_stream 1 (fn _ -> ())))
 ])
 
 -- Stopping a branch stops the work it started: here the server's own
@@ -52,6 +51,6 @@ test "stopping a branch stops the work inside it" (fn t ->
   t.eq
     "stopped"
     (Par.all! [
-      fn () -> (Net.listen :18473 |> Stream.each_par 4 (fn _ -> ()); "server ended"),
+      fn () -> (Net.listen :18473 |> Par.each_stream 4 (fn _ -> ()); "server ended"),
       fn () -> (Clock.sleep 200ms; "stopped")
     ]))

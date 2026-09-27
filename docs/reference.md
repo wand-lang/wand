@@ -4296,7 +4296,6 @@ chunks     : Int -> Stream {..} 'a -> Stream {..} (List 'a)
 unique     : Stream {..} 'a -> Stream {..} 'a
 fold_left : ('a -> 'b -> 'a ! 'e) -> 'a -> Stream {..} 'b -> 'a ! 'e
 each      : ('a -> 'b ! 'e) -> Stream {..} 'a -> Unit ! 'e
-each_par  : Int -> ('a -> 'b ! 'e) -> Stream {..} 'a -> Unit ! 'e
 to_list   : Stream {..} 'a -> List 'a ! 'e
 count     : Stream {..} 'a -> Int ! 'e
 last      : Stream {..} 'a -> Option 'a ! 'e
@@ -4325,13 +4324,6 @@ FS.stream_lines /var/log/app.log
 
 `take n` stops the read after n elements. The memory and the reading are
 both bounded. `to_list` reads everything. Its name says so.
-
-`each_par limit f` runs `f` on each element side by side, at most `limit` at
-a time, on the calling domain. At the limit it stops reading until one ends,
-so a source that waits, such as a port accepting connections, waits too. An
-element whose `f` raises stops the others and the read, and the failure is
-raised; to go on past one, catch it in `f`. An element that is a connection
-is closed when its `f` ends.
 
 `take_while` is the same gate with a predicate: it stops at the first
 element the predicate refuses. `drop` and `drop_while` skip from the front,
@@ -4709,7 +4701,7 @@ peer      : Connection -> String
 
 Listening on a port, and reading and writing the connections it accepts.
 `listen` is a stream of connections, and nothing listens until a
-terminal operation reads it. `Stream.each_par` is the one that serves: it
+terminal operation reads it. `Par.each_stream` is the one that serves: it
 gives each connection to a function, side by side, and closes it when that
 function ends.
 
@@ -4721,7 +4713,7 @@ let echo! conn =
   | Some line -> Net.write! "%{line}\n" conn
   | None -> ()
 
-Net.listen :9000 |> Stream.each_par 64 echo!
+Net.listen :9000 |> Par.each_stream 64 echo!
 ```
 
 `read_line` answers the next line without its line ending, and `None` once
@@ -5604,6 +5596,7 @@ URLs say, not of where they point.
 ```ocaml
 map     : Int -> ('a -> 'b ! 'e) -> List 'a -> List (Result String 'b) ! 'e
 each    : Int -> ('a -> 'b ! 'e) -> List 'a -> Unit ! 'e
+each_stream : Int -> ('a -> 'b ! 'e) -> Stream {..} 'a -> Unit ! 'e
 race    : List (Unit -> 'a ! 'e) -> Result String 'a ! 'e
 all!    : List (Unit -> 'a ! 'e) -> 'a ! {Raise | 'e}
 timeout : Duration -> (Unit -> 'a ! {Clock | 'e}) -> Result String 'a ! {Clock | 'e}
@@ -5629,8 +5622,19 @@ Par.map 4 (fn m -> Map.get! "k" m) [{k = 1}, Map.empty]
                                            -- [Ok 1, Error "map key not found: k"]
 ```
 
+`each_stream` is `each` for a stream. It runs `f` on each element side by
+side, at most `limit` at a time, on the calling domain. At the limit it
+stops reading until one ends, so a source that waits, such as a port
+accepting connections, waits too. An element whose `f` raises stops the
+others and the read, and the failure is raised; to go on past one, catch
+it in `f`. An element that is a connection is closed when its `f` ends.
+
+```ocaml
+Net.listen :9000 |> Par.each_stream 64 echo!
+```
+
 A worker never outlives the call. There is no handle to a running worker.
-These two functions are the only way to start one. So there is nothing to
+The functions of this module are the only way to start one. So there is nothing to
 await, and no function changes because a worker calls it.
 
 `race` runs every thunk at once and answers with the first to finish:
