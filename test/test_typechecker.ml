@@ -666,6 +666,42 @@ let test_list_joins_and_pairs_say_how () =
     "'List.zip xs ys |> List.map (fn (x, y) -> ...)'";
   ok "++ still joins strings" "\"a\" ++ \"b\"" "ab"
 
+(* Two types may share a constructor name. `T.Ctor` says which, anywhere;
+   a bare name two types share is refused, except in a `match` arm over a
+   value whose type is already known, which says which by itself. *)
+let test_constructors_qualified_by_type () =
+  let decls =
+    "type PullPolicy = Always | Never | IfNotPresent\n\
+     type RestartPolicy = Always | OnFailure | Never\n" in
+  ok "built and matched through the type"
+    (decls ^ "let r = RestartPolicy.Never\n\
+              match r with\n\
+              | RestartPolicy.Always -> \"a\"\n\
+              | RestartPolicy.OnFailure -> \"o\"\n\
+              | RestartPolicy.Never -> \"n\"")
+    "n";
+  ok "a bare arm over a value whose type is known"
+    (decls ^ "let p = PullPolicy.Always\n\
+              match p with\n\
+              | Always -> \"a\"\n\
+              | Never -> \"n\"\n\
+              | IfNotPresent -> \"i\"")
+    "a";
+  ok "a name only one type has stays bare"
+    (decls ^ "let p = IfNotPresent\n\
+              match p with\n| PullPolicy.IfNotPresent -> 1\n| _ -> 2")
+    "1";
+  ok "and may be written with its type too"
+    "type Color = Red | Green\nlet c = Color.Green\nmatch c with\n| Green -> 1\n| Red -> 2"
+    "1";
+  err_contains "a bare name in an expression"
+    (decls ^ "let p = Always\np")
+    "'Always' is a constructor of both 'PullPolicy' and 'RestartPolicy': \
+     write 'PullPolicy.Always' or 'RestartPolicy.Always'";
+  err_contains "a bare arm whose type is not known yet"
+    (decls ^ "let f x = match x with\n  | Always -> 1\n  | _ -> 2\n1")
+    "'Always' is a constructor of both"
+
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
     {|type Pod (name: String, restarts: Int)
@@ -987,9 +1023,15 @@ let test_a_name_is_declared_once () =
   err_contains "twice in one declaration"
     "type A = Foo | Foo\nFoo"
     "constructor 'Foo' is declared twice in 'A'";
-  err_contains "across two declarations"
+  (* Two types may share a constructor name; a bare use says nothing about
+     which, and is refused with the spellings that do. *)
+  err_contains "a bare use of a name two types share"
     "type A = Foo | Bar\ntype B = Foo\nFoo"
-    "declared by 'A' and by 'B'";
+    "'Foo' is a constructor of both 'A' and 'B': write 'A.Foo' or 'B.Foo'";
+  ok "each written with its type"
+    "type A = Foo | Bar\ntype B = Foo | Baz\nlet b = B.Foo\n\
+     match b with\n| B.Foo -> \"b\"\n| B.Baz -> \"z\""
+    "b";
   err_contains "a type declared twice"
     "type A = Foo\ntype A = Bar\nBar"
     "'A' is declared twice";
@@ -2373,6 +2415,8 @@ let () =
         test_annotation_mismatch_has_a_position;
       Alcotest.test_case "list joins and pairs say how" `Quick
         test_list_joins_and_pairs_say_how;
+      Alcotest.test_case "constructors qualified by type" `Quick
+        test_constructors_qualified_by_type;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];

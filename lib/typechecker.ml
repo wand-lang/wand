@@ -2458,13 +2458,26 @@ let with_visible keys f =
   visible_canonical := keys @ saved;
   Fun.protect ~finally:(fun () -> visible_canonical := saved) f
 
+(* `T.Ctor` names the constructor of type `T`, however many other types
+   share the name; a bare name takes the first type that has it, and the
+   callers have already refused a bare name two types share. *)
 let find_ctor_in_tenv tenv name =
+  let (want_type, cname) =
+    match String.rindex_opt name '.' with
+    | Some i ->
+      (Some (String.sub name 0 i),
+       String.sub name (i + 1) (String.length name - i - 1))
+    | None -> (None, name)
+  in
   List.find_map (fun (tname, tdef) ->
     if not (nameable tname) then None else
+    match want_type with
+    | Some t when short_type_name tname <> t -> None
+    | _ ->
     match tdef with
     | Alias _ -> None
     | Variants (_, _, ctors) ->
-      (match List.find_opt (fun c -> c.name = name) ctors with
+      (match List.find_opt (fun c -> c.name = cname) ctors with
        | Some c -> Some (tname, c)
        | None -> None)
   ) tenv
@@ -2579,18 +2592,95 @@ let ctor_schemes_for tname tdef =
    in 1.2s.
 
    Cleared with the rest of the per-program state in `infer_program_`. *)
-let ctor_env_memo : (typedef_env * env) option ref = ref None
+let ctor_env_memo :
+  (typedef_env * env * (string * string list) list) option ref = ref None
+
+(* Every constructor in scope, under its bare name and under `T.Ctor`. A
+   bare name that two types in scope share is left out, and recorded with
+   the types that share it: which one it means is for the reader to say, or
+   -- in a pattern -- for the type being matched to say. *)
+let ctor_env_and_ambiguity (tenv : typedef_env) =
+  match !ctor_env_memo with
+  | Some (cached, result, amb) when cached == tenv -> (result, amb)
+  | _ ->
+    let per_type =
+      List.filter_map (fun (tname, tdef) ->
+        if nameable tname then Some (tname, ctor_schemes_for tname tdef)
+        else None) tenv
+    in
+    let owners : (string, string list) Hashtbl.t = Hashtbl.create 16 in
+    List.iter (fun (tname, schemes) ->
+      let short = short_type_name tname in
+      List.iter (fun (c, _) ->
+        let l = Option.value (Hashtbl.find_opt owners c) ~default:[] in
+        if not (List.mem short l) then Hashtbl.replace owners c (l @ [short]))
+        schemes) per_type;
+    let amb =
+      Hashtbl.fold (fun c l acc -> if List.length l > 1 then (c, l) :: acc else acc)
+        owners []
+    in
+    let result =
+      List.concat_map (fun (tname, schemes) ->
+        let short = short_type_name tname in
+        List.concat_map (fun (c, sch) ->
+          (if List.mem_assoc c amb then [] else [(c, sch)])
+          @ [(short ^ "." ^ c, sch)]) schemes) per_type
+    in
+    ctor_env_memo := Some (tenv, result, amb);
+    (result, amb)
 
 let tenv_to_ctor_env (tenv : typedef_env) : env =
-  match !ctor_env_memo with
-  | Some (cached, result) when cached == tenv -> result
-  | _ ->
-    let result =
-      List.concat_map (fun (tname, tdef) ->
-        if nameable tname then ctor_schemes_for tname tdef else []) tenv
+  fst (ctor_env_and_ambiguity tenv)
+
+(* The types that share a bare constructor name, when more than one does. *)
+let ctor_owners tenv name =
+  if String.contains name '.' then None
+  else List.assoc_opt name (snd (ctor_env_and_ambiguity tenv))
+
+let ambiguity_message name owners =
+  let quoted = List.map (fun t -> "'" ^ t ^ "'") owners in
+  let rec and_list = function
+    | [] -> ""
+    | [a] -> a
+    | [a; b] -> a ^ " and " ^ b
+    | a :: rest -> a ^ ", " ^ and_list rest
+  in
+  Printf.sprintf "'%s' is a constructor of %s%s: write %s" name
+    (if List.length owners = 2 then "both " else "") (and_list quoted)
+    (String.concat " or "
+       (List.map (fun t -> Printf.sprintf "'%s.%s'" t name) owners))
+
+(* A constructor named in an expression. A bare name two types share says
+   nothing about which, so it is refused with the spellings that do. *)
+let expr_ctor_name tenv name =
+  match ctor_owners tenv name with
+  | Some owners -> raise (TypeError (ambiguity_message name owners))
+  | None -> name
+
+(* Bare constructors in patterns that the matched type decided, for
+   V-CTOR1: where, the name, and the type it was read as. *)
+let relaxed_ctors : (Token.loc option * string * string) list ref = ref []
+
+(* A constructor named in a pattern. A bare name two types share is read as
+   the matched type's, when that type is already known -- a `match` arm,
+   whose scrutinee was inferred first. Anywhere the type is not yet known,
+   it is refused as it is in an expression. *)
+let pat_ctor_name tenv name t =
+  match ctor_owners tenv name with
+  | None -> name
+  | Some owners ->
+    let rec head t =
+      match repr t with
+      | TName n -> Some n
+      | TApp (f, _) -> head f
+      | _ -> None
     in
-    ctor_env_memo := Some (tenv, result);
-    result
+    (match head t with
+     | Some tname when List.mem (short_type_name tname) owners ->
+       let short = short_type_name tname in
+       relaxed_ctors := (!cur_loc, name, short) :: !relaxed_ctors;
+       short ^ "." ^ name
+     | _ -> raise (TypeError (ambiguity_message name owners)))
 
 (* ── Pattern inference ────────────────────────────────────────────────────── *)
 
@@ -2607,6 +2697,19 @@ let rec unwrap_ctor_type t =
     let (args, result) = unwrap_ctor_type rest in
     (arg :: args, result)
   | _ -> ([], t)
+
+(* Whether `m` is a type in scope with constructors, so that `m.Ctor` names
+   one of them. A module of the same name is asked first, by the callers. *)
+let is_ctor_type tenv m =
+  List.exists (fun (tname, tdef) ->
+    nameable tname && short_type_name tname = m
+    && (match tdef with Variants (_, _, _ :: _) -> true | _ -> false)) tenv
+
+let type_qualified_pat tenv m inner =
+  if is_ctor_type tenv m then Ast.qualify_ctor_pat m inner else None
+
+let type_qualified_expr tenv m inner =
+  if is_ctor_type tenv m then Ast.qualify_ctor_expr m inner else None
 
 let rec infer_pat tenv (p : pat) t (env : env) : env =
   match p with
@@ -2673,7 +2776,7 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     let env' = infer_pat tenv hp elem_t env in
     infer_pat tenv tp (TList elem_t) env'
   | PConstr (name, pats) ->
-    let name = ctor_name_for tenv name in
+    let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     let ctor_env = tenv_to_ctor_env tenv in
     (match (match builtin_result_scheme name with
             | Some _ as s -> s
@@ -2697,11 +2800,17 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
   | PQualified (m, inner) ->
     let (own, tenv') = module_first tenv m in
     if own = [] then
-      raise (TypeError (Printf.sprintf
-        "'%s' declares no types, so '%s' names nothing in it"
-        m (Ast.show_pat inner)));
+      (* Not a module: `T.Ctor` is type `T`'s constructor. *)
+      (match type_qualified_pat tenv m inner with
+       | Some p -> infer_pat tenv p t env
+       | None ->
+         raise (TypeError (Printf.sprintf
+           "'%s' declares no types, so '%s' names nothing in it"
+           m (Ast.show_pat inner))))
+    else
     with_visible (List.map fst own) (fun () -> infer_pat tenv' inner t env)
   | PConstrBare (name, ids) ->
+    let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     let named_fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
       | Some (_, ctor) -> List.exists (fun (dn, _) -> dn <> None) ctor.fields
@@ -2709,7 +2818,7 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     in
     infer_pat tenv (Ast.constr_bare_reading ~named_fields name ids) t env
   | PConstrNamed (name, bindings) ->
-    let name = ctor_name_for tenv name in
+    let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     (match find_ctor_in_tenv tenv name with
      | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s" name
          (module_only_hint tenv name)))
@@ -2834,8 +2943,11 @@ let rec ctors_of_type tenv (ctor_env : env) (t : typ) : (string * typ list) list
      | Some tname ->
        (match List.assoc_opt tname tenv with
         | Some (Variants (_, _, ctors)) ->
+          (* By `T.Ctor`: the bare name is not in the env when another
+             type in scope shares it. *)
+          let key c = short_type_name tname ^ "." ^ c.name in
           List.map (fun c ->
-            match List.assoc_opt c.name ctor_env with
+            match List.assoc_opt (key c) ctor_env with
             | Some s -> via_scheme c.name s
             | None -> (c.name, [])
           ) ctors
@@ -3073,6 +3185,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | Some (Namespace (_, claims)) -> TModule claims
      | _ -> assert false)
   | Constr name ->
+    let name = expr_ctor_name tenv name in
     let ctor_env = tenv_to_ctor_env tenv in
     (* A constructor with named fields is built by naming them. Supplying its
        fields positionally is silently wrong whenever two of them share a
@@ -3389,11 +3502,17 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Qualified (m, inner) ->
     let (own, tenv') = module_first tenv m in
     if own = [] then
-      raise (TypeError (Printf.sprintf
-        "'%s' declares no types, so '%s' names nothing in it"
-        m (Ast.show inner)));
+      (* Not a module: `T.Ctor` is type `T`'s constructor. *)
+      (match type_qualified_expr tenv m inner with
+       | Some e -> infer tenv env e
+       | None ->
+         raise (TypeError (Printf.sprintf
+           "'%s' declares no types, so '%s' names nothing in it"
+           m (Ast.show inner))))
+    else
     with_visible (List.map fst own) (fun () -> infer tenv' env inner)
   | ConstrBare (name, ids) ->
+    let name = expr_ctor_name tenv name in
     let named_fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
       | Some (_, ctor) -> List.exists (fun (dn, _) -> dn <> None) ctor.fields
@@ -3401,7 +3520,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
     in
     infer tenv env (Ast.constr_bare_construction ~named_fields name ids)
   | ConstrApp (name, fields, _) ->
-    let name = ctor_name_for tenv name in
+    let name = expr_ctor_name tenv (ctor_name_for tenv name) in
     (match find_ctor_in_tenv tenv name with
      (* A name that is a type rather than a constructor is not unknown, and
         saying so sends the reader looking for a declaration that is right
@@ -3483,7 +3602,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        construction reads it a few lines up. Without this an update through
        an alias -- `HTTP.Request(base, redirects = 0)` -- reported an
        unknown constructor for a type that builds perfectly well. *)
-    let name = ctor_name_for tenv name in
+    let name = expr_ctor_name tenv (ctor_name_for tenv name) in
     (match find_ctor_in_tenv tenv name with
      | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s"
          name (module_only_hint tenv name)
@@ -3736,7 +3855,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
                 let field_t c =
                   let written () =
                     type_of_te_bound bound (List.assoc label (named c)) in
-                  match List.assoc_opt c.name (tenv_to_ctor_env tenv) with
+                  match List.assoc_opt (short_type_name tname ^ "." ^ c.name)
+                          (tenv_to_ctor_env tenv) with
                   | None -> written ()
                   | Some sch ->
                     let (arg_ts, result_t) = unwrap_ctor_type (instantiate sch) in
@@ -5672,6 +5792,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   ctor_env_memo := None;
   visible_set := None;
   holes := [];
+  relaxed_ctors := [];
   let prog = settle_aliases ~init_tenv prog in
   (* Read before the items are walked, so an implementation can precede the
      interface it answers to, the way a function may call one defined below
@@ -5824,15 +5945,15 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
              "'%s' is a constructor of the built-in type '%s', so a \
               declaration cannot take its name; rename this one" c.name owner)
          | None -> ());
-        (match Hashtbl.find_opt seen_ctors c.name with
-         | Some owner ->
-           let where =
-             if owner = tname then Printf.sprintf "twice in '%s'" tname
-             else Printf.sprintf "by '%s' and by '%s'" owner tname
-           in
+        (* Two types may share a constructor name: `T.Ctor` says which, and
+           a bare use says nothing and is refused where it is written. One
+           type cannot name two constructors alike, since nothing could tell
+           them apart. *)
+        (match Hashtbl.find_opt seen_ctors (tname, c.name) with
+         | Some () ->
            fail_at_opt c.loc (Printf.sprintf
-             "constructor '%s' is declared %s" c.name where)
-         | None -> Hashtbl.add seen_ctors c.name tname)) ctors
+             "constructor '%s' is declared twice in '%s'" c.name tname)
+         | None -> Hashtbl.add seen_ctors (tname, c.name) ())) ctors
     | _ -> ()) prog.items;
   (* A value cannot take a name a type or a constructor already has. The two
      were accepted together and read by position: `Pod.decoder` gave the
@@ -5864,7 +5985,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       if Hashtbl.mem seen_types name then
         fail_at_opt loc (Printf.sprintf
           "'%s' is a type, so it cannot also name a value" name)
-      else if Hashtbl.mem seen_ctors name then
+      else if Hashtbl.fold (fun (_, c) () acc -> acc || c = name) seen_ctors false then
         fail_at_opt loc (Printf.sprintf
           "'%s' is a constructor, so it cannot also name a value" name)) bound
   ) prog.items;

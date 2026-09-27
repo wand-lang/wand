@@ -265,9 +265,13 @@ an alias to a single-constructor type builds and matches
 multi-constructor one is not a value. A type shows with the alias it was
 written as — `Pair Int (= (Int, Int))`.
 
-A name declares one thing. Two `type`s of one name, two constructors
-sharing one, a value taking the name of a type or a constructor, or a
-declaration over a built-in's name are all errors naming which to rename.
+A name declares one thing. Two `type`s of one name, two constructors of
+one name in one type, a value taking the name of a type or a constructor,
+or a declaration over a built-in's name are all errors naming which to
+rename. Two types may share a constructor name: write it with its type,
+`PullPolicy.Always` (or `apps.PullPolicy.Always`). A bare shared name is an
+error, except in a `match` arm over a value whose type is already known;
+`V-CTOR1` reports those arms for `--strict`.
 
 Arithmetic (`+ - * /`) works on `Int` and `Float` alike — one numeric
 type per expression, never mixed implicitly (`Float.of_int` /

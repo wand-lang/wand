@@ -2102,9 +2102,10 @@ let run_item ?modul env item =
        canonical name, which a field type mentions, and under the short one,
        which a file writes as `T.decoder`. *)
     let ident name =
+      let k = Ctor.make_key ~type_name:tname name in
       match modul with
-      | Some m -> Ctor.Owned (m, name)
-      | None -> Ctor.Local name
+      | Some m -> Ctor.Owned (m, k)
+      | None -> Ctor.Local k
     in
     Evaluator.register_derivable ~ident
       (tname :: (match modul with
@@ -2115,11 +2116,7 @@ let run_item ?modul env item =
     List.fold_left (fun env ctor ->
       incr position;
       let field_names = List.map fst ctor.Ast.fields in
-      let ident =
-        match modul with
-        | Some m -> Ctor.Owned (m, ctor.Ast.name)
-        | None -> Ctor.Local ctor.Ast.name
-      in
+      let ident = ident ctor.Ast.name in
       Hashtbl.replace Evaluator.constr_fields ident field_names;
       Hashtbl.replace Evaluator.constr_defaults ident ctor.Ast.defaults;
       (* Where it stands in the declaration, which is the order it sorts in. *)
@@ -2130,7 +2127,10 @@ let run_item ?modul env item =
         | [] -> VConstr (ident, [])
         | fs -> VPartialConstr (ident, List.length fs, [])
       in
-      (ctor.Ast.name, v) :: env
+      (* Under `Type.Ctor` as well as the bare name, so a constructor whose
+         name another type also uses is reached through its type. *)
+      (ctor.Ast.name, v)
+      :: (Ctor.make_key ~type_name:tname ctor.Ast.name, v) :: env
     ) env ctors
   | Ast.TLExpr _ -> env
 
@@ -2145,20 +2145,21 @@ let ctor_bindings_of ?modul tenv =
   List.concat_map (fun (_, tdef) ->
     match tdef with
     | Ast.Alias _ -> []
-    | Ast.Variants (_, _, ctors) ->
-      List.map (fun (ctor : Ast.ctor_def) ->
+    | Ast.Variants (tname, _, ctors) ->
+      List.concat_map (fun (ctor : Ast.ctor_def) ->
         (* Named by the module that declares them where one is known: the
            bare-name index holds one constructor per name, and two modules
            may each declare `Live`. *)
+        let k = Ctor.make_key ~type_name:tname ctor.Ast.name in
         let ident = match modul with
-          | Some m -> Ctor.Owned (m, ctor.Ast.name)
-          | None -> Evaluator.ctor_named ctor.Ast.name
+          | Some m -> Ctor.Owned (m, k)
+          | None -> Evaluator.ctor_named k
         in
         let v = match ctor.Ast.fields with
           | [] -> VConstr (ident, [])
           | fs -> VPartialConstr (ident, List.length fs, [])
         in
-        (ctor.Ast.name, v)) ctors) tenv
+        [(ctor.Ast.name, v); (k, v)]) ctors) tenv
 
 (* Run top-level items, dropping a fresh index in every so often: a file's
    own definitions accumulate in front of the base, and without this a name
@@ -2591,7 +2592,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
        if evaluate then
          List.iter (fun (n, d) ->
            Evaluator.register_derivable
-             ~ident:(fun c -> Ctor.Owned (path, c))
+             ~ident:(fun c -> Ctor.Owned (path, Ctor.make_key ~type_name:n c))
              [Module_types.canonical_type ~modul:path n]
              (Module_types.canonicalise_tdef module_names d)) own;
        let full_import =
@@ -3953,9 +3954,15 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
                 env_ref := (name, v) :: !env_ref) im.Ast.im_binds
             | Ast.TLInterface _ -> ()
             | Ast.TLType (Ast.Alias _, _) -> ()
-            | Ast.TLType (Ast.Variants (_, _, ctors), _) ->
+            | Ast.TLType (Ast.Variants (tname, _, ctors), _) ->
               List.iter (fun ctor ->
-                let ident = Ctor.Local ctor.Ast.name in
+                let k = Ctor.make_key ~type_name:tname ctor.Ast.name in
+                let ident = Ctor.Local k in
+                env_ref := (k,
+                  match ctor.Ast.fields with
+                  | [] -> VConstr (ident, [])
+                  | fs -> VPartialConstr (ident, List.length fs, []))
+                  :: !env_ref;
                 Hashtbl.replace constr_fields ident (List.map fst ctor.Ast.fields);
                 Hashtbl.replace constr_defaults ident ctor.Ast.defaults;
                 register_ctor ident;
@@ -4152,7 +4159,7 @@ let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
       in
       Ok { sc_type     = Typechecker.string_of_typ last_t;
            sc_holes    = List.map Typechecker.string_of_typ holes;
-           sc_findings = Lint.check prog item_locs own_type_env;
+           sc_findings = Lint.check ~source:src prog item_locs own_type_env;
            sc_env      = own_type_env;
            sc_scope    = full_type_env;
            sc_docs     = prog.Ast.docs @ imp_docs;
@@ -4200,7 +4207,8 @@ let lint_module_source (src : string) : (Lint.finding list, string) result =
             ~init_effects:imp.load_effects
             ~type_names:imp.type_names prog with
     | Error msg -> Error ("type error: " ^ msg)
-    | Ok (_, own_type_env, _) -> Ok (Lint.check prog item_locs own_type_env)
+    | Ok (_, own_type_env, _) ->
+      Ok (Lint.check ~source:src prog item_locs own_type_env)
   with
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _
@@ -4227,7 +4235,7 @@ let lint_session (sess : session) (src : string) : (Lint.finding list, string) r
             ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (_, own_type_env, _, _) ->
-      Ok (Lint.check prog item_locs own_type_env)
+      Ok (Lint.check ~source:src prog item_locs own_type_env)
   with
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _

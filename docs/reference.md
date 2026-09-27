@@ -2961,6 +2961,56 @@ t.eq (None) (usage row)     -- t.eq None (usage row) is t.eq (None (usage row))
 `wand f` writes that bracket for you, and the checker names the constructor
 when it is missing.
 
+### Constructors that share a name
+
+Two types may have constructors with the same name. Write the type before
+the constructor to say which one you mean:
+
+```ocaml
+type PullPolicy    = Always | Never | IfNotPresent
+type RestartPolicy = Always | OnFailure | Never
+
+let p = PullPolicy.Always
+let r = RestartPolicy.Never
+```
+
+A bare name that two types in scope share says nothing about which, so it
+is an error that gives the spellings that do:
+
+```ocaml
+let p = Always
+-- 'Always' is a constructor of both 'PullPolicy' and 'RestartPolicy':
+-- write 'PullPolicy.Always' or 'RestartPolicy.Always'
+```
+
+A `match` arm is the one exception. When the type of the value being matched
+is already known, a bare name in an arm means that type's constructor:
+
+```ocaml
+let pull_word (p : PullPolicy) = match p with
+| Always       -> "always"
+| Never        -> "never"
+| IfNotPresent -> "if not present"
+```
+
+Where the type is not known yet, as in `let f x = match x with | Always ->`
+with nothing else that fixes the type of `x`, the arm is refused as an
+expression is. Write the type on the arm or on the parameter.
+
+A constructor whose name no other type in scope has stays bare. You can
+still write it with its type, as in `Color.Red`, and the meaning is the same.
+The type goes after a module's name too: `apps.PullPolicy.Always`, in
+construction and in patterns. A module of the same name as a type is read
+first.
+
+A document holds the bare name. A derived encoder writes `PullPolicy.Always`
+as `"Always"`, and a derived decoder reads it back.
+
+A bare name in a `match` arm breaks when a second type in scope takes the
+same name, for example when a module you import adds one. `V-CTOR1` reports
+each such arm, so a repository that runs `--strict` can require the type on
+every one. `wand t --fix` writes it.
+
 ### Named fields
 
 A field can have a name instead of a position. You then give it and read it
@@ -7300,6 +7350,7 @@ punish the safer choice.
 | `V-SHELL2` | a command runs on to a second line, which starts a second command |
 | `V-SHELL3` | `Shell.inspect` runs a command known to change things, such as `kubectl apply` or `rm`, which a rehearsal would run for real — run it with `$(...)` |
 | `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
+| `V-CTOR1` | a `match` arm names bare a constructor that another type in scope shares — write the type, as in `PullPolicy.Always`; `wand t --fix` writes it |
 | `A-BIND1` | a `let _ =` binds a value that is `Unit`, so the binder dismisses a failure that is not there — write the statement on its own, sequenced with `;` where it sits in a body |
 | `A-USES1` | a manifest permits an effect the file does not use, or a binary no command runs |
 | `V-USES2` | a file performs effects and declares no manifest |

@@ -21,9 +21,25 @@ type t =
      differently still agree about its constructors. *)
   | Owned of string * string
 
+(* A declared constructor is keyed by its type as well as its name --
+   `PullPolicy.Always` -- since two types in one module may each have an
+   `Always`. The key is the identity; the name is what a reader and a
+   document see, and is what follows the last dot. *)
+let bare key =
+  match String.rindex_opt key '.' with
+  | Some i -> String.sub key (i + 1) (String.length key - i - 1)
+  | None -> key
+
 let name = function
-  | Builtin n | Local n -> n
-  | Owned (_, n) -> n
+  | Builtin n -> n
+  | Local k | Owned (_, k) -> bare k
+
+(* `Type.Ctor`, or the bare name for a built-in. *)
+let key = function
+  | Builtin n -> n
+  | Local k | Owned (_, k) -> k
+
+let make_key ~type_name name = type_name ^ "." ^ name
 
 let modul = function
   | Builtin _ | Local _ -> None

@@ -24,6 +24,7 @@ type id =
   | V_SHELL2   (* a command literal runs on to a second line without a `\` *)
   | V_SHELL1   (* Shell is narrowed, but this command word is only known at run time *)
   | V_SHELL3   (* Shell.inspect runs a command known to change things *)
+  | V_CTOR1    (* a match arm names bare a constructor another type shares *)
   | A_SHELL2   (* Shell.inspect runs a command whose words only the run decides *)
   | V_NET1     (* Net is narrowed, but this host is only known at run time *)
   | V_IMP2     (* an import binds a name the file never mentions *)
@@ -142,6 +143,15 @@ let all = [
      a violation, and --strict refuses the file. *)
   { id = V_SHELL3; code = "V-SHELL3";
     summary = "Shell.inspect runs a command that is known to change things";
+    kind = Violation };
+  (* A bare constructor name that another type in scope shares is read as
+     the matched type's in a `match` arm. That is allowed; this is for a
+     repository that wants every such name to say its type, since a bare
+     one breaks when a module it comes from adds a second type with the
+     name. A violation, so --strict holds a file to it, and --fix writes
+     the type. *)
+  { id = V_CTOR1; code = "V-CTOR1";
+    summary = "a match arm names bare a constructor that another type shares";
     kind = Violation };
   (* The same promise, over words the text does not show. Nothing is wrong
      that can be seen, so this is advice: the reader is told that nothing
@@ -315,6 +325,11 @@ let net1_dynamic =
 let shell1_dynamic =
   "this command's first word is decided at run time, so the Shell(...) \
    list is checked when it spawns rather than here"
+
+let ctor1 ~name ~type_name =
+  Printf.sprintf
+    "'%s' is a constructor of more than one type here, and this arm names \
+     it bare; write '%s.%s'" name type_name name
 
 let shell3 ~what ~fn =
   Printf.sprintf

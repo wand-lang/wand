@@ -600,7 +600,64 @@ let names_of_item_types (item : Ast.top_item) : string list =
 (* `own_env` holds the program's own top-level bindings, already inferred, so
    the type-directed rules read what the checker concluded rather than
    re-deriving it. *)
-let check (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
+(* V-CTOR1: the bare constructors the typechecker read as the matched
+   type's. A pattern carries no position of its own, so the name is found in
+   the source from the `match` onward: the first use of it, bare, not yet
+   claimed by another finding. Found, it carries its fix; not found, it is
+   reported at the `match` with none. *)
+let ctor1_findings ?source () =
+  let lines =
+    match source with
+    | Some src -> Array.of_list (String.split_on_char '\n' src)
+    | None -> [||]
+  in
+  let claimed = Hashtbl.create 8 in
+  let is_ident c =
+    (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+    || (c >= '0' && c <= '9') || c = '_' || c = '!' || c = '?'
+  in
+  let find_from line name =
+    let n = String.length name in
+    let rec scan_line li =
+      if li >= Array.length lines then None
+      else
+        let text = lines.(li) in
+        let rec scan i =
+          if i + n > String.length text then None
+          else if String.sub text i n = name
+               && (i = 0 || (not (is_ident text.[i - 1]) && text.[i - 1] <> '.'))
+               && (i + n = String.length text || not (is_ident text.[i + n]))
+               && not (Hashtbl.mem claimed (li, i))
+          then (Hashtbl.replace claimed (li, i) (); Some (li + 1, i + 1))
+          else scan (i + 1)
+        in
+        match scan 0 with
+        | Some p -> Some p
+        | None -> scan_line (li + 1)
+    in
+    scan_line (max 0 (line - 1))
+  in
+  List.rev_map (fun (loc, name, type_name) ->
+    let text = Lint_rules.ctor1 ~name ~type_name in
+    let from_line = match loc with Some l -> l.Token.line | None -> 1 in
+    match find_from from_line name with
+    | Some (line, col) ->
+      { rule = Lint_rules.V_CTOR1;
+        loc = { (Token.point line col 0) with
+                Token.end_line = line; Token.end_col = col + String.length name };
+        text;
+        fix = Some (Replace { from_ = name; to_ = type_name ^ "." ^ name }) }
+    | None ->
+      { rule = Lint_rules.V_CTOR1;
+        loc = (match loc with Some l -> l | None -> Token.point 1 1 0);
+        text; fix = None })
+    !Typechecker.relaxed_ctors
+
+let rec check ?source (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
+    (own_env : Typechecker.env) : finding list =
+  ctor1_findings ?source () @ check_items prog item_locs own_env
+
+and check_items (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =
   let locs = Array.of_list item_locs in
   let no_loc = Token.point 0 0 0 in

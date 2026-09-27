@@ -19,7 +19,9 @@ let constr_defaults : (Ctor.t, (string * Ast.expr) list) Hashtbl.t =
    rather than a choice. *)
 let ctor_of_name : (string, Ctor.t) Hashtbl.t = Hashtbl.create 16
 
-let register_ctor c = Hashtbl.replace ctor_of_name (Ctor.name c) c
+let register_ctor c =
+  Hashtbl.replace ctor_of_name (Ctor.name c) c;
+  Hashtbl.replace ctor_of_name (Ctor.key c) c
 
 let ctor_named name =
   match Hashtbl.find_opt ctor_of_name name with
@@ -1885,6 +1887,17 @@ let ctor_in_scope env name =
   | Some (VConstr (c, _)) | Some (VPartialConstr (c, _, _)) -> c
   | _ -> ctor_named name
 
+(* Whether a constructor pattern names the value's constructor. By identity
+   first. Failing that, by name: the typechecker has already settled that
+   the pattern's constructor is one of the matched type's, and a type names
+   each constructor once, so the name decides. That is what lets a bare
+   `Always` match in a `match` over a `PullPolicy` when another type in the
+   file has an `Always` too, and what lets `T.Ctor` match by its key. *)
+let ctor_matches env name vname =
+  Ctor.equal (ctor_in_scope env name) vname
+  || (if String.contains name '.' then Ctor.key vname = name
+      else Ctor.name vname = name)
+
 let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
   match p, v with
   | PVar name, v          -> Some ((name, v) :: env)
@@ -1925,7 +1938,7 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
         | Some env -> try_match ~prefix p v env)
       (Some env) ps vals
   | PConstr (name, pats), VConstr (vname, vals)
-    when Ctor.equal (ctor_in_scope env name) vname && same_length pats vals ->
+    when ctor_matches env name vname && same_length pats vals ->
     List.fold_left2
       (fun acc p v -> match acc with
         | None     -> None
@@ -1941,7 +1954,20 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
      value's fields directly -- resolving its bare name again would consult
      the index, where one name holds one constructor and another module may
      have registered it. *)
+  (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
+     its type, matched as a bare one is. *)
+  | PQualified (m, inner), VConstr _
+    when (match lookup_var m env with Some (VRecord _) -> false | _ -> true)
+         && Ast.qualify_ctor_pat m inner <> None ->
+    try_match ~prefix (Option.get (Ast.qualify_ctor_pat m inner)) v env
   | PQualified (m, inner), VConstr (vc, vals) ->
+    (* `m.T.Ctor`: the module's record holds the constructor under `T.Ctor`. *)
+    let inner =
+      match inner with
+      | PQualified (t, p) ->
+        (match Ast.qualify_ctor_pat t p with Some q -> q | None -> inner)
+      | _ -> inner
+    in
     let cname = pat_ctor_name inner in
     let owner =
       match lookup_var m env with
@@ -2003,7 +2029,7 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
     in
     try_match ~prefix (Ast.constr_bare_reading ~named_fields name ids) v env
   | PConstrNamed (name, bindings), VConstr (vname, vals)
-    when Ctor.equal (ctor_in_scope env name) vname ->
+    when ctor_matches env name vname ->
     (match Hashtbl.find_opt constr_fields vname with
      | None -> None
      | Some field_names ->
@@ -2268,7 +2294,22 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
   | List es   -> VList  (List.map (eval env) es)
   (* `Foo.Live`: the module's namespace holds its constructors, so the
      identity comes from there rather than from the bare-name index. *)
+  (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
+     its type. A module of that name is asked first, as the typechecker
+     does. *)
+  | Qualified (m, inner)
+    when (match lookup_var m env with Some (VRecord _) -> false | _ -> true)
+         && Ast.qualify_ctor_expr m inner <> None ->
+    eval env (Option.get (Ast.qualify_ctor_expr m inner))
   | Qualified (m, inner) ->
+    (* `m.T.Ctor`: the module's record holds the constructor under
+       `T.Ctor`. *)
+    let inner =
+      match strip_located inner with
+      | Qualified (t, x) ->
+        (match Ast.qualify_ctor_expr t x with Some q -> q | None -> inner)
+      | _ -> inner
+    in
     let from_module name =
       match lookup_var m env with
       | Some (VRecord vr_) -> let kvs = vr_.r_fields in

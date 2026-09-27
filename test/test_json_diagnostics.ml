@@ -225,8 +225,10 @@ let test_declaration_error_positions () =
   at "a declaration over a built-in name"
     (3, 6) (position_of "let x = 1\n\ntype List \'a = Nil\n\nNil\n");
   (* The constructor, where the constructor is what is repeated. *)
-  at "a constructor shared by two types points at the second"
-    (3, 10) (position_of "type A = Foo | Bar\n\ntype B = Foo\n\nFoo\n");
+  (* Two types may share a constructor name, so what is refused is the bare
+     use that cannot say which, and that is where it points. *)
+  at "a bare use of a name two types share points at the use"
+    (5, 1) (position_of "type A = Foo | Bar\n\ntype B = Foo\n\nFoo\n");
   at "a constructor repeated in one type"
     (1, 16) (position_of "type A = Foo | Foo\n\nFoo\n");
   at "a field repeated in one constructor"

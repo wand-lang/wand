@@ -353,6 +353,42 @@ match JSON.decode Apps.Strategy.decoder doc with
   | Ok s -> JSON.stringify (Apps.Strategy.encoder s)
   | Error e -> e|} (Filename.concat dir "apps"))))
 
+(* A module whose types share constructor names, used through it:
+   `m.T.Ctor` in construction and in patterns, a name only one of its types
+   has reached as `m.Ctor`, and a derived encoder and decoder that write the
+   bare word. *)
+let test_constructors_qualified_through_a_module () =
+  with_module_dir (fun dir ->
+    write_file (Filename.concat dir "apps.wand")
+      "type PullPolicy = Always | Never | IfNotPresent\n\
+       type RestartPolicy = Always | OnFailure | Never\n\
+       type Container(pull: PullPolicy, restart: RestartPolicy)\n";
+    let apps = Filename.concat dir "apps" in
+    Alcotest.(check (result string string))
+      "built, matched, encoded and decoded"
+      (Ok {|always never {"pull":"Always","restart":"Never"} true|})
+      (run (Printf.sprintf {|import JSON
+let apps = import %s
+let c = apps.Container(pull = apps.PullPolicy.Always, restart = apps.RestartPolicy.Never)
+let pw p = match p with
+  | apps.PullPolicy.Always -> "always"
+  | apps.PullPolicy.Never -> "never"
+  | apps.IfNotPresent -> "if-not-present"
+let rw r = match r with
+  | apps.RestartPolicy.Always -> "always"
+  | apps.RestartPolicy.OnFailure -> "on-failure"
+  | apps.RestartPolicy.Never -> "never"
+let out = JSON.stringify (apps.Container.encoder c)
+let back = match JSON.decode apps.Container.decoder (JSON.parse! out) with
+  | Ok d -> d == c
+  | Error _ -> false
+"%%{pw c.pull} %%{rw c.restart} %%{out} %%{back}"|} apps));
+    match run (Printf.sprintf "let apps = import %s\napps.Always" apps) with
+    | Error e ->
+      if not (contains e "'Always' is a constructor of both") then
+        Alcotest.failf "expected the ambiguity error, got: %s" e
+    | Ok v -> Alcotest.failf "a bare shared name through a module built %s" v)
+
 (* ── Suite ───────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -399,5 +435,7 @@ let () =
         test_selected_field_type_resolves_in_its_module;
       Alcotest.test_case "sum and alias fields across modules" `Quick
         test_sum_and_alias_fields_across_modules;
+      Alcotest.test_case "constructors qualified through a module" `Quick
+        test_constructors_qualified_through_a_module;
     ];
   ]

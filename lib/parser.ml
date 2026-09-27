@@ -715,6 +715,15 @@ let type_atom_ahead s =
       && peek2 s = Token.Dot
       && (match peek3 s with Token.Upper _ -> true | _ -> false))
 
+
+(* `m.T`, read so far as a qualified constructor, where `T` could be a type
+   whose constructor follows: `m.PullPolicy.Always`. *)
+let is_bare_constr e =
+  match Ast.strip_located e with Ast.Constr _ -> true | _ -> false
+
+let bare_constr_name e =
+  match Ast.strip_located e with Ast.Constr n -> n | _ -> ""
+
 let rec parse_type_atom s =
   let loc = peek_loc s in
   match advance s with
@@ -877,7 +886,7 @@ and pat_base_ s =
                        && (match peek3 s with Token.Upper _ -> true | _ -> false) ->
     ignore (advance s); ignore (advance s);
     (match advance s with
-     | Token.Upper base -> PQualified (name, pconstr_body_ s base)
+     | Token.Upper base -> PQualified (name, type_qualified_pat_ s base)
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
   | Token.Ident name -> ignore (advance s); PVar name
@@ -925,13 +934,25 @@ and pat_base_ s =
                        && (match peek3 s with Token.Upper _ -> true | _ -> false) ->
     ignore (advance s); ignore (advance s);
     (match advance s with
-     | Token.Upper base -> PQualified (name, pconstr_body_ s base)
+     | Token.Upper base -> PQualified (name, type_qualified_pat_ s base)
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
   | Token.Upper name -> ignore (advance s); pconstr_body_ s name
   | t ->
     fail_at (peek_loc s) (Format.asprintf "unexpected token in pattern: %a%s"
       Token.pp t (keyword_hint t))
+
+(* After `m.` in a pattern: a constructor, or a type and then one of its
+   constructors -- `one.PullPolicy.Always`. *)
+and type_qualified_pat_ s base =
+  if peek s = Token.Dot
+     && (match peek2 s with Token.Upper _ -> true | _ -> false) then begin
+    ignore (advance s);
+    match advance s with
+    | Token.Upper c -> PQualified (base, pconstr_body_ s c)
+    | t -> fail_at (peek_loc s) (Format.asprintf
+        "expected a constructor after '%s.', got %a" base Token.pp t)
+  end else pconstr_body_ s base
 
 and pconstr_body_ s name =
   if peek_named_pat_args s || peek_keyword_pun s then begin
@@ -1186,13 +1207,14 @@ and infix_ left op s =
      lowercase, which every user module has. An uppercase member is a
      constructor; a lowercase one is a value. *)
   | Token.Dot when (match peek s with Token.Upper _ -> true | _ -> false) ->
-    let m =
-      match strip_located left with
-      | Var m -> m
-      | _ -> fail_at (peek_loc s)
-          "a constructor is reached through a module's name"
-    in
-    Qualified (m, constr_atom_ s)
+    (match strip_located left with
+     | Var m -> Qualified (m, constr_atom_ s)
+     (* `one.PullPolicy.Always`: a type in the module, then its
+        constructor. *)
+     | Qualified (m, inner) when is_bare_constr inner ->
+       Qualified (m, Qualified (bare_constr_name inner, constr_atom_ s))
+     | _ -> fail_at (peek_loc s)
+         "a constructor is reached through a module's name or its type's")
   | Token.Dot       -> Field (left, expect_field_name s)
   | t -> fail (Format.asprintf "unexpected infix: %a" Token.pp t)
 
@@ -1498,13 +1520,14 @@ and postfix_field_ s e =
        name, not a field of a value. *)
     (match peek s with
      | Token.Upper _ ->
-       let m =
-         match strip_located !e with
-         | Var m -> m
-         | _ -> fail_at (peek_loc s)
-             "a constructor is reached through a module's name"
-       in
-       e := Qualified (m, constr_atom_ s)
+       (match strip_located !e with
+        | Var m -> e := Qualified (m, constr_atom_ s)
+        (* `one.PullPolicy.Always`, `Apps.PullPolicy.Always`: a type in the
+           module, then its constructor. *)
+        | Qualified (m, inner) when is_bare_constr inner ->
+          e := Qualified (m, Qualified (bare_constr_name inner, constr_atom_ s))
+        | _ -> fail_at (peek_loc s)
+            "a constructor is reached through a module's name or its type's")
      | _ -> e := Field (!e, expect_field_name s))
   done;
   !e

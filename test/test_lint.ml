@@ -384,6 +384,42 @@ let test_shell3 () =
   Alcotest.(check bool) "A-SHELL2 is advisory" true
     (Lint_rules.kind Lint_rules.A_SHELL2 = Lint_rules.Advisory)
 
+(* ── V-CTOR1: a bare constructor another type shares ────────────────────── *)
+
+(* A `match` arm may name bare a constructor that another type in scope
+   shares, when the matched value's type is known. A repository that wants
+   every such name to say its type holds files to it with --strict, and the
+   fix writes the type in. *)
+let test_ctor1 () =
+  let decls =
+    "type PullPolicy = Always | Never | IfNotPresent\n\
+     type RestartPolicy = Always | OnFailure | Never\n" in
+  let src =
+    decls ^ "let p = PullPolicy.Always\n\
+             let w = match p with\n\
+             \  | Always -> 1\n\
+             \  | Never -> 2\n\
+             \  | IfNotPresent -> 3\n\
+             w" in
+  let fs = List.filter (fun (f : Lint.finding) ->
+      f.Lint.rule = Lint_rules.V_CTOR1) (findings src) in
+  Alcotest.(check int) "one for each shared name, none for the unique one"
+    2 (List.length fs);
+  List.iter (fun (f : Lint.finding) ->
+    match f.Lint.fix with
+    | Some (Diag.Replace { from_; to_ }) ->
+      Alcotest.(check string) "the fix writes the type" ("PullPolicy." ^ from_) to_
+    | _ -> Alcotest.fail "V-CTOR1 carries no fix") fs;
+  not_fired "written with its type"
+    (decls ^ "let p = PullPolicy.Always\n\
+              let w = match p with\n\
+              \  | PullPolicy.Always -> 1\n\
+              \  | _ -> 2\n\
+              w")
+    "V-CTOR1";
+  Alcotest.(check bool) "V-CTOR1 must be fixed under --strict" true
+    (Lint_rules.kind Lint_rules.V_CTOR1 = Lint_rules.Violation)
+
 (* ── Classification ──────────────────────────────────────────────────────── *)
 
 (* Only must-fix rules may fail a build. An advisory one that could fail it
@@ -743,6 +779,7 @@ let () =
       Alcotest.test_case "V-USES2"  `Quick test_uses2;
       Alcotest.test_case "V-SHELL1" `Quick test_shell1_dynamic;
       Alcotest.test_case "V-SHELL3 and A-SHELL2" `Quick test_shell3;
+      Alcotest.test_case "V-CTOR1" `Quick test_ctor1;
       Alcotest.test_case "A-BIND1"  `Quick test_bind1;
       Alcotest.test_case "A-BIND1 top-level binder" `Quick
         test_a_top_level_wildcard_binds_one_value;

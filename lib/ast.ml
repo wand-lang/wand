@@ -227,6 +227,35 @@ let constr_bare_construction ~named_fields name ids : expr =
     | [] -> App (Constr name, Unit)
     | ids -> App (Constr name, Tuple (List.map (fun i -> Var i) ids))
 
+(* `T.Ctor`, where `T` is a type rather than a module: the constructor of
+   that type, under the key `T.Ctor` that the typechecker and the evaluator
+   both index it by. A constructor name cannot hold a dot, so the key can
+   never be written by hand. Two types in one module may each have an
+   `Always`, and this is how a reader says which. The constructor at the
+   head of the expression or pattern is the one qualified; its arguments are
+   left alone. *)
+let rec qualify_ctor_expr t (e : expr) : expr option =
+  let key n = t ^ "." ^ n in
+  match e with
+  | Located (l, inner) ->
+    Option.map (fun e' -> Located (l, e')) (qualify_ctor_expr t inner)
+  | Constr n -> Some (Constr (key n))
+  | ConstrApp (n, fs, a) -> Some (ConstrApp (key n, fs, a))
+  | ConstrUpdate (n, b, fs, a) -> Some (ConstrUpdate (key n, b, fs, a))
+  | ConstrBare (n, ids) -> Some (ConstrBare (key n, ids))
+  | App (f, x) -> Option.map (fun f' -> App (f', x)) (qualify_ctor_expr t f)
+  | _ -> None
+
+let rec qualify_ctor_pat t (p : pat) : pat option =
+  let key n = t ^ "." ^ n in
+  match p with
+  | PConstr (n, ps) -> Some (PConstr (key n, ps))
+  | PConstrNamed (n, bs) -> Some (PConstrNamed (key n, bs))
+  | PConstrBare (n, ids) -> Some (PConstrBare (key n, ids))
+  | PAnnot (inner, te) ->
+    Option.map (fun p' -> PAnnot (p', te)) (qualify_ctor_pat t inner)
+  | _ -> None
+
 (* ── Pretty-print ─────────────────────────────────────────────────────────── *)
 
 (* The expression under any `Located` wrappers. Shared here because nearly
