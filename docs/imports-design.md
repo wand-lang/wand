@@ -7,9 +7,9 @@ each released once:
 
 1. `imports-design.md` (this record): an import binds a name of its own.
 2. `modules-design.md`: `wand.mod`, URL imports, fetching with `git`,
-   `wand.sum`, Minimal Version Selection and `wand tidy`.
+   `wand.sum`, Minimal Version Selection and `wand p tidy`.
 3. `release-design.md`: `wand.api`, the version bump the types decide,
-   and `wand release`.
+   and `wand p release`.
 
 Package management is built for predictable results over flexibility,
 because an LLM is the main author.
