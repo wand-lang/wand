@@ -381,6 +381,9 @@ let test_bump_rules () =
     [next "0.3.1" Major; next "0.3.1" Minor; next "1.2.3" Major; next "1.2.3" Minor; next "1.2.3" Patch]
 
 let test_interface_and_release () =
+  List.iter (fun (k, v) -> Unix.putenv k v)
+    [("GIT_AUTHOR_NAME", "t"); ("GIT_AUTHOR_EMAIL", "t@t");
+     ("GIT_COMMITTER_NAME", "t"); ("GIT_COMMITTER_EMAIL", "t@t")];
   let root = fresh_dir () in
   let git args = Package.run_git ("-C" :: root :: "-c" :: "user.email=t@t" :: "-c" :: "user.name=t" :: args) |> fst in
   ignore (git ["init"; "-q"]);
