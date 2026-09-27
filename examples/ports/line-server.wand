@@ -1,0 +1,38 @@
+uses {Net.Listen(:7070)}
+
+import Net
+import Par
+import String
+
+-- A small line protocol over TCP: one request a line, one answer a line.
+--
+-- bash:  while true; do nc -l 7070 -c ./answer.sh; done
+--
+-- One connection at a time, and the flags for `nc` differ between the BSD
+-- and the GNU one. A second client waits until the first one leaves.
+--
+-- Here `Net.listen` is a stream of connections, and `Par.each_stream` gives
+-- each one its own task, up to 64 at once. A client that goes quiet holds
+-- only its own task. The protocol is `answer`, a plain function, so it is
+-- tested without a socket.
+
+let answer line =
+  match String.words line with
+  | ["PING"] -> "PONG"
+  | ["UPPER" :: rest] -> String.upper (String.join " " rest)
+  | ["QUIT"] -> "BYE"
+  | _ -> "ERR unknown command"
+
+-- Answer each line until the client says QUIT or goes away.
+let converse! conn =
+  match Net.read_line conn with
+  | None -> ()
+  | Some line -> (
+    let reply = answer (String.trim line);
+    Net.write! "%{reply}\n" conn;
+    if reply == "BYE" then () else converse! conn
+  )
+
+let main! () = Net.listen :7070 |> Par.each_stream 64 converse!
+
+main! ()

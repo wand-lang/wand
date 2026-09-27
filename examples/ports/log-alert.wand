@@ -1,0 +1,50 @@
+uses {Clock, IO, Shared, Shell(tail)}
+
+import Clock
+import IO
+import List
+import Map
+import Option
+import Par
+import Shared
+import Shell
+import Stream
+import String
+
+-- Follow a log, count its errors, and report once a minute.
+--
+-- bash:  tail -F app.log | grep --line-buffered ERROR | while read l; do ...; done
+--
+-- The count lives in the loop, so reporting it once a minute needs a second
+-- process and a file to pass it through, or a `date` check on every line
+-- that only fires when a line arrives.
+--
+-- Here one branch reads the log as a stream and counts into a `Shared`
+-- map, and the other reports that map every minute, whether lines arrive
+-- or not. Stopping the script stops `tail`.
+
+-- `2026-09-27 12:00:01 ERROR ...`: the third word.
+let level_of line = List.get 2 (String.words line)
+
+let count levels line =
+  match level_of line with
+  | Some level -> Map.update level 0 (fn n -> n + 1) levels
+  | None -> levels
+
+let report (levels: Map Int) =
+  let errors = Map.get "ERROR" levels |> Option.default 0;
+  let warnings = Map.get "WARN" levels |> Option.default 0;
+  "last minute: %{errors} errors, %{warnings} warnings"
+
+let main! () =
+  with Shared.make Map.empty as levels ->
+  Par.all! [
+    fn () -> Shell.stream $*(tail -F app.log)
+    |> Stream.each (fn line -> Shared.update levels (fn m -> count m line)),
+    fn () -> Clock.every 1min (fn () -> (
+      IO.println (report (Shared.get levels));
+      Shared.update levels (fn _ -> Map.empty)
+    ))
+  ]
+
+main! ()

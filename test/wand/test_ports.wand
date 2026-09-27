@@ -1,5 +1,6 @@
 uses {Clock, Env, FS.Read, FS.Write, Shell(dune)}
 
+import HTTP
 import Test
 let {group, test, with_clock} = import Test
 let {busiest, client} = import ../../examples/ports/log-top-talkers
@@ -15,10 +16,19 @@ let {answering?, wait_for} = import ../../examples/ports/wait-for-port
 let {missing} = import ../../examples/ports/stage-release
 let {failures, stated} = import ../../examples/ports/verify-archives
 let {render, Opts = Opts, Flags = Flags} = import ../../examples/ports/probe-args
+let {free_of, metrics, route, Stats = Stats} = import ../../examples/ports/health-server
+let {answer} = import ../../examples/ports/line-server
+let {problems, Up, Down, Slow} = import ../../examples/ports/mirror-check
+let {progress, sums_line} = import ../../examples/ports/batch-progress
+let {level_of, count = count_level, report = level_report} =
+  import ../../examples/ports/log-alert
+let {answers?} = import ../../examples/ports/bc-driver
+let {warning_file, by_file} = import ../../examples/ports/build-warnings
+let {entry} = import ../../examples/packages/app/main
 let {age, backup_name, expired, expired?, ours?, window} =
   import ../../examples/ports/rotate-backups
--- `failures` is verify-archives' already, and the last import of a name
--- decides every use of it (V-IMP1), so this one is renamed here.
+-- `failures` is verify-archives' already, and a name is bound by one import
+-- only, so this one is renamed here.
 let {changed?, failures = unmet, line, outcome, outcomes, steps, Made, Already, Failed, Step} =
   import ../../examples/ports/provision-host
 import Args
@@ -436,4 +446,85 @@ group "provision-host" (fn () -> [
        ShellResult(stdout = "", stderr = "", code = 9)]))),
   test "every step this script declares is covered" (fn t ->
     t.eq 4 (List.length steps))
+])
+
+group "health-server" (fn () -> [
+  test "the free space is the fourth field of df's second line" (fn t ->
+    t.eq
+      (Some "1024")
+      (free_of
+        "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/a 4096 3072 1024 75% /")),
+  test "an answer df did not give" (fn t -> t.ok (Option.none? (free_of ""))),
+  test "the health check" (fn t ->
+    t.eq 200 (route Stats() (HTTP.incoming HTTP.GET "/health")).status),
+  test "the counters" (fn t ->
+    t.eq
+      "requests 3\nrefreshes 1\ndisk_free_kb 9\n"
+      (route
+        Stats(requests = 3, refreshes = 1, disk_free = "9")
+        (HTTP.incoming HTTP.GET "/metrics")).body),
+  test "any other path" (fn t ->
+    t.eq 404 (route Stats() (HTTP.incoming HTTP.POST "/health")).status),
+  test "metrics reads every field" (fn t ->
+    t.ok (String.contains? "requests 0" (metrics Stats())))
+])
+
+group "line-server" (fn () -> [
+  test "ping" (fn t -> t.eq "PONG" (answer "PING")),
+  test "upper keeps the rest of the line" (fn t -> t.eq "A B" (answer "UPPER a b")),
+  test "quit" (fn t -> t.eq "BYE" (answer "QUIT")),
+  test "anything else" (fn t -> t.eq "ERR unknown command" (answer "PONG"))
+])
+
+group "mirror-check" (fn () -> [
+  test "a mirror that is up is not a problem" (fn t ->
+    t.eq [] (problems [(https://a.example/, Up)])),
+  test "slow and down are told apart, in order" (fn t ->
+    t.eq
+      ["https://b.example/: no answer in 5s", "https://c.example/: status 503"]
+      (problems [
+        (https://a.example/, Up),
+        (https://b.example/, Slow),
+        (https://c.example/, Down "status 503")
+      ]))
+])
+
+group "batch-progress" (fn () -> [
+  test "the progress line" (fn t -> t.eq "3/40 files hashed" (progress 3 40)),
+  test "a line of a SUMS file" (fn t -> t.eq "ab12  ./a.iso" (sums_line (./a.iso, "ab12")))
+])
+
+group "log-alert" (fn () -> [
+  test "the level is the third word" (fn t ->
+    t.eq (Some "ERROR") (level_of "2026-09-27 12:00:01 ERROR disk full")),
+  test "a short line has none" (fn t -> t.ok (Option.none? (level_of "oops"))),
+  test "lines are counted by level" (fn t ->
+    let m =
+      ["a b ERROR x", "a b WARN y", "a b ERROR z", "junk"]
+      |> List.fold_left count_level Map.empty;
+    t.eq "last minute: 2 errors, 1 warnings" (level_report m))
+])
+
+group "bc-driver" (fn () -> [
+  test "a calculation has an answer" (fn t -> t.ok (answers? "sqrt(2)")),
+  test "a setting has none" (fn t -> t.ok (!(answers? "scale = 4"))),
+  test "nor does a blank line" (fn t -> t.ok (!(answers? "  ")))
+])
+
+group "build-warnings" (fn () -> [
+  test "a warning names its file" (fn t ->
+    t.eq (Some "src/a.c") (warning_file "src/a.c:12:5: warning: unused x")),
+  test "an error is not a warning" (fn t ->
+    t.ok (Option.none? (warning_file "src/b.c:3:9: error: nope"))),
+  test "warnings are counted by file" (fn t ->
+    t.eq
+      (Some 2)
+      (Map.get
+        "src/a.c"
+        (by_file ["src/a.c:1:1: warning: a", "src/a.c:2:1: warning: b", "x"])))
+])
+
+group "packages/app" (fn () -> [
+  test "a post's title and path, from the text-tools package" (fn t ->
+    t.eq ("Hello World", "/posts/hello-world") (entry "Hello, World"))
 ])

@@ -1,0 +1,59 @@
+uses {Clock, Net.Listen(:8080), Shared, Shell(df)}
+
+import Clock
+import HTTP
+import List
+import Option
+import Par
+import Shared
+import Shell
+import String
+
+-- Serve a health check and a few counters, and keep one of them fresh.
+--
+-- bash:  python3 -m http.server   plus a cron job that writes df into a file
+--
+-- Two processes and a file between them. The web server knows nothing of
+-- the job, so a job that died leaves the page showing the last number it
+-- wrote, and nothing says how old it is.
+--
+-- Here both are branches of one `Par.all!`: the server, and a refresh every
+-- minute. They share one `Shared` value, so the page always shows what the
+-- last refresh found, and how many refreshes there were. If either branch
+-- fails, the whole service stops rather than serving stale numbers.
+
+type Stats(requests: Int = 0, refreshes: Int = 0, disk_free: String = "unknown")
+
+-- The free space on `/`, from `df -P /`: the fourth field of the second line.
+let free_of text =
+  match String.lines text with
+  | [_, row] -> List.get 3 (String.words row)
+  | _ -> None
+
+let metrics (s: Stats) =
+  "requests %{s.requests}\nrefreshes %{s.refreshes}\ndisk_free_kb %{s.disk_free}\n"
+
+let route (s: Stats) (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.GET, ["health"]) -> HTTP.reply 200 "ok\n"
+  | (HTTP.GET, ["metrics"]) -> HTTP.reply 200 (metrics s)
+  | _ -> HTTP.reply 404 "not found\n"
+
+let on_request state req = (
+  Shared.update state (fn s -> Stats(s, requests = s.requests + 1));
+  route (Shared.get state) req
+)
+
+let refresh! state =
+  let free = free_of $(df -P /) |> Option.default "unknown";
+  Shared.update state (fn s -> Stats(s, refreshes = s.refreshes + 1, disk_free = free))
+
+-- The serving is in `main`, so importing this file serves nothing.
+let main! () =
+  with Shared.make Stats() as state ->
+  Par.all! [
+    fn () -> HTTP.serve! HTTP.Server(port = :8080) (on_request state),
+    fn () -> Clock.every 1min (fn () -> refresh! state)
+  ]
+
+main! ()

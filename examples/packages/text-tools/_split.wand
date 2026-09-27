@@ -1,0 +1,5 @@
+import Regex
+
+-- The words of a text: runs of letters and digits, with everything else
+-- dropped. Private to text-tools.
+let words text = Regex.match_all r/[A-Za-z0-9]+/ text

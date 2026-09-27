@@ -1,0 +1,55 @@
+uses {Clock, FS.Read, IO, Shared}
+
+import Clock
+import Digest
+import FS
+import Hash
+import IO
+import List
+import Par
+import Path
+import Shared
+
+-- Checksum a directory of files in parallel, and say how far along it is.
+--
+-- bash:  find . -name '*.iso' | xargs -P 8 sha256sum > SUMS
+--
+-- `xargs -P` is fast and silent. With forty large files there is no way to
+-- tell a slow run from a stuck one until it ends.
+--
+-- Here eight files are hashed at once, a `Shared` count goes up as each one
+-- finishes, and a second branch prints that count every five seconds. The
+-- two branches run in one `Par.all!`, which ends when the work ends.
+
+let progress done total = "%{done}/%{total} files hashed"
+
+let sums_line (path, digest) = "%{digest}  %{Path.to_string path}"
+
+let hash_all! done files =
+  Par.map
+    8
+    (fn f ->
+      (
+        let digest = Hash.file! Digest.Sha256 f |> Digest.hex;
+        Shared.update done (fn n -> n + 1);
+        (f, digest)
+      ))
+    files
+
+let main! () =
+  let files = FS.glob *.iso;
+  let total = List.length files;
+  with Shared.make 0 as done -> (
+    let sums =
+      Par.all! [
+        fn () -> hash_all! done files,
+        fn () -> Clock.every 5s (fn () -> IO.println_err (progress (Shared.get done) total))
+      ];
+    sums
+    |> List.each (fn r ->
+      match r with
+      | Ok pair -> IO.println (sums_line pair)
+      | Error why -> IO.println_err why)
+  )
+
+main! ()

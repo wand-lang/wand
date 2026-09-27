@@ -1,0 +1,20 @@
+import List
+import String
+
+import ./_split
+
+-- Text helpers, as a package another package requires.
+--
+-- The name has a hyphen, so `import github.com/wand-lang/text-tools` binds
+-- `text_tools`. `_split` is private: this package imports it, and
+-- another package cannot.
+
+-- A string as a URL slug: lower case, words joined by `-`.
+let slug text = _split.words (String.lower text) |> String.join "-"
+
+-- A word with its first letter in upper case.
+let capital word =
+  String.upper (String.slice 0 1 word) ++ String.slice 1 (String.length word) word
+
+-- Each word with its first letter in upper case, joined by spaces.
+let title text = _split.words text |> List.map capital |> String.join " "

@@ -1,0 +1,51 @@
+uses {Clock, IO, Net(mirror.example.com, mirror.example.net, mirror.example.org), Proc}
+
+import HTTP
+import IO
+import List
+import Par
+import Proc
+import Result
+
+-- Check a list of mirrors at once, and report the slow and the broken.
+--
+-- bash:  for m in $MIRRORS; do curl -m 5 -sf "$m" >/dev/null || echo "$m"; done
+--
+-- One at a time, so ten mirrors that each time out take fifty seconds. And
+-- `-m 5` hides which failure was a timeout and which was an HTTP error.
+--
+-- Here every mirror is checked at once, each under its own deadline, and
+-- the answer for each is one of three things, kept apart.
+
+type Outcome = Up | Down String | Slow
+
+let check url =
+  match Par.timeout 5s (fn () -> HTTP.get url) with
+  | Error _ -> Slow
+  | Ok (Error why) -> Down why
+  | Ok (Ok r) -> if HTTP.ok? r then Up else Down "status %{r.status}"
+
+let line (url, outcome) =
+  match outcome with
+  | Up -> None
+  | Slow -> Some "%{url}: no answer in 5s"
+  | Down why -> Some "%{url}: %{why}"
+
+-- The mirrors that need attention, in the order they were listed.
+let problems results = List.filter_map line results
+
+let mirrors = [
+  https://mirror.example.org/,
+  https://mirror.example.net/,
+  https://mirror.example.com/
+]
+
+let main () = (
+  let results =
+    List.zip mirrors (Par.map 16 check mirrors |> List.map (fn r -> Result.default Slow r));
+  match problems results with
+  | [] -> IO.println "every mirror answered"
+  | bad -> (List.each IO.println_err bad; Proc.exit 1)
+)
+
+main ()

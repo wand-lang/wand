@@ -1,0 +1,38 @@
+uses {IO, Shell(make)}
+
+import IO
+import List
+import Map
+import Shell
+import Stream
+import String
+
+-- Run a build, and count its warnings by file.
+--
+-- bash:  make 2>&1 >/dev/null | grep -o '^[^:]*:[0-9]*:[0-9]*: warning' | cut -d: -f1 | sort | uniq -c
+--
+-- The order of `2>&1 >/dev/null` is the whole trick, and it is easy to get
+-- backwards. The build's output is gone, and the pipe hides the build's
+-- exit code.
+--
+-- Here `Shell.stream_err` reads the build's stderr a line at a time. Its
+-- stdout still reaches the terminal, and each warning is counted by the
+-- file it names.
+
+-- `src/a.c:12:5: warning: ...` names `src/a.c`.
+let warning_file line =
+  match String.split ":" line with
+  | [file :: _ :: _ :: kind :: _] -> if String.starts_with? " warning" kind then Some file
+    else None
+  | _ -> None
+
+let by_file lines =
+  lines
+  |> List.filter_map warning_file
+  |> List.fold_left (fn m f -> Map.update f 0 (fn n -> n + 1) m) Map.empty
+
+let main! () =
+  let counts = Shell.stream_err $*(make) |> Stream.to_list |> by_file;
+  Map.to_list counts |> List.each (fn (file, n) -> IO.println "%{n}\t%{file}")
+
+main! ()

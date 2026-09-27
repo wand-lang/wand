@@ -1,0 +1,6 @@
+{ package = github.com/wand-lang/example-app
+, wand    = 0.86.0
+, require =
+    [ { path = github.com/wand-lang/text-tools, version = 0.1.0, local = ../text-tools }
+    ]
+}

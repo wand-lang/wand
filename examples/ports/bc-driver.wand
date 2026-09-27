@@ -1,0 +1,37 @@
+uses {IO, Shell(bc)}
+
+import IO
+import List
+import Shell
+import String
+
+-- Keep one `bc` running, and send it a list of calculations.
+--
+-- bash:  for e in "${exprs[@]}"; do echo "$e" | bc -l; done
+--
+-- One `bc` a line: each starts again, so a variable set on one line is gone
+-- on the next, and a long list pays for a start per line.
+--
+-- Here one `bc` runs for the length of a `with`. Each line goes to its
+-- stdin and its answer is read back before the next, so `scale` and
+-- variables carry from one line to the next.
+
+-- A line `bc` prints an answer for: not an assignment or a setting.
+let answers? line = !(String.contains? "=" line) && String.trim line != ""
+
+let calculations = ["scale = 4", "rate = 0.07", "1000 * (1 + rate) ^ 10", "sqrt(2)"]
+
+let run! (bc: Process) line = (
+  Shell.write! "%{line}\n" bc;
+  if answers? line then Shell.read_line bc else None
+)
+
+let main! () =
+  with Shell.spawn $*(bc -l -q) as bc ->
+  calculations
+  |> List.each (fn line ->
+    match run! bc line with
+    | Some answer -> IO.println "%{line} = %{answer}"
+    | None -> ())
+
+main! ()
