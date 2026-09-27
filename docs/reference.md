@@ -3852,8 +3852,8 @@ A package can ship a script, and a package that requires it runs the script
 by its URL:
 
 ```sh
-wand p add github.com/wand-lang/plimsoll
-wand github.com/wand-lang/plimsoll/cli gen
+wand p add github.com/you/tool
+wand github.com/you/tool/cli gen
 ```
 
 The URL resolves as an import of it would from the current directory: the

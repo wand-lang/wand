@@ -1,64 +1,41 @@
-## 0.86.0 - 2026-09-27
+## 0.87.0 - 2026-09-27
 
-Packages from a clone, hyphenated names, and a `wand` field that newer wands accept.
+Run a script by its package URL, and a fix for types that modules name through their imports.
 
 ### Added
 
-- **`wand p init` names the package from the repository.** In a clone,
-  the URL is optional: `origin` gives it.
+- **`wand <url>` runs a script from a package you require.** A module URL
+  goes where a file goes:
 
   ```sh
-  # before
-  wand p init github.com/you/tool
-  # now, in a clone of git@github.com:you/tool.git
-  wand p init
+  wand p add github.com/you/tool
+  wand github.com/you/tool/cli gen
   ```
 
-  Outside a repository, below its top, or with no `origin`, it still asks
-  for the URL.
+  The URL resolves as an import of it would: your `wand.pkg` must require
+  it, and it gives the version. The copy is fetched and checked against
+  the sum section. The script's manifest holds, and `--dry-run`, `--trace`,
+  `--lint`, `--strict` and `--` work as they do for a file. The script's
+  own imports resolve against your build, not against its `wand.pkg`.
 
-- **Examples for services and packages.** Seven new ports in
-  `examples/ports/`: a health server beside a refresh job, a TCP line
-  server, a mirror check with deadlines, a batch with a progress line, a
-  log alert, a long-running `bc`, and a count of build warnings.
-  `examples/packages/` has a library and an app that requires it.
-
-### Changed
-
-- **A hyphen in an import becomes `_`.** A package or a file named with a
-  hyphen imports without a `let`:
-
-  ```
-  -- before
-  let pkg_fixture = import github.com/wand-lang/pkg-fixture
-  -- now
-  import github.com/wand-lang/pkg-fixture
-  pkg_fixture.greet "you"
-  ```
-
-  The repository and its files keep the hyphen. A segment that is still
-  not a name, such as `2fast`, needs the `let` form.
-
-- **The `wand` field in `wand.pkg` is the oldest wand the package works
-  with.** A newer wand runs the package, up to the next major. Before 1.0
-  that is 1.0.0. Before, `wand = 0.85.0` refused 0.86.0, so every wand
-  release refused every published package until its author released it
-  again.
+  A URL that `wand.pkg` does not require is an error that names the
+  `wand p add` to run. A file on disk always wins over a URL of the same
+  name, so no command that worked before changes.
 
 ### Fixed
 
-- **`wand p add` for a package you already require.** Say `wand.pkg`
-  requires `github.com/wand-lang/pkg-fixture` at 0.1.0, and 0.2.0 is out:
+- **A type that a module names through its own import keeps that meaning
+  in the file that imports the module.** Say `core.wand` declares a field
+  with a type from another module:
 
-  ```sh
-  wand p add github.com/wand-lang/pkg-fixture/words
-  # before: "... is already required at another major. Give this one a name"
-  # now:    "... is already required at 0.1.0, and every file in it can be
-  #          imported. To move it, run `wand p upgrade ...@<version>`"
+  ```
+  let M = import ./meta
+  type Pod(metadata: M.Meta, image: String)
   ```
 
-  Before, `add` looked up the newest release, found 0.2.0, and told you to
-  add it as a second package. Now it tells you the package is already
-  there, so the import works as it is.
-- A name that wand suggests for a second major is now always a valid
-  name: `pkg_fixture0_2`, not `pkg-fixture0_2`.
+  A file that imported `meta` under another name, such as
+  `let X = import ./meta`, got "unknown type 'M.Meta'". It worked only when
+  both files used the same alias. The same was true for a bare `Meta` that
+  `core.wand` got with `let {Meta} = import ./meta`. And a file that did not
+  import `meta` at all could not use `Core.Pod.decoder`: "no decoder is
+  known for type 'Meta'". All three work now.
