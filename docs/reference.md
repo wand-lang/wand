@@ -6109,6 +6109,8 @@ different parts of it. Where that is too slow, use several `Shared` values.
 ```ocaml
 run!    : Command -> String ! {Raise, Shell}
 run     : Command -> Result String String ! {Shell}
+inspect! : Command -> String ! {Raise, Shell}
+inspect  : Command -> Result String String ! {Shell}
 query   : Command -> ShellResult ! {Shell}
 stream  : Command -> Stream {Raise, Shell | ..} String
 stream_err    : Command -> Stream {Raise, Shell | ..} String
@@ -6129,6 +6131,11 @@ timeout : Duration -> (Unit -> 'a ! 'e) -> Result String 'a ! {Clock | 'e}
 
 `run!` and `query` are what `$(cmd)` and `$?(cmd)` are, over a command built
 somewhere else. See [A command as a value](#a-command-as-a-value).
+
+`inspect!` and `inspect` are `run!` and `run` for a command that only reads.
+Use them only for a command that changes nothing, such as a query, a
+listing or a status, because a rehearsal runs them for real. See
+[What a rehearsal does](#what-a-rehearsal-does).
 
 `stream` reads a command's output as it arrives. See
 [Streaming a command](#streaming-a-command). `stream_err` reads its stderr
@@ -7065,13 +7072,32 @@ Four things stay different from a real run, and no rehearsal can close them:
 
 - **A withheld command changes nothing a read can see.** `$(cp a b)` is
   reported and not run, so no read finds `b`. wand cannot model what a
-  subprocess would have done.
+  subprocess would have done. A command withheld this way answers `""`.
 - **Only the script's own changes are remembered.** The disk is read as it
   is now, so a rehearsal beside something else writing is not a prediction.
 - **`mtime` of a file the rehearsal wrote is when it wrote it.** Nothing
   else could be true.
 - **Permissions and ownership are not modelled.** A rehearsal answers about
   contents and existence.
+
+**A command that only reads can run.** A script often asks the world a
+question before it decides what to change, and a withheld command answers
+`""`, so the rehearsal takes a path the real run never would. Run such a
+command with `Shell.inspect!` (or `Shell.inspect`). It is `$(...)` in a real
+run, and a rehearsal runs it too and says so:
+
+```console
+$ wand --dry-run deploy.wand
+ran (inspect): kubectl config current-context
+would run: kubectl apply -f web.json -> ""
+```
+
+The name is the script's promise that the command changes nothing. wand
+cannot see what a subprocess does, so it takes the promise. Use `inspect`
+only for a read. A command known to change things, such as `kubectl apply`,
+`git push` or `rm`, is a `V-SHELL3` violation there, and a command whose
+words only the run decides is an `A-SHELL2` advisory, because nothing could
+check it.
 
 Two things happen for real, and each says so on the line that reports it.
 `FS.lock` takes the lock, so a rehearsal cannot run beside a real one; a
@@ -7272,6 +7298,8 @@ punish the safer choice.
 | `V-SHELL1` | the manifest narrows `Shell` to named binaries, but a command word is decided at run time |
 | `V-NET1` | the manifest narrows `Net` to named hosts, but a request is built with a host decided at run time |
 | `V-SHELL2` | a command runs on to a second line, which starts a second command |
+| `V-SHELL3` | `Shell.inspect` runs a command known to change things, such as `kubectl apply` or `rm`, which a rehearsal would run for real — run it with `$(...)` |
+| `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
 | `A-BIND1` | a `let _ =` binds a value that is `Unit`, so the binder dismisses a failure that is not there — write the statement on its own, sequenced with `;` where it sits in a body |
 | `A-USES1` | a manifest permits an effect the file does not use, or a binary no command runs |
 | `V-USES2` | a file performs effects and declares no manifest |

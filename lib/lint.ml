@@ -183,6 +183,56 @@ let wild_let_span ~binder v =
               Token.end_col = l.Token.col }, true)
   | _ -> (binder, false)
 
+(* Commands and subcommands known to change things, for V-SHELL3. A command
+   whose every use changes something is listed with no subcommands. The list
+   cannot be complete; it holds the mistakes worth catching. *)
+let mutating_commands = [
+  ("kubectl", ["apply"; "create"; "delete"; "patch"; "replace"; "scale";
+               "edit"; "label"; "annotate"; "rollout"; "drain"; "cordon";
+               "uncordon"; "taint"; "set"; "expose"; "run"; "autoscale"]);
+  ("git", ["push"; "commit"; "reset"; "checkout"; "switch"; "merge";
+           "rebase"; "tag"; "pull"; "clean"; "rm"; "mv"; "restore"]);
+  ("docker", ["run"; "rm"; "rmi"; "push"; "build"; "stop"; "kill"]);
+  ("rm", []); ("mv", []); ("cp", []); ("mkdir", []); ("rmdir", []);
+  ("touch", []); ("chmod", []); ("chown", []); ("dd", []); ("ln", []);
+  ("tee", []); ("truncate", []);
+]
+
+(* The first command in the text that is known to change things, written as
+   the reader would say it: `kubectl apply`, `rm`. Each command of a
+   pipeline or a list is checked, since `kubectl get x | tee out` writes. *)
+let mutating_in text =
+  let is_sep c = c = '|' || c = ';' || c = '&' || c = '\n' in
+  let commands =
+    String.split_on_char '\x00'
+      (String.map (fun c -> if is_sep c then '\x00' else c) text)
+  in
+  List.find_map (fun cmd ->
+    let words =
+      String.split_on_char ' ' (String.map (fun c ->
+        if c = '\t' then ' ' else c) cmd)
+      |> List.filter (fun w -> w <> "" && not (String.contains w '='))
+    in
+    match words with
+    | [] -> None
+    | first :: rest ->
+      let name = Filename.basename first in
+      (match List.assoc_opt name mutating_commands with
+       | Some [] -> Some name
+       | Some verbs ->
+         List.find_map (fun w ->
+           if List.mem w verbs then Some (name ^ " " ^ w) else None) rest
+       | None -> None)) commands
+
+(* `Shell.inspect!` or `Shell.inspect`, written with the module. *)
+let inspect_call (f : Ast.expr) =
+  match strip_located f with
+  | Ast.Field (m, (("inspect!" | "inspect") as fn)) ->
+    (match strip_located m with
+     | Ast.Var "Shell" | Ast.Constr "Shell" -> Some fn
+     | _ -> None)
+  | _ -> None
+
 let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
   let acc = ref [] in
   let here = ref start_loc in
@@ -286,6 +336,38 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
       acc := { rule = Lint_rules.V_CLOCK1; loc = !here;
                text = Lint_rules.clock1; fix = None } :: !acc;
       go a; go b
+    (* A command run on the promise that it only reads. What the text
+       shows is checked against the commands known to change things; what
+       only the run decides is said to be unchecked. *)
+    | Ast.App (f, arg) when inspect_call f <> None ->
+      let fn = Option.get (inspect_call f) in
+      (match strip_located arg with
+       | Ast.MkCommand (inner, _) ->
+         let (lead, dynamic) =
+           match strip_located inner with
+           | Ast.String cmd -> (cmd, false)
+           | Ast.CmdInterp ((lit, _, _) :: _, _) -> (lit, true)
+           | Ast.CmdInterp ([], tail) -> (tail, false)
+           | _ -> ("", true)
+         in
+         (match mutating_in lead with
+          | Some what ->
+            acc := { rule = Lint_rules.V_SHELL3; loc = !here;
+                     text = Lint_rules.shell3 ~what ~fn; fix = None } :: !acc
+          | None ->
+            (* A hole in the text: the words after it are the run's. When
+               the text before it already names a command and a verb, that
+               is what was checked, and it held. *)
+            if dynamic
+               && List.length (String.split_on_char ' ' (String.trim lead)) < 2
+            then
+              acc := { rule = Lint_rules.A_SHELL2; loc = !here;
+                       text = Lint_rules.inspect_dynamic ~fn; fix = None }
+                     :: !acc)
+       | _ ->
+         acc := { rule = Lint_rules.A_SHELL2; loc = !here;
+                  text = Lint_rules.inspect_dynamic ~fn; fix = None } :: !acc);
+      go f; go arg
     | Ast.App (a, b) | Ast.BinOp (_, a, b) | Ast.Seq (a, b) -> go a; go b
     | Ast.UnOp (_, a) | Ast.Fn (_, a) | Ast.Annot (_, a)
     | Ast.Field (a, _) | Ast.Try a -> go a

@@ -351,6 +351,39 @@ let test_shell2 () =
     "uses {Shell}\nlet a = $(echo one \\\n  two)\na";
   silent "one line" "uses {Shell}\nlet a = $(echo one two)\na"
 
+(* ── V-SHELL3 and A-SHELL2: what Shell.inspect promises ─────────────────── *)
+
+(* `Shell.inspect` runs its command in a rehearsal, on the script's word
+   that the command changes nothing. A command known to change things
+   breaks that promise; words the run decides cannot be checked at all. *)
+let test_shell3 () =
+  fires "a mutating subcommand"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl apply -f x.json)\na"
+    "V-SHELL3";
+  fires "after a flag"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl -n prod delete pod web)\na"
+    "V-SHELL3";
+  fires "a command that only changes things"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect $*(rm -rf ./build)\na"
+    "V-SHELL3";
+  fires "a later stage of a pipeline"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl get pods | tee out.txt)\na"
+    "V-SHELL3";
+  silent "a read"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl get --raw /openapi/v3)\na";
+  silent "a read with a hole after the verb"
+    "uses {Shell}\nimport Shell\nlet n = \"x\"\nlet a = Shell.inspect! $*(kubectl get pod %{n})\na";
+  fires "a command word the run decides"
+    "uses {Shell}\nimport Shell\nlet t = \"kubectl\"\nlet a = Shell.inspect! $*(%{t} get pods)\na"
+    "A-SHELL2";
+  fires "a command built elsewhere"
+    "uses {Shell}\nimport Shell\nlet c = $*(kubectl get pods)\nlet a = Shell.inspect! c\na"
+    "A-SHELL2";
+  Alcotest.(check bool) "V-SHELL3 must be fixed" true
+    (Lint_rules.kind Lint_rules.V_SHELL3 = Lint_rules.Violation);
+  Alcotest.(check bool) "A-SHELL2 is advisory" true
+    (Lint_rules.kind Lint_rules.A_SHELL2 = Lint_rules.Advisory)
+
 (* ── Classification ──────────────────────────────────────────────────────── *)
 
 (* Only must-fix rules may fail a build. An advisory one that could fail it
@@ -709,6 +742,7 @@ let () =
       Alcotest.test_case "A-USES1 binaries" `Quick test_uses1_shell_binaries;
       Alcotest.test_case "V-USES2"  `Quick test_uses2;
       Alcotest.test_case "V-SHELL1" `Quick test_shell1_dynamic;
+      Alcotest.test_case "V-SHELL3 and A-SHELL2" `Quick test_shell3;
       Alcotest.test_case "A-BIND1"  `Quick test_bind1;
       Alcotest.test_case "A-BIND1 top-level binder" `Quick
         test_a_top_level_wildcard_binds_one_value;

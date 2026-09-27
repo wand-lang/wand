@@ -999,6 +999,13 @@ let perform_wand (name, v) =
 let ambient_shell_allow : string list option Domain.DLS.key =
   Domain.DLS.new_key (fun () -> None)
 
+(* Set while `Shell.inspect!` runs its command: the script says the command
+   only reads, so a rehearsal runs it rather than withholding it. It rides
+   beside the perform, as the bound does, so a mock of `Shell!run` still
+   matches a plain command string. *)
+let ambient_shell_read : bool Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> false)
+
 (* The same, for the request being sent: the `Net(...)` bound of the file
    that built it, carried out of band so the payload a handler matches on
    stays the request itself. The transport reads it to check each redirect,
@@ -1369,6 +1376,7 @@ let () = Sched.interrupt_pending := (fun () ->
 type fiber_state = {
   f_on_pool : bool;
   f_shell_allow : string list option;
+  f_shell_read : bool;
   f_net_allow : string list option;
   f_file_net : string list option;
   f_file_listen : string list option;
@@ -1382,6 +1390,7 @@ type fiber_state = {
 let save_fiber () = {
   f_on_pool = Domain.DLS.get on_pool;
   f_shell_allow = Domain.DLS.get ambient_shell_allow;
+  f_shell_read = Domain.DLS.get ambient_shell_read;
   f_net_allow = Domain.DLS.get ambient_net_allow;
   f_file_net = Domain.DLS.get ambient_file_net;
   f_file_listen = Domain.DLS.get ambient_file_listen;
@@ -1395,6 +1404,7 @@ let save_fiber () = {
 let restore_fiber st =
   Domain.DLS.set on_pool st.f_on_pool;
   Domain.DLS.set ambient_shell_allow st.f_shell_allow;
+  Domain.DLS.set ambient_shell_read st.f_shell_read;
   Domain.DLS.set ambient_net_allow st.f_net_allow;
   Domain.DLS.set ambient_file_net st.f_file_net;
   Domain.DLS.set ambient_file_listen st.f_file_listen;
@@ -1409,6 +1419,7 @@ let restore_fiber st =
 let fresh_fiber ?cancel () = {
   f_on_pool = false;
   f_shell_allow = None;
+  f_shell_read = false;
   f_net_allow = None;
   f_file_net = Domain.DLS.get ambient_file_net;
   f_file_listen = Domain.DLS.get ambient_file_listen;
@@ -6319,6 +6330,15 @@ let stdlib_eval_env : env = [
         ~finally:(fun () -> Domain.DLS.set ambient_net_allow saved)
         (fun () ->
           perform_wand ("Net!download", VTuple [url; dest])))));
+  (* `$(cmd)`, over a command the script says only reads: `Shell.inspect!`. *)
+  ("shell_inspect", VBuiltin (function
+    | VCommand (cmd, allow) ->
+      let saved = Domain.DLS.get ambient_shell_read in
+      Domain.DLS.set ambient_shell_read true;
+      Fun.protect
+        ~finally:(fun () -> Domain.DLS.set ambient_shell_read saved)
+        (fun () -> perform_shell "Shell!run" allow (VString cmd))
+    | _ -> raise (EvalError "shell_inspect: expected a Command")));
   ("shell_query", VBuiltin (function
     | VCommand (cmd, allow) -> perform_shell "Shell!capture" allow (VString cmd)
     | _ -> raise (EvalError "shell_query: expected a Command")));

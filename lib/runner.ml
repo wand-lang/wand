@@ -3107,8 +3107,16 @@ let run_in_mode mode (thunk : unit -> value) : value =
               | WandEffect (name, v) ->
                 Some (fun (k : (a, value) Effect.Deep.continuation) ->
                   let described = describe_operation name v in
+                  (* A command the script says only reads, through
+                     `Shell.inspect!`, runs in a rehearsal, and the line says
+                     so. *)
+                  let marked_read =
+                    name = "Shell!run"
+                    && Domain.DLS.get Evaluator.ambient_shell_read
+                  in
                   let withhold =
-                    mode = DryRun && (is_mutation name || is_mutation_value name v)
+                    mode = DryRun && not marked_read
+                    && (is_mutation name || is_mutation_value name v)
                   in
                   (* The one operation a rehearsal neither carries out nor
                      withholds. Two rules already settled point opposite ways
@@ -3143,6 +3151,8 @@ let run_in_mode mode (thunk : unit -> value) : value =
                         | None -> report "would %s: %s\n" verb what)
                      else if skip_wait then
                        report "%s: %s (a rehearsal does not wait)\n" verb what
+                     else if mode = DryRun && marked_read then
+                       report "ran (inspect): %s\n" what
                      else if stops_here then
                        report "%s: %s (the rehearsal ends here, as a run \
                                would)\n" verb what

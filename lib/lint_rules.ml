@@ -23,6 +23,8 @@ type id =
   | V_DROP2    (* an assertion's outcome is thrown away, so the test cannot fail *)
   | V_SHELL2   (* a command literal runs on to a second line without a `\` *)
   | V_SHELL1   (* Shell is narrowed, but this command word is only known at run time *)
+  | V_SHELL3   (* Shell.inspect runs a command known to change things *)
+  | A_SHELL2   (* Shell.inspect runs a command whose words only the run decides *)
   | V_NET1     (* Net is narrowed, but this host is only known at run time *)
   | V_IMP2     (* an import binds a name the file never mentions *)
   | V_CLOCK1   (* two readings of the civil clock subtracted: a step spoils it *)
@@ -134,6 +136,19 @@ let all = [
   { id = V_SHELL2; code = "V-SHELL2";
     summary = "a command runs on to a second line, which starts a second command";
     kind = Violation };
+  (* `Shell.inspect` is the script's promise that a command changes nothing,
+     and a rehearsal runs it on that promise. A command word known to change
+     things breaks the promise where a rehearsal is trusted most, so this is
+     a violation, and --strict refuses the file. *)
+  { id = V_SHELL3; code = "V-SHELL3";
+    summary = "Shell.inspect runs a command that is known to change things";
+    kind = Violation };
+  (* The same promise, over words the text does not show. Nothing is wrong
+     that can be seen, so this is advice: the reader is told that nothing
+     checked it. *)
+  { id = A_SHELL2; code = "A-SHELL2";
+    summary = "Shell.inspect runs a command whose words are decided at run time";
+    kind = Advisory };
   (* `let _ =` says the value is being dropped on purpose, which is what
      V-DROP1 asks for over a Result. Over a Unit there is no failure to
      dismiss, so the binder says nothing and the statement below it reads
@@ -300,6 +315,16 @@ let net1_dynamic =
 let shell1_dynamic =
   "this command's first word is decided at run time, so the Shell(...) \
    list is checked when it spawns rather than here"
+
+let shell3 ~what ~fn =
+  Printf.sprintf
+    "'%s' changes things, and Shell.%s runs it in a rehearsal as well as in \
+     a real run; run it with $(...) so that --dry-run withholds it" what fn
+
+let inspect_dynamic ~fn =
+  Printf.sprintf
+    "Shell.%s runs this command in a rehearsal, and its words are only \
+     known at run time, so wand cannot check that it only reads" fn
 
 let shell2 =
   "this command runs on to the next line, and a newline inside $() starts a \

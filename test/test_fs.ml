@@ -194,6 +194,24 @@ let rehearse src =
   (try Sys.remove path with Sys_error _ -> ());
   out
 
+(* A command run with `Shell.inspect!` is one the script says only reads,
+   so a rehearsal runs it and hands its real output on, and says so. Every
+   other command is still withheld. *)
+let test_a_rehearsal_runs_what_only_inspects () =
+  if not (Sys.file_exists wand_binary) then
+    Alcotest.failf "wand binary not found at %s" wand_binary;
+  let out = rehearse {|uses {IO, Shell(echo)}
+import IO
+import Shell
+let a = Shell.inspect! $*(echo looked)
+let b = $(echo withheld)
+IO.println "%{a}|%{b}"|} in
+  Alcotest.(check (list string)) "the read ran, the other command did not"
+    [ "ran (inspect): echo looked";
+      "would run: echo withheld -> \"\"";
+      "looked|" ]
+    (String.split_on_char '\n' (String.trim out))
+
 let temp_dir_script =
   {|uses {FS.Read, FS.Write, IO}
 import FS
@@ -895,6 +913,8 @@ let () =
     "a rehearsal", [
       Alcotest.test_case "names a fresh directory" `Quick
         test_a_rehearsal_names_a_fresh_directory;
+      Alcotest.test_case "a rehearsal runs what only inspects" `Quick
+        test_a_rehearsal_runs_what_only_inspects;
       Alcotest.test_case "reads back what it wrote" `Quick
         test_a_rehearsal_reads_back_what_it_wrote;
       Alcotest.test_case "writes nothing" `Quick
