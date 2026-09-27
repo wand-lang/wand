@@ -604,6 +604,60 @@ let resolve_alias ~base_dir name =
        library module's name is capitalised, as in `import List`"
       name pkg.file name))
 
+(* Whether a command-line target that is not a file on disk names a module
+   by URL. The shell hands wand strings, so what an import says with its
+   literal -- `./x` a path, `github.com/you/x` a URL -- is said here by
+   shape: a scheme, or a host (a first segment with a dot) and a path under
+   it. Anything written like a path stays one, so a mistyped
+   `deploy.wand` or `scripts/deploy` is still "no such file". *)
+let names_a_url target =
+  let has_scheme =
+    match String.index_opt target ':' with
+    | Some i -> i + 2 < String.length target && String.sub target i 3 = "://"
+    | None -> false
+  in
+  has_scheme ||
+  (target <> ""
+   && not (List.mem target.[0] ['.'; '/'; '~'])
+   && not (Filename.check_suffix target ".wand")
+   && (match segments target with
+       | host :: _ :: _ -> String.contains host '.'
+       | _ -> false))
+
+(* The file `wand <url>` runs. The URL resolves the way an import of it
+   would from `dir`: the package there must require it, its version comes
+   from that package's wand.pkg, and the copy is fetched and checked against
+   the sum section. That package is the main one for the whole run, so the
+   script's own imports resolve against the build the caller pinned rather
+   than against whatever the fetched package's wand.pkg says. *)
+let resolve_entry ~dir target =
+  let bare = url_path target in
+  let url = normalize_url target in
+  let pkg = match of_dir dir with
+    | Some p -> p
+    | None ->
+      raise (Unresolved (Printf.sprintf
+        "`wand %s` reads the version from wand.pkg, and this directory \
+         is in no package. Run `wand p init`, then `wand p add %s`" bare bare))
+  in
+  (match entry_for pkg url with
+   | Some _ -> ()
+   | None ->
+     raise (Unresolved (Printf.sprintf
+       "%s is not in the `require` list of %s. Run `wand p add %s` to require it"
+       bare pkg.file bare)));
+  main := Some pkg;
+  let file = resolve_url ~base_dir:dir url in
+  if not (Sys.file_exists file) then begin
+    let r = selected pkg (Option.get (entry_for pkg url)) in
+    let rest = List.filteri (fun i _ -> i >= List.length (segments r.path))
+                 (segments url) in
+    let name = match rest with [] -> [last_segment r.path] | _ -> rest in
+    raise (Unresolved (Printf.sprintf "%s %s has no file %s.wand"
+      (url_path r.path) r.version (String.concat "/" name)))
+  end;
+  file
+
 (* The module URL and version a file of the build was read from, for a
    message that has to tell two majors of one module apart. *)
 let describe_file path =

@@ -3322,7 +3322,11 @@ let rearm_signal_handlers () =
   Evaluator.clear_interrupt ();
   install_signal_handlers ()
 
-let run_file ?(mode = Normal) path =
+(* `keep_main` is for `wand run <url>`: the package that required the
+   script has already been made the main one, and the script's own
+   directory is a copy in the cache whose wand.pkg does not decide the
+   build. *)
+let run_file ?(mode = Normal) ?(keep_main = false) path =
   let full = entry_path path in
   try
     let src      = In_channel.with_open_text full In_channel.input_all in
@@ -3330,7 +3334,7 @@ let run_file ?(mode = Normal) path =
        because it is the file the reader is looking at; a position from
        anywhere else says where it is. *)
     Evaluator.entry_file := full;
-    Package.set_main_file full;
+    if not keep_main then Package.set_main_file full;
     let tokens   = Lexer.tokenize ~file:full src in
     let prog     = Parser.parse_program tokens in
     let base_dir = Filename.dirname full in

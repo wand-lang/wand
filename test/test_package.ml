@@ -151,6 +151,78 @@ let test_private_by_path () =
     Alcotest.(check (result string string)) "from its own package" (Ok "1")
       (Runner.run_file (Filename.concat json "inside.wand")))
 
+(* ── wand <url> ──────────────────────────────────────────────────────── *)
+
+(* A target on the command line is a string, so its shape decides: a scheme,
+   or a host with a path under it. What is written like a path stays one. *)
+let test_names_a_url () =
+  List.iter (fun (target, want) ->
+    Alcotest.(check bool) target want (Package.names_a_url target))
+    [ "github.com/wand-lang/plimsoll/cli", true;
+      "https://x.dev/me/json", true;
+      "x.dev/me", true;
+      "notes.txt", false;           (* one segment: a file that is not there *)
+      "deploy.wand", false;
+      "a.b/deploy.wand", false;
+      "scripts/deploy", false;      (* no host *)
+      "./x.dev/me", false;
+      "/x.dev/me", false;
+      "~/x.dev/me", false;
+      "", false ]
+
+let test_resolve_entry () =
+  with_two_packages (fun ~app ~json ->
+    let resolved target = Package.resolve_entry ~dir:app target in
+    let says label needle target =
+      match resolved target with
+      | exception Package.Unresolved e ->
+        if not (contains e needle) then
+          Alcotest.failf "%s: expected %S in: %s" label needle e
+      | f -> Alcotest.failf "%s: expected an error, got %s" label f
+    in
+    let same a b = Unix.realpath a = Unix.realpath b in
+    Alcotest.(check bool) "a file below the package" true
+      (same (resolved "x.dev/me/json/decode") (Filename.concat json "decode.wand"));
+    Alcotest.(check bool) "the package's own file, with a scheme" true
+      (same (resolved "https://x.dev/me/json") (Filename.concat json "json.wand"));
+    Alcotest.(check bool) "the package here is the main one" true
+      (match !Package.main with
+       | Some m -> same m.Package.root app
+       | None -> false);
+    says "not required names wand p add"
+      "Run `wand p add x.dev/other/thing` to require it" "x.dev/other/thing";
+    says "a file the package does not have"
+      "x.dev/me/json 1.4.0 has no file nope.wand" "x.dev/me/json/nope";
+    says "a private file" "`_internal` is private" "x.dev/me/json/_internal/p");
+  let dir = fresh_dir () in
+  match Package.resolve_entry ~dir "x.dev/me/json" with
+  | exception Package.Unresolved e ->
+    Alcotest.(check bool) "no wand.pkg says how to make one" true
+      (contains e "is in no package. Run `wand p init`, then `wand p add x.dev/me/json`")
+  | f -> Alcotest.failf "expected an error outside a package, got %s" f
+
+(* The script runs from the package that required it, and so do its own
+   imports: `tool` requires `lib` with no local copy, and only the app says
+   where `lib` is. Read with the script's own wand.pkg as the main one, the
+   run would go to the network for it. *)
+let test_run_entry_keeps_the_caller_s_build () =
+  let root = fresh_dir () in
+  let at p = Filename.concat root p in
+  List.iter (fun d -> Unix.mkdir (at d) 0o755) ["app"; "tool"; "lib"];
+  let v = Version.value in
+  write (at "lib/wand.pkg") (Printf.sprintf "{ package = https://x.dev/me/lib, wand = %s }" v);
+  write (at "lib/lib.wand") {|let shout s = "%{s}!"|};
+  write (at "tool/wand.pkg") (Printf.sprintf
+    "{ package = https://x.dev/me/tool, wand = %s, require = [ { path = https://x.dev/me/lib, version = 1.0.0 } ] }" v);
+  write (at "tool/cli.wand") "import https://x.dev/me/lib\nlib.shout \"gen\"";
+  write (at "app/wand.pkg") (Printf.sprintf
+    "{ package = https://x.dev/me/app, wand = %s, require = [ \
+     { path = https://x.dev/me/tool, version = 1.0.0, local = ../tool }, \
+     { path = https://x.dev/me/lib, version = 1.0.0, local = ../lib } ] }" v);
+  let file = Package.resolve_entry ~dir:(at "app") "x.dev/me/tool/cli" in
+  Alcotest.(check (result string string)) "the script and its import run"
+    (Ok "gen!") (Runner.run_file ~keep_main:true file)
+
 (* A git repository standing in for https://x.dev/me/json, which git is told
    to read from disk, and a cache of this test's own. *)
 let with_remote f =
@@ -534,6 +606,11 @@ let () =
       Alcotest.test_case "by URL, no package"  `Quick test_url_import_outside_a_package;
       Alcotest.test_case "private by path"     `Quick test_private_by_path;
       Alcotest.test_case "without a scheme"    `Quick test_schemeless_urls;
+    ];
+    "wand <url>", [
+      Alcotest.test_case "what names a URL"    `Quick test_names_a_url;
+      Alcotest.test_case "resolving the file"  `Quick test_resolve_entry;
+      Alcotest.test_case "the caller's build"  `Quick test_run_entry_keeps_the_caller_s_build;
     ];
     "fetching", [
       Alcotest.test_case "fetch and the sum section" `Quick

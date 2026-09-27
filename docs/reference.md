@@ -3846,6 +3846,32 @@ A leading `_` is private at every level. A module file (`_parser.wand`) or a
 directory (`_internal/`) whose name starts with `_` is private to its package.
 Another package that imports it, by URL or by path, gets an error.
 
+### Running a script by URL
+
+A package can ship a script, and a package that requires it runs the script
+by its URL:
+
+```sh
+wand p add github.com/wand-lang/plimsoll
+wand github.com/wand-lang/plimsoll/cli gen
+```
+
+The URL resolves as an import of it would from the current directory: the
+package here must require it, `wand.pkg` gives the version, and the copy is
+fetched and checked against the sum section. A URL that `wand.pkg` does not
+require is an error that names the `wand p add` to run. The package here
+stays the one that chooses versions, so the script's own imports resolve
+against this build, not against the script's `wand.pkg`.
+
+It is a script run like any other. Its manifest holds, and `--dry-run`,
+`--trace`, `--lint`, `--strict` and `--` work as they do for a file.
+
+A command-line argument is a string, so its shape says which it is. A file
+that exists is always run as the file. Otherwise, a URL with a scheme, or a
+host with a path under it (`github.com/you/tool/cli`), is a URL. A name that
+starts with `.`, `/` or `~`, ends in `.wand`, or has no host
+(`scripts/deploy`) is a file, and if it is not there, the error says so.
+
 ### Releasing a package
 
 The types decide the smallest version change that a release needs. You can
@@ -6939,7 +6965,11 @@ writes it and reads it. A script does not have to.
 wand script.wand          # run a script
 wand script.wand arg1     # pass arguments (available via Proc.args)
 wand script.wand -- arg1  # everything after -- is the script's, whatever it looks like
+wand github.com/you/tool/cli arg1  # a script in a package wand.pkg requires
 ```
+
+A script named by URL is described in
+[Running a script by URL](#running-a-script-by-url).
 
 ```sh
 wand script.wand --lint            # report the lint findings, then run it

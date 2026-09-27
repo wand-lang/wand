@@ -8,6 +8,7 @@ let usage () =
   print_endline "Usage: wand <command> [options] [args]";
   print_endline "       wand [--dry-run|--trace] <file.wand> [--lint|--strict] [args]";
   print_endline "       wand <file.wand> [args]";
+  print_endline "       wand <url> [args]            A script in a package wand.pkg requires";
   print_endline "       wand <file.wand> -- [args]   (everything after -- is the script's)";
   print_endline "       wand -e <expr>               Evaluate an expression and exit";
   print_endline "";
@@ -556,7 +557,7 @@ let wants_help args =
    `--strict` asks for the findings and refuses to run on a violation, so it
    implies `--lint` rather than needing it. A script with a `--strict` of its
    own is given it after `--`. *)
-let run_script path args =
+let run_script ?(keep_main = false) path args =
   let (before, after) = split_own args in
   let has f = List.mem f before in
   let strict = has "--strict" in
@@ -575,9 +576,33 @@ let run_script path args =
      so whatever the script is holding is released first, and the code it
      stops with is the one the caller expects. *)
   Wand.Runner.install_signal_handlers ();
-  (match Wand.Runner.run_file ~mode path with
+  (match Wand.Runner.run_file ~mode ~keep_main path with
    | Ok v    -> if v <> "()" then print_endline v
    | Error e -> Printf.eprintf "Error: %s\n" e; exit 1)
+
+(* A script named by a module's URL, as an import names one: the package
+   here requires it, and its wand.pkg says which version runs. A file on
+   disk wins over a URL of the same spelling, so no command that worked
+   before means something else now. *)
+let run_target ~missing path args =
+  if Sys.file_exists path || Sys.file_exists (path ^ ".wand")
+     || not (Wand.Package.names_a_url path)
+  then begin
+    if not (Sys.file_exists path || Sys.file_exists (path ^ ".wand"))
+    then missing ();
+    run_script path args
+  end else
+    match Wand.Package.resolve_entry ~dir:(Sys.getcwd ()) path with
+    | file -> run_script ~keep_main:true file args
+    | exception Wand.Package.Unresolved msg ->
+      Printf.eprintf "Error: %s\n" msg; exit 1
+    | exception Wand.Package.Error (loc, msg) ->
+      Printf.eprintf "Error: %s%s\n"
+        (match loc with
+         | Some l -> Printf.sprintf "%s:%d:%d: " l.Wand.Token.file l.line l.col
+         | None -> "")
+        msg;
+      exit 1
 
 let main () =
   let args = Array.to_list Sys.argv |> List.tl in
@@ -634,9 +659,9 @@ let main () =
         | None ->
           Printf.eprintf "Error: expected a script after %s\n" sub; exit 1
         | Some (path, rest) ->
-          if not (Sys.file_exists path) then no_such_file path;
           let tail = match after with [] -> [] | _ -> "--" :: after in
-          run_script path ((sub :: rest) @ tail)))
+          run_target ~missing:(fun () -> no_such_file path) path
+            ((sub :: rest) @ tail)))
   (* Asked for before anything is done with it. `wand i --help` started a
      session and `wand lsp --help` started a server, both of which hang
      rather than answer; `wand d --help` looked up a doc for `--help` and
@@ -1207,7 +1232,7 @@ let main () =
          was given is the expression to put in the hint. *)
       (* `wand deploy.wand` and `wand deploy` name the same script when only
          one of the two is on disk, which is what the runner resolves to. *)
-      if not (Sys.file_exists path || Sys.file_exists (path ^ ".wand")) then begin
+      run_target path rest ~missing:(fun () ->
         let hint =
           match path, rest with
           | ("e" | "eval"), [expr] -> Some ("wand -e " ^ requote expr)
@@ -1218,9 +1243,7 @@ let main () =
             Some ("wand -e " ^ requote path)
           | _ -> None
         in
-        no_such_file ?hint path
-      end;
-      run_script path rest
+        no_such_file ?hint path)
 
 (* The last write of a run can be the one that finds the reader gone -- the
    verdict line of `wand s | head`. It is not the script's failure to report,
