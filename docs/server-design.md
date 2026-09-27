@@ -203,8 +203,39 @@ stay in 0.x minors until 1.0.
    new setting is a new field. The name carries `!` because listening
    raises when the port is taken. Each connection answers one request and
    closes; keeping a connection open for more is not in this record.
-3. Load-test a simple `HTTP.serve`. Confirm that lines written by
-   concurrent requests never mix. Include handlers that read files, and
-   confirm or revisit the short block a file operation takes under fibers:
-   regular files cannot use `poll`, so a read or a write blocks the domain
-   for as long as the disk takes.
+3. Load-test a simple `HTTP.serve`. Done 2026-09-26, results below.
+
+## Load test
+
+Measured with `ab` against `HTTP.serve!` on this machine (16 cores, OCaml
+5.5.1), one connection per request:
+
+| Handler | Clients | Requests a second | p99 |
+|---|---|---|---|
+| `HTTP.reply 200 "ok"` | 16 | 4,433 | 5 ms |
+| reads a 4 KB file | 16 | 3,400 | 7 ms |
+| computes `fib 15` | 16 | 3,367 | 11 ms |
+| one outbound `HTTP.get` | 16 | 360 | 56 ms |
+
+For scale, Python's `ThreadingHTTPServer` answered about 3,500 a second
+with p99 32 ms and worst cases over a second; a bare `Net.listen` and
+`Stream.each_par` answers about 22,000.
+
+- **Correct under load.** No request failed at 1 to 256 clients; 5,000
+  concurrent `Shared` updates counted 5,000; 5,000 concurrent log lines
+  were all intact, so writes are line-atomic.
+- **Memory is flat:** 23 MB after 80,000 requests. It first grew 9 KB a
+  request, from spawning domains per `Par` call and, before OCaml 5.5,
+  from fiber stacks freed on another domain. `Par` now keeps a pool, and
+  wand builds on 5.5.1.
+- **File reads under fibers:** a handler that reads a file costs about a
+  quarter of the throughput and nothing in latency. The short block is
+  confirmed.
+- **Outbound HTTP:** a `curl` per call costs about 17 ms and caps a
+  handler that calls out at about 360 a second. That is enough for a
+  service that calls another now and then, so outbound HTTP stays on
+  `curl`; a native client for plain HTTP waits for a service that calls
+  out on every request.
+- **Where the time goes:** `HTTP.serve!` is five times slower than the
+  bare server. Most of it is the two `Par.timeout` calls a request makes,
+  for the head and for the deadline; the rest is parsing in wand.
