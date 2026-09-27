@@ -1,8 +1,5 @@
 uses {Clock}
 
-import Clock
-import Result
-
 -- Fork-join parallelism, and nothing else.
 --
 -- Both functions take the most workers to run at once as their first
@@ -14,10 +11,13 @@ import Result
 -- there is no unstructured concurrency to build out of them, and no
 -- function needs a different colour for being called from one.
 --
--- At the same time; in parallel when the work is pure. Every item starts
--- on a pool of domains, one for each core. At its first effect, the rest
--- of the item runs on the calling domain as a lightweight task, and tasks
--- wait side by side: twenty slow commands overlap.
+-- At the same time; in parallel when the work is pure. An item starts on a
+-- pool of domains, one for each core. At its first effect, the rest of the
+-- item runs on the calling domain as a lightweight task, and tasks wait
+-- side by side: twenty slow commands overlap. A function that reached its
+-- first effect or its end within 50 microseconds the last time runs on the
+-- calling domain from the start, since the pool would cost it more than it
+-- saves.
 --
 -- A worker is never outside a handler's reach. Every effect runs on the
 -- calling domain, inside the handlers the call is inside, so a mock,
@@ -124,9 +124,4 @@ let all! branches = par_all branches
 --
 -- >> Par.timeout 5s (fn () -> 1 + 1)
 -- Ok(2) : Result String Int
-let timeout d thunk = (
-  par_deadline_guard ();
-  let work = fn () -> Ok (thunk ());
-  let sleeper = fn () -> (Clock.sleep d; Error "timed out after %{d}");
-  Result.flatten (race [work, sleeper])
-)
+let timeout d thunk = (par_deadline_guard (); par_timeout d thunk)

@@ -4824,6 +4824,12 @@ let stdlib_type_env : env = [
      one of the thunks really runs. It waits on workers, not on a clock, so
      no Clock. *)
   ("par_deadline_guard", generalize [] ((TUnit @-> TUnit)));
+  ("par_timeout",
+   let a = fresh () in
+   let e = Effect_set.unknown () in
+   let with_clock = Effect_set.add Effect_set.Clock e in
+   generalize [] (TDuration @-> TFun (TFun (TUnit, a, with_clock),
+                                      TResult (TString, a), with_clock)));
   ("par_race", let a = fresh () in
                let e = Effect_set.unknown () in
                generalize [] (TFun (TList (TFun (TUnit, a, e)),

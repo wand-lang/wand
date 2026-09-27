@@ -212,9 +212,10 @@ Measured with `ab` against `HTTP.serve!` on this machine (16 cores, OCaml
 
 | Handler | Clients | Requests a second | p99 |
 |---|---|---|---|
-| `HTTP.reply 200 "ok"` | 16 | 4,433 | 5 ms |
-| reads a 4 KB file | 16 | 3,400 | 7 ms |
-| computes `fib 15` | 16 | 3,367 | 11 ms |
+| `HTTP.reply 200 "ok"` | 16 | 6,677 | 5 ms |
+| `HTTP.reply 200 "ok"` | 64 | 8,883 | 19 ms |
+| reads a 4 KB file | 16 | 5,525 | 7 ms |
+| computes `fib 15` | 16 | 4,392 | 11 ms |
 | one outbound `HTTP.get` | 16 | 360 | 56 ms |
 
 For scale, Python's `ThreadingHTTPServer` answered about 3,500 a second
@@ -236,6 +237,10 @@ with p99 32 ms and worst cases over a second; a bare `Net.listen` and
   service that calls another now and then, so outbound HTTP stays on
   `curl`; a native client for plain HTTP waits for a service that calls
   out on every request.
-- **Where the time goes:** `HTTP.serve!` is five times slower than the
-  bare server. Most of it is the two `Par.timeout` calls a request makes,
-  for the head and for the deadline; the rest is parsing in wand.
+- **Where the time goes:** each request makes two `Par.timeout` calls, for
+  the head and for the deadline. Handing each to the domain pool capped a
+  server near 4,400 a second; with no races at all a copy of the serving
+  code answers about 14,000. `Par` now runs a function on the calling
+  domain when it was quick the last time, so only a handler that computes
+  for a while goes to the pool. The best of three rounds is above, measured
+  with the machine at a load average of about 10.

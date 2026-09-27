@@ -4105,7 +4105,104 @@ let decode_lexed name build (j : Yojson.Basic.t) path =
    the calling domain, inside whatever handlers the call is inside: an
    effect is never performed anywhere else. `limit` caps the items in
    progress on both sides. *)
-let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
+(* How long a function ran, the last time Par gave it an item, before its
+   first effect or its end -- keyed by where its body is written. A function
+   that was quick runs on the calling domain: handing it to the pool and
+   back would cost more than it does. *)
+type par_key = string * int * int
+
+let par_timings : (par_key, float) Hashtbl.t = Hashtbl.create 64
+let par_timings_m = Mutex.create ()
+
+let quick_seconds = 50e-6
+
+let rec par_key_of_expr = function
+  | Located (l, _) -> Some (l.Token.file, l.Token.line, l.Token.col)
+  | Annot (_, e) -> par_key_of_expr e
+  | _ -> None
+
+let par_key v : par_key option =
+  match v with
+  | VFun (_, _, body) | VFix (_, _, _, body) -> par_key_of_expr body
+  | _ -> None
+
+let par_record key dt =
+  match key with
+  | None -> ()
+  | Some k ->
+    Mutex.lock par_timings_m;
+    Hashtbl.replace par_timings k dt;
+    Mutex.unlock par_timings_m
+
+let par_quick key =
+  match key with
+  | None -> false
+  | Some k ->
+    Mutex.lock par_timings_m;
+    let r = Hashtbl.find_opt par_timings k in
+    Mutex.unlock par_timings_m;
+    (match r with Some dt -> dt < quick_seconds | None -> false)
+
+(* Every item as a fiber on the calling domain, at most [limit] at once:
+   for items that were all quick last time. *)
+let par_go_here ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
+    ~(keys : par_key option array)
+    (work : int -> value) (finish : int -> (value, exn) result -> unit) =
+  let n = Array.length cancels in
+  let next = ref 0 in
+  let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
+  let caller_cancel = (Domain.DLS.get cancelled).flags in
+  let caller_on_pool = Domain.DLS.get on_pool in
+  let run_item i =
+    Domain.DLS.set cancelled
+      { flags = cancels.(i) :: caller_cancel; raised = false };
+    let t0 = Unix.gettimeofday () in
+    (* One sample a call is enough, and every item taking a shared lock is
+       not free. *)
+    let noted = ref (i <> 0) in
+    let note () =
+      if not !noted then begin
+        noted := true;
+        par_record keys.(i) (Unix.gettimeofday () -. t0)
+      end
+    in
+    Effect.Deep.match_with (fun () -> work i) ()
+      { Effect.Deep.
+          retc = (fun v -> note (); finish i (Ok v));
+          exnc = (fun e -> note (); finish i (Error e));
+          effc = fun (type a) (eff : a Effect.t) ->
+            match eff with
+            | WandEffect _ -> note (); None
+            | _ -> None }
+  in
+  let worker () =
+    let rec loop () =
+      if !next < n && not (stopped ()) && Atomic.get interrupt_requested = 0
+      then begin
+        let i = !next in
+        incr next;
+        run_item i;
+        if stopped () then Sched.wake_all ();
+        loop ()
+      end
+    in
+    if own_handler then ignore (!with_default_handler (fun () -> loop (); VUnit))
+    else loop ()
+  in
+  run_fibers_with (fun spawn ->
+    for _ = 1 to max 1 (min limit n) do
+      spawn { (fresh_fiber ()) with f_on_pool = caller_on_pool } worker
+    done)
+
+let rec par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
+    ~(keys : par_key option array)
+    (work : int -> value) (finish : int -> (value, exn) result -> unit) =
+  if Array.length keys > 0 && Array.for_all par_quick keys then
+    par_go_here ~limit ~cancels ~stopped ~keys work finish
+  else par_go_pool ~limit ~cancels ~stopped ~keys work finish
+
+and par_go_pool ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
+    ~(keys : par_key option array)
     (work : int -> value) (finish : int -> (value, exn) result -> unit) =
   let n = Array.length cancels in
   let m = Mutex.create () in
@@ -4157,14 +4254,25 @@ let par_go ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     Domain.DLS.set interrupts_deferred caller_deferred;
     (loc_cell ()).depth <- 0;
     let migrated = ref false in
+    let t0 = Unix.gettimeofday () in
+    (* One sample a call is enough, and every item taking a shared lock is
+       not free. *)
+    let noted = ref (i <> 0) in
+    let note () =
+      if not !noted then begin
+        noted := true;
+        par_record keys.(i) (Unix.gettimeofday () -. t0)
+      end
+    in
     Effect.Deep.match_with (fun () -> work i) ()
       { Effect.Deep.
-          retc = (fun v -> item_done i (Ok v));
-          exnc = (fun e -> item_done i (Error e));
+          retc = (fun v -> note (); item_done i (Ok v));
+          exnc = (fun e -> note (); item_done i (Error e));
           effc = fun (type a) (eff : a Effect.t) ->
             match eff with
             | WandEffect (name, arg) when not !migrated ->
               Some (fun (k : (a, unit) Effect.Deep.continuation) ->
+                note ();
                 migrated := true;
                 let st = { (save_fiber ()) with f_on_pool = false } in
                 let body () =
@@ -4300,7 +4408,7 @@ let par_run limit f items ~collect =
     in
     let stopped () = match !fatal with Some e -> is_abandoned e | None -> false in
     par_go ~limit:(max 1 limit) ~cancels ~stopped
-      (fun i -> apply f items.(i)) finish;
+      ~keys:(Array.make n (par_key f)) (fun i -> apply f items.(i)) finish;
     settle fatal;
     if collect then VList (Array.to_list results) else VUnit
   end
@@ -4312,9 +4420,12 @@ let par_run limit f items ~collect =
    sets every other item's cancel flag; each raises at its next checkpoint,
    releases what it holds, and is joined before this returns. A loser
    blocked in a subprocess finishes that subprocess. *)
-let par_race thunks =
+let rec par_race thunks =
   let items = Array.of_list thunks in
-  let n = Array.length items in
+  par_race_items ~keys:(Array.map par_key items) (Array.length items)
+    (fun i -> apply items.(i) VUnit)
+
+and par_race_items ~keys n work =
   if n = 0 then
     VConstr (Ctor.Builtin "Error", [VString "race: nothing to race"])
   else with_race_running (fun () ->
@@ -4340,11 +4451,29 @@ let par_race thunks =
         Array.iteri (fun j c -> if j <> i then c := true) cancels
     in
     let stopped () = !winner <> None || !fatal <> None in
-    par_go ~limit:n ~cancels ~stopped (fun i -> apply items.(i) VUnit) finish;
+    par_go ~limit:n ~cancels ~stopped ~keys work finish;
     settle fatal;
     match !winner with
     | Some o -> o
     | None -> VConstr (Ctor.Builtin "Error", [VString "race: no thunk finished"]))
+
+(* A deadline on [thunk]: a race between it and a sleeper, keyed by the
+   thunk itself so its timing is its own. *)
+let par_timeout d thunk =
+  let ok v = VConstr (Ctor.Builtin "Ok", [v]) in
+  let err m = VConstr (Ctor.Builtin "Error", [VString m]) in
+  let work i =
+    if i = 0 then ok (apply thunk VUnit)
+    else begin
+      ignore (perform_wand ("Clock!sleep", d));
+      err ("timed out after " ^ to_text d)
+    end
+  in
+  match par_race_items ~keys:[| par_key thunk; Some ("<timeout>", 0, 0) |] 2 work with
+  | VConstr (_, [VConstr (c, [v])]) when Ctor.name c = "Ok" -> ok v
+  | VConstr (_, [VConstr (_, [VString m])]) -> err m
+  | VConstr (_, [VString m]) -> err m
+  | other -> other
 
 (* ── Streams: running a terminal operation ────────────────────────────────
    A terminal operation performs one open-granularity effect per source --
@@ -6088,6 +6217,7 @@ let stdlib_eval_env : env = [
        | VConstr (_, [VString why]) -> raise (EvalError why)
        | _ -> raise (EvalError "Par.all: no branch finished"))
     | _ -> raise (EvalError "par_all: expected a list of thunks")));
+  ("par_timeout", VBuiltin (fun d -> VBuiltin (fun thunk -> par_timeout d thunk)));
   ("par_race", VBuiltin (function
     | VList thunks -> par_race thunks
     | _ -> raise (EvalError "par_race: expected a list of thunks")));

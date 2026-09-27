@@ -5710,13 +5710,20 @@ before any real work finished. Put that handler inside the thunk —
 `Par.timeout d (fn () -> Test.with_clock (fn () -> work ()))`. Under any
 other handler the deadline stands, and the wait is real.
 
-**Pure work runs in parallel, and effects run where the call is.** Every
-item starts on a pool of domains, one for each core, so work that only
-computes runs in parallel. At an item's first effect, the rest of that
-item moves to the calling domain and runs there as a lightweight task.
-Tasks wait side by side: a command, a sleep or a stream suspends only its
-own task. So twenty slow commands overlap, and a limit of 500 is not bounded
-by the number of cores.
+**Pure work runs in parallel, and effects run where the call is.** An item
+starts on a pool of domains, one for each core, so work that only computes
+runs in parallel. At an item's first effect, the rest of that item moves to
+the calling domain and runs there as a lightweight task. Tasks wait side
+by side, and a command, a sleep or a stream suspends only its own task. So
+twenty slow commands overlap, and a limit of 500 is not bounded by the
+number of cores.
+
+`Par` remembers, for each function it is given, how long the function ran
+before its first effect or its end. A function that took less than 50
+microseconds the last time runs on the calling domain from the start,
+because handing it to the pool and back would cost more than the work. A
+function that computes for longer goes to the pool. Where an item runs
+changes how fast it finishes, never what it does.
 
 **A handler always reaches a worker.** Every effect runs on the calling
 domain, inside the handlers the call is inside. A mock, `--dry-run` and
