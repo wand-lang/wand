@@ -1,0 +1,69 @@
+opam-version: "2.0"
+name: "wand"
+version: "dev"
+synopsis: "A typed ML-style scripting language for Human-AI collaboration"
+description:
+  "wand is a typed, ML-style scripting language designed for Human-AI collaboration, with Hindley-Milner type inference, pattern matching, and Result-based error handling."
+maintainer: "Mark Stahl <mark@technicallycorrect.company>"
+authors: "Mark Stahl <mark@technicallycorrect.company>"
+license: "MIT"
+tags: ["scripting-language" "type-inference" "ml" "interpreter"]
+homepage: "https://github.com/wand-lang/wand"
+bug-reports: "https://github.com/wand-lang/wand/issues"
+depends: [
+  "alcotest" {= "1.9.1" & with-test}
+  "astring" {= "0.8.5"}
+  "base-bigarray" {= "base"}
+  "base-domains" {= "base"}
+  "base-effects" {= "base"}
+  "base-nnp" {= "base"}
+  "base-threads" {= "base"}
+  "base-unix" {= "base"}
+  "bos" {= "0.3.0"}
+  "cmdliner" {= "2.1.1"}
+  "csexp" {= "1.5.2"}
+  "ctypes" {= "0.24.0"}
+  "digestif" {= "1.3.1"}
+  "dune" {= "3.24.2"}
+  "dune-configurator" {= "3.24.2"}
+  "eqaf" {= "0.10"}
+  "fmt" {= "0.11.0"}
+  "fpath" {= "0.7.3"}
+  "ISO8601" {= "0.2.6"}
+  "integers" {= "0.8.0"}
+  "linenoise" {= "1.5.1"}
+  "logs" {= "0.10.0"}
+  "menhir" {= "20260209"}
+  "menhirCST" {= "20260209"}
+  "menhirGLR" {= "20260209"}
+  "menhirLib" {= "20260209"}
+  "menhirSdk" {= "20260209"}
+  "ocaml" {= "5.5.1"}
+  "ocaml-syntax-shims" {= "1.0.0" & with-test}
+  "ocamlbuild" {= "0.16.1"}
+  "ocamlfind" {= "1.9.9~preview"}
+  "re" {= "1.14.0"}
+  "rresult" {= "0.7.0"}
+  "stdlib-shims" {= "0.3.0"}
+  "toml" {= "7.1.0"}
+  "topkg" {= "1.1.1"}
+  "uutf" {= "1.0.4" & with-test}
+  "yaml" {= "3.2.0"}
+  "yojson" {= "3.0.0"}
+]
+build: [
+  ["dune" "subst"] {dev}
+  [
+    "dune"
+    "build"
+    "-p"
+    name
+    "-j"
+    jobs
+    "@install"
+    "@runtest" {with-test}
+    "@doc" {with-doc}
+  ]
+]
+dev-repo: "git+https://github.com/wand-lang/wand.git"
+x-maintenance-intent: ["(latest)"]

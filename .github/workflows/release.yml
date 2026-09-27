@@ -113,14 +113,15 @@ jobs:
               # a commit rather than a branch, for the same reason the image
               # is a digest rather than a tag: two releases cut a day apart
               # should not be built from two different package sets without
-              # saying so. This commit is 2026-09-08 and has 5.5.1.
+              # saying so. This commit is 2026-09-26: it has 5.5.1 and every version
+              # wand.opam.locked names.
               opam repository set-url default \
-                git+https://github.com/ocaml/opam-repository.git#bbc595948dff71b5d1203200377ff7ee18745215
+                git+https://github.com/ocaml/opam-repository.git#111df5da0558d727ddd436665be5f9403cd9fb36
               opam update -y
               opam switch create build ocaml-base-compiler.5.5.1 -y
               eval $(opam env --switch=build --set-switch)
               ocamlopt -version
-              opam install . --deps-only
+              opam install . --deps-only --locked
               opam exec -- dune build --profile static bin/wand.exe
               # A downloaded binary is read by nothing that wants symbols,
               # and stripping takes it from 7.3 MB to 3.0 MB.
@@ -142,13 +143,13 @@ jobs:
         if: ${{ !matrix.static }}
         uses: ocaml/setup-ocaml@e89b2ded52a6e13f50162220cf5fe47290162032 # v3
         with:
-          ocaml-compiler: "5.x"
+          ocaml-compiler: "5.5.1"
 
       - name: Build (macOS)
         if: ${{ !matrix.static }}
         run: |
           set -euo pipefail
-          opam install . --deps-only
+          opam install . --deps-only --locked
           opam exec -- dune build --profile release bin/wand.exe
 
       # What the release claims is that the binary runs where it is put. It

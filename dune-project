@@ -19,15 +19,28 @@
  (description
   "wand is a typed, ML-style scripting language designed for Human-AI collaboration, with Hindley-Milner type inference, pattern matching, and Result-based error handling.")
  (depends
-  ocaml
-  linenoise
-  yojson
-  toml
-  yaml
-  re
-  digestif
-  eqaf
-  (alcotest :with-test))
+  (ocaml
+   (= 5.5.1))
+  (dune
+   (= 3.24.2))
+  (linenoise
+   (= 1.5.1))
+  (yojson
+   (= 3.0.0))
+  (toml
+   (= 7.1.0))
+  (yaml
+   (= 3.2.0))
+  (re
+   (= 1.14.0))
+  (digestif
+   (= 1.3.1))
+  (eqaf
+   (= 0.10))
+  (alcotest
+   (and
+    (= 1.9.1)
+    :with-test)))
  (tags
   ("scripting-language" "type-inference" "ml" "interpreter")))
 
