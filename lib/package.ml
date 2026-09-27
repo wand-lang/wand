@@ -100,6 +100,11 @@ let read_require ~at e =
     (List.assoc_opt "local" kvs) in
   { path; version; name; local }
 
+let last_segment_of u =
+  match List.rev (List.filter (( <> ) "") (String.split_on_char '/' u)) with
+  | s :: _ -> s
+  | [] -> u
+
 let key_loc tokens key =
   let n = Array.length tokens in
   let rec go i =
@@ -142,6 +147,31 @@ let parse ~file src =
            (Printf.sprintf "`require` in wand.mod is a list of entries, not %s"
               (show_kind v)))
   in
+  let major v =
+    let m = Semver.version_number v 0 in
+    if m = 0 then Printf.sprintf "0.%d" (Semver.version_number v 1) else string_of_int m
+  in
+  let req_at = at_key "require" in
+  let rec dups = function
+    | [] -> ()
+    | r :: rest ->
+      List.iter (fun o ->
+        if o.path = r.path && major o.version = major r.version then
+          fail req_at (Printf.sprintf
+            "%s is required twice at major %s; keep one entry" r.path (major r.version))
+        else if o.path = r.path && o.name = None && r.name = None then
+          fail req_at (Printf.sprintf
+            "%s is required at %s and at %s; give one of them a name, such as \
+             `name = %s%s`, and import it by that name"
+            r.path r.version o.version (last_segment_of r.path)
+            (String.map (fun c -> if c = '.' then '_' else c) (major o.version)))
+        else match o.name, r.name with
+          | Some a, Some b when a = b ->
+            fail req_at (Printf.sprintf "two `require` entries have `name = %s`" a)
+          | _ -> ()) rest;
+      dups rest
+  in
+  dups require;
   (modul, wand, wand_at, require)
 
 let read root =
@@ -236,7 +266,7 @@ let entry_for pkg url =
     if not (under r) then best
     else match best with
       | Some b when List.length (segments b.path) >= List.length (segments r.path) -> best
-      | _ -> Some r) None pkg.require
+      | _ -> Some r) None (List.filter (fun r -> r.name = None) pkg.require)
 
 exception Unresolved of string
 
@@ -382,14 +412,95 @@ let verify pkg r =
     raise (Unresolved (Printf.sprintf
       "wand.sum has no line for %s %s. Run `wand p tidy`" r.path r.version))
 
-let resolve_url ~base_dir url =
-  let pkg = match of_dir base_dir with
-    | Some p -> p
-    | None ->
+(* ── The build ────────────────────────────────────────────────────────── *)
+
+(* Before 1.0 each minor is a major. *)
+let major v =
+  let m = Semver.version_number v 0 in
+  if m = 0 then Printf.sprintf "0.%d" (Semver.version_number v 1) else string_of_int m
+
+let key r = (r.path, major r.version)
+
+(* The package of the file the run or the check started from. Its `local`
+   fields and its wand.sum hold for every package in the build. *)
+let main : t option ref = ref None
+
+let set_main_file path = main := of_file path
+
+let local_dir main (path, mj) =
+  List.find_map (fun r ->
+    match r.local with
+    | Some l when key r = (path, mj) ->
+      Some (if Filename.is_relative l then Filename.concat main.root l else l)
+    | _ -> None) main.require
+
+(* Where one version of a module is read from, checked. *)
+let module_dir main r =
+  match local_dir main (key r) with
+  | Some dir ->
+    if not (Sys.file_exists dir) then
       raise (Unresolved (Printf.sprintf
-        "`import %s` needs a wand.mod that requires it, and this file is in \
-         no package. Run `wand p init <url>` in the package's directory" url))
+        "%s has `local = %s` in %s, and there is no such directory"
+        r.path dir main.file));
+    dir
+  | None -> verify main r; cache_dir r
+
+let builds : (string, float * ((string * string) * require) list) Hashtbl.t = Hashtbl.create 2
+
+(* Minimal Version Selection: every version any package in the graph
+   requires, and for each module and major the highest of them. *)
+let build_list main =
+  let stamp = match Hashtbl.find_opt known main.root with Some (at, _) -> at | None -> 0. in
+  match Hashtbl.find_opt builds main.root with
+  | Some (at, list) when at = stamp -> list
+  | _ ->
+    let chosen = Hashtbl.create 8 and seen = Hashtbl.create 8 in
+    let rec visit r =
+      if not (Hashtbl.mem seen (r.path, r.version)) then begin
+        Hashtbl.replace seen (r.path, r.version) ();
+        (match Hashtbl.find_opt chosen (key r) with
+         | Some c when Semver.compare_versions c.version r.version >= 0 -> ()
+         | _ -> Hashtbl.replace chosen (key r) r);
+        let dir = module_dir main r in
+        match of_dir dir with
+        | Some dep when dep.root = absolute dir || dep.root = dir -> List.iter visit dep.require
+        | _ -> ()
+      end
+    in
+    List.iter visit main.require;
+    let list = Hashtbl.fold (fun k r acc -> (k, r) :: acc) chosen [] in
+    Hashtbl.replace builds main.root (stamp, list);
+    list
+
+let selected main r =
+  match List.assoc_opt (key r) (build_list main) with
+  | Some chosen -> chosen
+  | None -> r
+
+let in_package ~base_dir what =
+  match of_dir base_dir with
+  | Some p -> p
+  | None ->
+    raise (Unresolved (Printf.sprintf
+      "`import %s` needs a wand.mod that requires it, and this file is in \
+       no package. Run `wand p init <url>` in the package's directory" what))
+
+let file_in main r rest =
+  (match List.find_opt (fun s -> String.length s > 0 && s.[0] = '_') rest with
+   | Some s ->
+     raise (Unresolved (Printf.sprintf
+       "`%s` is private to %s, so no other package can import it" s r.path))
+   | None -> ());
+  let chosen = selected main r in
+  let dir = module_dir main chosen in
+  let file = match rest with
+    | [] -> last_segment r.path
+    | _ -> String.concat Filename.dir_sep rest
   in
+  Filename.concat dir (file ^ ".wand")
+
+let resolve_url ~base_dir url =
+  let pkg = in_package ~base_dir url in
   let r = match entry_for pkg url with
     | Some r -> r
     | None ->
@@ -397,23 +508,58 @@ let resolve_url ~base_dir url =
         "%s is not in the `require` list of %s. Run `wand p tidy`" url pkg.file))
   in
   let rest = List.filteri (fun i _ -> i >= List.length (segments r.path)) (segments url) in
-  (match List.find_opt (fun s -> String.length s > 0 && s.[0] = '_') rest with
-   | Some s ->
-     raise (Unresolved (Printf.sprintf
-       "`%s` is private to %s, so no other package can import it" s r.path))
-   | None -> ());
-  let dir = match r.local with
-    | Some l -> if Filename.is_relative l then Filename.concat pkg.root l else l
-    | None -> cache_dir r
+  file_in (Option.value !main ~default:pkg) r rest
+
+let resolve_alias ~base_dir name =
+  let pkg = in_package ~base_dir name in
+  match List.find_opt (fun r -> r.name = Some name) pkg.require with
+  | Some r -> file_in (Option.value !main ~default:pkg) r []
+  | None ->
+    raise (Unresolved (Printf.sprintf
+      "`import %s`: no `require` entry in %s has `name = %s`. A standard \
+       library module's name is capitalised, as in `import List`"
+      name pkg.file name))
+
+(* The module URL and version a file of the build was read from, for a
+   message that has to tell two majors of one module apart. *)
+let describe_file path =
+  let real p = try Unix.realpath p with Unix.Unix_error _ -> absolute p in
+  let path = real path in
+  let under dir =
+    let dir = real dir in
+    let n = String.length dir in
+    if String.length path > n && String.sub path 0 n = dir && path.[n] = '/'
+    then Some (String.sub path (n + 1) (String.length path - n - 1))
+    else None
   in
-  (match r.local with
-   | Some l ->
-     if not (Sys.file_exists dir) then
-       raise (Unresolved (Printf.sprintf
-         "%s has `local = %s`, and there is no such directory" r.path l))
-   | None -> verify pkg r);
-  let file = match rest with
-    | [] -> last_segment r.path
-    | _ -> String.concat Filename.dir_sep rest
+  let named r rest =
+    let rest = Filename.remove_extension rest in
+    let url = if rest = last_segment r.path then r.path else r.path ^ "/" ^ rest in
+    Some (Printf.sprintf "%s %s" url r.version)
   in
-  Filename.concat dir (file ^ ".wand")
+  let from_local =
+    match !main with
+    | None -> None
+    | Some m ->
+      List.find_map (fun (k, r) ->
+        match local_dir m k with
+        | Some dir -> Option.bind (under dir) (named r)
+        | None -> None) (try build_list m with Unresolved _ -> [])
+  in
+  match from_local with
+  | Some d -> Some d
+  | None ->
+    match under (cache_root ()) with
+    | None -> None
+    | Some rest ->
+      (match String.index_opt rest '@' with
+       | None -> None
+       | Some at ->
+         let modpath = String.sub rest 0 at in
+         let after = String.sub rest (at + 1) (String.length rest - at - 1) in
+         (match String.index_opt after '/' with
+          | None -> None
+          | Some slash ->
+            let version = String.sub after 0 slash in
+            let file = String.sub after (slash + 1) (String.length after - slash - 1) in
+            named { path = "https://" ^ modpath; version; name = None; local = None } file))

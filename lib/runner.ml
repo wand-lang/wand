@@ -3327,7 +3327,7 @@ let run_file ?(mode = Normal) path =
        because it is the file the reader is looking at; a position from
        anywhere else says where it is. *)
     Evaluator.entry_file := full;
-    ignore (Package.of_file full);
+    Package.set_main_file full;
     let tokens   = Lexer.tokenize ~file:full src in
     let prog     = Parser.parse_program tokens in
     let base_dir = Filename.dirname full in
@@ -4094,7 +4094,7 @@ type source_check = {
 let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
   let full = entry_path path in
   try
-    ignore (Package.of_file full);
+    Package.set_main_file full;
     let tokens   = Lexer.tokenize src in
     let (prog, item_locs) = Parser.parse_program_with_locs tokens in
     let base_dir = Filename.dirname full in

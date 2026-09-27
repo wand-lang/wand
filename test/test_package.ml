@@ -187,6 +187,98 @@ let test_fetch_and_sum () =
     write (Filename.concat app "wand.mod") (app_mod "1.5.0");
     error_says "no such tag" "git clone of the tag v1.5.0 failed" (run_in app "main.wand" main))
 
+(* Repositories under root/repos, each a list of tags and the files at
+   that tag, and git told to read https://x.dev/ from there. *)
+let with_repos repos f =
+  let root = fresh_dir () in
+  List.iter (fun (name, tags) ->
+    let repo = Filename.concat root ("repos/me/" ^ name) in
+    ignore (Sys.command (Filename.quote_command "mkdir" ["-p"; repo]));
+    let git args = ignore (Sys.command (Filename.quote_command "git" ("-C" :: repo :: args)
+        ~stdout:"/dev/null" ~stderr:"/dev/null")) in
+    git ["init"; "-q"];
+    List.iter (fun (tag, files) ->
+      List.iter (fun (file, text) -> write (Filename.concat repo file) text) files;
+      git ["add"; "."];
+      git ["-c"; "user.email=t@t"; "-c"; "user.name=t"; "commit"; "-qm"; tag];
+      git ["tag"; "v" ^ tag]) tags) repos;
+  Unix.putenv "XDG_CACHE_HOME" (Filename.concat root "cache");
+  Unix.putenv "GIT_CONFIG_COUNT" "1";
+  Unix.putenv "GIT_CONFIG_KEY_0" ("url.file://" ^ root ^ "/repos/.insteadOf");
+  Unix.putenv "GIT_CONFIG_VALUE_0" "https://x.dev/";
+  let app = Filename.concat root "app" in
+  Unix.mkdir app 0o755;
+  f ~app
+
+let entry path version = { Package.path; version; name = None; local = None }
+
+let record_sums app entries =
+  write (Filename.concat app "wand.sum")
+    (String.concat "" (List.map (fun (path, version) ->
+       let r = entry path version in
+       let h = if Sys.file_exists (Package.cache_dir r) then Package.tree_hash (Package.cache_dir r)
+         else Package.fetch r in
+       Printf.sprintf "%s %s %s\n" path version h) entries))
+
+let json_at v = [
+  ("wand.mod", Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  ("json.wand", Printf.sprintf "let version = \"%s\"" v) ]
+
+let test_minimal_version_selection () =
+  with_repos [
+    ("json", [("1.4.0", json_at "1.4"); ("1.5.0", json_at "1.5"); ("2.0.0", json_at "2.0")]);
+    ("text", [("1.0.0", [
+       ("wand.mod", Printf.sprintf
+          "{ module = https://x.dev/me/text, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.5.0 } ] }"
+          Version.value);
+       ("text.wand", "import https://x.dev/me/json\nlet v = json.version") ])]) ]
+    (fun ~app ->
+      write (Filename.concat app "wand.mod") (Printf.sprintf
+        "{ module = https://x.dev/me/app, wand = %s, require =\n\
+        \  [ { path = https://x.dev/me/json, version = 1.4.0 }\n\
+        \  , { path = https://x.dev/me/text, version = 1.0.0 }\n\
+        \  , { name = json2, path = https://x.dev/me/json, version = 2.0.0 }\n\
+        \  ] }" Version.value);
+      record_sums app [
+        ("https://x.dev/me/json", "1.4.0"); ("https://x.dev/me/json", "1.5.0");
+        ("https://x.dev/me/json", "2.0.0"); ("https://x.dev/me/text", "1.0.0") ];
+      Alcotest.(check (result string string))
+        "the highest 1.x anyone requires, and 2.x beside it"
+        (Ok "1.5 1.5 2.0")
+        (run_in app "main.wand"
+           "import https://x.dev/me/json\nimport https://x.dev/me/text\nimport json2\n\
+            \"%{json.version} %{text.v} %{json2.version}\""))
+
+let test_two_majors_need_a_name () =
+  let src = "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 2.0.0 } ] }" in
+  parse_error "two majors" "give one of them a name, such as `name = b2`" src;
+  parse_error "one major twice" "is required twice at major 1"
+    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 1.0.0 }, { path = https://x.dev/b, version = 1.2.0 } ] }";
+  parse_error "before 1.0 a minor is a major" "such as `name = b0_1`"
+    "{ module = https://x.dev/a, wand = 0.85.0, require = [ { path = https://x.dev/b, version = 0.2.0 }, { path = https://x.dev/b, version = 0.1.0 } ] }"
+
+let test_unknown_alias () =
+  with_two_packages (fun ~app ~json:_ ->
+    error_says "no such name" "no `require` entry in"
+      (run_in app "alias.wand" "import jsn\n1"))
+
+let test_two_majors_in_a_type_error () =
+  let root = fresh_dir () in
+  let dir n = let d = Filename.concat root n in Unix.mkdir d 0o755; d in
+  let app = dir "app" and j1 = dir "j1" and j2 = dir "j2" in
+  List.iter (fun d ->
+    write (Filename.concat d "json.wand")
+      "type Value = V Int\nlet make n = V n\nlet get v = match v with\n  | V n -> n\n";
+    write (Filename.concat d "wand.mod")
+      (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value)) [j1; j2];
+  write (Filename.concat app "wand.mod") (Printf.sprintf
+    "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0, local = ../j1 }, { name = json2, path = https://x.dev/me/json, version = 2.1.0, local = ../j2 } ] }"
+    Version.value);
+  error_says "both named with their versions"
+    "expected a `Value` from https://x.dev/me/json 2.1.0, got a `Value` from https://x.dev/me/json 1.4.0"
+    (run_in app "main.wand"
+       "import https://x.dev/me/json\nimport json2\nlet v = json.make 1\njson2.get v")
+
 let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
 
 let () =
@@ -207,5 +299,12 @@ let () =
     "fetching", [
       Alcotest.test_case "fetch and wand.sum"  `Quick
         (fun () -> if git_present then test_fetch_and_sum () else Alcotest.skip ());
+    ];
+    "the build", [
+      Alcotest.test_case "minimal version selection" `Quick
+        (fun () -> if git_present then test_minimal_version_selection () else Alcotest.skip ());
+      Alcotest.test_case "two majors need a name" `Quick test_two_majors_need_a_name;
+      Alcotest.test_case "an unknown alias"   `Quick test_unknown_alias;
+      Alcotest.test_case "two majors in a type error" `Quick test_two_majors_in_a_type_error;
     ];
   ]

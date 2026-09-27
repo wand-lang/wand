@@ -14,7 +14,7 @@ let fail_at loc msg = raise (ParseError (Some loc, msg))
    name. *)
 let import_name kind =
   let segment = match kind with
-    | Ast.StdlibModule n -> `Name n
+    | Ast.StdlibModule n | Ast.ModuleAlias n -> `Name n
     | Ast.UserPath p -> `Base (Filename.basename p)
     | Ast.ModuleURL u ->
       `Base (match List.rev (List.filter (( <> ) "") (String.split_on_char '/' u)) with
@@ -50,7 +50,7 @@ type binding_role = Value | Whole of Ast.import_kind | Picked of Ast.import_kind
 
 let import_text = function
   | Ast.StdlibModule n -> n
-  | Ast.UserPath p | Ast.ModuleURL p -> p
+  | Ast.UserPath p | Ast.ModuleURL p | Ast.ModuleAlias p -> p
 
 (* What each top-level item binds, for the check that an import's name is
    bound once. *)
@@ -61,7 +61,7 @@ let item_bindings loc item =
   in
   let library = function
     | Ast.StdlibModule _ -> " (standard library)"
-    | Ast.UserPath _ | Ast.ModuleURL _ -> ""
+    | Ast.UserPath _ | Ast.ModuleURL _ | Ast.ModuleAlias _ -> ""
   in
   match item with
   | Ast.TLImport k ->
@@ -1290,6 +1290,7 @@ and atom_base_ s =
      | Token.Upper n -> ImportExpr (Ast.StdlibModule n)
      | Token.Path p  -> ImportExpr (Ast.UserPath p)
      | Token.URL u   -> ImportExpr (Ast.ModuleURL u)
+     | Token.Ident n -> ImportExpr (Ast.ModuleAlias n)
      | t -> fail_at loc (Format.asprintf "expected module name or path after import, got %a"
                 Token.pp t))
   | Token.Result   -> Var "result"
@@ -2763,6 +2764,9 @@ let parse_program_generic ~on_item tokens =
           items := !items @ [Ast.TLImport (Ast.UserPath path)];
           Printf.sprintf
             "write 'let name = import %s' to bind it, then 'name.member'" path
+        | Token.Ident name ->
+          items := !items @ [Ast.TLImport (Ast.ModuleAlias name)];
+          Printf.sprintf "it binds '%s', so '%s.member' reaches into it" name name
         | Token.URL url ->
           items := !items @ [Ast.TLImport (Ast.ModuleURL url)];
           Printf.sprintf

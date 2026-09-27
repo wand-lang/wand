@@ -1060,10 +1060,28 @@ let qualified_display t =
        Filename.remove_extension (Filename.basename path) ^ "." ^ short)
   | _ -> string_of_typ t
 
+let from_module t =
+  match repr t with
+  | TName n ->
+    (match String.rindex_opt n '#' with
+     | None -> None
+     | Some i ->
+       Option.map
+         (fun m -> Printf.sprintf "a `%s` from %s"
+             (String.sub n (i + 1) (String.length n - i - 1)) m)
+         (Package.describe_file (String.sub n 0 i)))
+  | _ -> None
+
 (* Two types that print the same, told apart by the module each came from. *)
 let disambiguate a b =
   let (sa, sb) = (string_of_typ a, string_of_typ b) in
-  if sa = sb then (qualified_display a, qualified_display b) else (sa, sb)
+  if sa <> sb then (sa, sb)
+  else
+    let (qa, qb) = (qualified_display a, qualified_display b) in
+    if qa <> qb then (qa, qb)
+    else match from_module a, from_module b with
+      | Some da, Some db when da <> db -> (da, db)
+      | _ -> (qa, qb)
 
 let unify t1 t2 =
   try unify_ t1 t2 with

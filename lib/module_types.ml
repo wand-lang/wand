@@ -178,6 +178,9 @@ let resolve_import base_dir = function
   | Ast.ModuleURL url ->
     (try File (Package.resolve_url ~base_dir url)
      with Package.Unresolved msg -> raise (ImportError msg))
+  | Ast.ModuleAlias name ->
+    (try File (Package.resolve_alias ~base_dir name)
+     with Package.Unresolved msg -> raise (ImportError msg))
   | Ast.UserPath path ->
     let file =
       if Filename.is_relative path
