@@ -26,7 +26,7 @@ imports or effects -- so tools read and rewrite it without running code.
 - **Lexical types, not strings.** Module paths are `URL` literals and
   versions are `Version` literals, so a bad value fails when it is read.
 - **Mostly tool-written.** The author writes the import line, and
-  `wand tidy` finds the module, picks the version and updates `require`,
+  `wand p tidy` finds the module, picks the version and updates `require`,
   as `go mod tidy` does. Hand edits stay allowed for pinning a version or
   pointing at a local copy.
 - **`wand` is a compatible range**, and the only language-version fact in
@@ -81,7 +81,7 @@ With `git`, which does the HTTPS and the user's credentials:
 
 Tool-written, one line per module version and its hash, beside `wand.mod`.
 A module read from the cache is checked against it; a mismatch is an
-error, never a refetch. `wand tidy` adds the line for a version it
+error, never a refetch. `wand p tidy` adds the line for a version it
 fetches.
 
 ## Minimal Version Selection
@@ -125,9 +125,21 @@ message prints both qualified, with the exact version:
 --        but `validate` expects a `Value` from https://github.com/mjstahl/json 2.1.0.
 ```
 
-## Questions
+## Commands
 
-- The commands' short forms: `wand tidy`, and the one that fetches.
+- `wand p init <url>` writes a `wand.mod` naming the module, with the
+  running wand's range and no requirements. It refuses a directory that
+  has one.
+- `wand p tidy` reads every import in the package: it adds a `require`
+  entry, at the latest tagged version, for a module no entry names; drops
+  entries nothing imports; fetches what is missing; and writes `wand.sum`.
+- `wand p upgrade` moves every direct dependency to its latest version
+  within its major; `wand p upgrade <url>` moves one; `<url>@<version>`
+  pins one. A new major is a different module, so moving to one is a
+  change of import, never an upgrade.
+- A script or `wand t` fetches a version `wand.mod` names and the cache
+  lacks, checked against `wand.sum`. An import `wand.mod` does not name is
+  an error that says to run `wand p tidy`.
 
 ## Order
 
@@ -137,4 +149,5 @@ message prints both qualified, with the exact version:
 3. Fetching with `git` into the cache, and `wand.sum`.
 4. Minimal Version Selection over the graph, and majors as modules with
    aliases and qualified type errors.
-5. `wand tidy`.
+5. `wand p init`, `wand p tidy` and `wand p upgrade`, under a new `p`
+   command group.
