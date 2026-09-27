@@ -233,3 +233,54 @@ test "a nested field reads the declaring module's type" (fn t ->
 test "and the other module's is its own" (fn t ->
   let boxed = B.Boxed(tag = B.Tag(label = "L"));
   t.eq (Ok boxed) (JSON.decode B.Boxed.decoder (JSON.parse! `{"tag":{"label":"L"}}`)))
+
+-- A sum is read without a tag when its value says which constructor it
+-- is: a bare word is written as the word, and a constructor holding one
+-- value is written as the value, when no two values share a kind.
+-- Kubernetes writes `imagePullPolicy` the first way and `maxSurge` the
+-- second.
+type IntOrString = I Int | S String
+type PullPolicy = Always | Never | IfNotPresent
+type Rollout(maxSurge: IntOrString, pull: PullPolicy)
+
+test "an untagged sum reads by the kind of its value" (fn t ->
+  t.eq
+    (Ok Rollout(maxSurge = S "25%", pull = Never))
+    (JSON.decode Rollout.decoder (JSON.parse! `{"maxSurge": "25%", "pull": "Never"}`)))
+
+test "and writes the value alone" (fn t ->
+  t.eq
+    `{"maxSurge":1,"pull":"Always"}`
+    (JSON.stringify (Rollout.encoder Rollout(maxSurge = I 1, pull = Always))))
+
+test "a kind no constructor holds is named" (fn t ->
+  t.eq
+    (Error ".maxSurge: expected a number or a string, got Bool")
+    (JSON.decode Rollout.decoder (JSON.parse! `{"maxSurge": true, "pull": "Never"}`)))
+
+test "a word the enum does not have is named, with the ones it has" (fn t ->
+  t.eq
+    (Error `.pull: expected one of Always, Never, IfNotPresent, got "Sometimes"`)
+    (JSON.decode Rollout.decoder (JSON.parse! `{"maxSurge": 1, "pull": "Sometimes"}`)))
+
+test "a sum is its own decoder and encoder" (fn t ->
+  t.eq `"IfNotPresent"` (JSON.stringify (PullPolicy.encoder IfNotPresent)))
+
+-- A field of an alias type is read and written as the type it names, and
+-- a JSON field holds whatever the document holds there.
+type Quantity = String
+type Limits(cpu: Quantity, raw: Option JSON = None)
+
+test "an alias field reads as its target" (fn t ->
+  t.eq
+    (Ok Limits(cpu = "500m", raw = None))
+    (JSON.decode Limits.decoder (JSON.parse! `{"cpu": "500m"}`)))
+
+test "a JSON field keeps what the document holds" (fn t ->
+  let doc = `{"cpu":"1","raw":{"a":[1,true,null]}}`;
+  t.eq
+    doc
+    (match JSON.decode Limits.decoder (JSON.parse! doc) with
+    | Ok l -> JSON.stringify (Limits.encoder l)
+    | Error e -> e
+    ))

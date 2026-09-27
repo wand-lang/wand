@@ -113,6 +113,66 @@ let derivable :
   (string, Ctor.t * string list * (string option * type_expr) list) Hashtbl.t =
   Hashtbl.create 16
 
+(* A sum type a document can hold. Two shapes are read without a tag, since
+   the value itself says which constructor it is:
+
+   - every constructor is a bare word (`Always | Never`): the document holds
+     the word as a string;
+   - every constructor holds one value, and no two values are the same JSON
+     kind (`I Int | S String`): the document holds the value, and its kind
+     says which constructor it is.
+
+   The typechecker has already refused every other sum, so this table holds
+   only these two. Kubernetes writes `imagePullPolicy` the first way and
+   `maxSurge` the second. *)
+type sum_shape =
+  | Enum of Ctor.t list
+  | Untagged of (Ctor.t * type_expr) list
+
+let derivable_sums : (string, sum_shape) Hashtbl.t = Hashtbl.create 8
+
+(* The same shape by constructor, for a value encoded where its type is not
+   written down: `JSON.of (I 1)`. *)
+let sum_of_ctor : (Ctor.t, sum_shape) Hashtbl.t = Hashtbl.create 8
+
+(* An alias names a type that already exists, so a field of an alias type is
+   read and written as its target is. `type Quantity = String` is a string in
+   the document. Only an alias with no parameters is kept: one with
+   parameters is resolved where it is applied, which a document never does. *)
+let derivable_aliases : (string, type_expr) Hashtbl.t = Hashtbl.create 8
+
+(* Records what derivation needs from one declaration, under each key the
+   type is reached by: its short name, and its canonical name in a module.
+   A key that no longer names a derivable type is cleared, so a type declared
+   again in a session does not keep the reading of the old one. *)
+let register_derivable ~ident keys (tdef : type_def) =
+  List.iter (fun k ->
+    Hashtbl.remove derivable k;
+    Hashtbl.remove derivable_sums k;
+    Hashtbl.remove derivable_aliases k) keys;
+  let put tbl v = List.iter (fun k -> Hashtbl.replace tbl k v) keys in
+  let put_sum shape ctors =
+    put derivable_sums shape;
+    List.iter (fun c -> Hashtbl.replace sum_of_ctor c shape) ctors
+  in
+  match tdef with
+  | Variants (_, params, [ctor])
+    when ctor.fields <> [] && List.for_all (fun (n, _) -> n <> None) ctor.fields ->
+    put derivable (ident ctor.name, params, ctor.fields)
+  | Variants (_, [], (_ :: _ :: _ as ctors))
+    when List.for_all (fun c -> c.fields = []) ctors ->
+    let cs = List.map (fun c -> ident c.name) ctors in
+    put_sum (Enum cs) cs
+  | Variants (_, [], (_ :: _ :: _ as ctors))
+    when List.for_all (fun c -> match c.fields with
+                         | [(None, _)] -> true | _ -> false) ctors ->
+    let cases = List.map (fun c ->
+      (ident c.name, match c.fields with [(_, te)] -> te | _ -> assert false))
+      ctors in
+    put_sum (Untagged cases) (List.map fst cases)
+  | Alias (_, [], target) -> put derivable_aliases target
+  | _ -> ()
+
 (* A Map holds a key once.
 
    Two entries with one key means one of them is unreachable: `Map.get` finds
@@ -2305,9 +2365,10 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
              | _ -> None)
           | _ -> None
         in
+        let known k = Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k in
         (match owned with
-         | Some k when Hashtbl.mem derivable k -> Some k
-         | _ -> if Hashtbl.mem derivable tname then Some tname else None)
+         | Some k when known k -> Some k
+         | _ -> if known tname then Some tname else None)
       | _ -> None
     in
     (match strip_located e, label with
@@ -2319,9 +2380,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
         | "encoder" -> !derive_encoder k
         | "usage"   -> !derive_usage k
         | _         -> !derive_parser k)
-     | Constr tname, "decoder" when Hashtbl.mem derivable tname ->
+     | Constr tname, "decoder"
+       when Hashtbl.mem derivable tname || Hashtbl.mem derivable_sums tname ->
        !derive_decoder tname
-     | Constr tname, "encoder" when Hashtbl.mem derivable tname ->
+     | Constr tname, "encoder"
+       when Hashtbl.mem derivable tname || Hashtbl.mem derivable_sums tname ->
        !derive_encoder tname
      | Constr tname, "usage" when Hashtbl.mem derivable tname ->
        !derive_usage tname
@@ -6882,10 +6945,12 @@ let rec decoder_of_type_expr venv (te : type_expr) :
     | "IPv4"     -> scalar_decoder "decode_ipv4"
     | "CIDR"     -> scalar_decoder "decode_cidr"
     | "Port"     -> scalar_decoder "decode_port"
+    (* A `JSON` field holds whatever the document holds there. *)
+    | "JSON"     -> (fun j _ -> Ok (VJson j))
     | tname ->
       (* Another named type: looked up when a field is decoded, so a type may
          mention itself. *)
-      (fun j path -> derived_decoder tname [] j path)
+      (fun j path -> named_decoder venv tname j path)
   in
   match te with
   | TEName name -> named name
@@ -6940,6 +7005,71 @@ let rec decoder_of_type_expr venv (te : type_expr) :
        let arg_decoders = List.map (decoder_of_type_expr venv) args in
        (fun j path -> derived_decoder tname arg_decoders j path)
      | _ -> raise (Not_derivable "a field holds a type no decoder is known for"))
+
+(* A named type other than a builtin: an alias reads as what it names, a
+   sum by the shape of the value, and a record by its fields. *)
+and named_decoder venv tname j path =
+  match Hashtbl.find_opt derivable_aliases tname with
+  | Some target -> decoder_of_type_expr venv target j path
+  | None ->
+    match Hashtbl.find_opt derivable_sums tname with
+    | Some shape -> sum_decoder venv shape j path
+    | None -> derived_decoder tname [] j path
+
+and sum_decoder venv shape j path =
+  match shape with
+  | Enum ctors ->
+    let names = List.map Ctor.name ctors in
+    (match j with
+     | `String w ->
+       (match List.find_opt (fun c -> Ctor.name c = w) ctors with
+        | Some c -> Ok (VConstr (c, []))
+        | None ->
+          decode_error path (Printf.sprintf "expected one of %s, got %S"
+                               (String.concat ", " names) w))
+     | _ -> expected ("one of " ^ String.concat ", " names) path j)
+  | Untagged cases ->
+    let kind = json_kind j in
+    (match List.find_opt (fun (_, te) -> type_json_kind te = Some kind) cases with
+     | Some (c, te) ->
+       (match decoder_of_type_expr venv te j path with
+        | Ok v -> Ok (VConstr (c, [v]))
+        | Error _ as e -> e)
+     | None ->
+       let kinds = List.filter_map (fun (_, te) -> type_json_kind te) cases in
+       expected (String.concat " or " kinds) path j)
+
+(* The kind of a JSON value, in the words a message uses. *)
+and json_kind (j : Yojson.Basic.t) =
+  match j with
+  | `Int _ | `Float _ -> "a number"
+  | `String _ -> "a string"
+  | `Bool _ -> "a boolean"
+  | `List _ -> "a list"
+  | `Assoc _ -> "an object"
+  | `Null -> "null"
+
+(* The kind of JSON value a type is written as. The typechecker has checked
+   that each constructor of an untagged sum has one, and that no two share
+   it. *)
+and type_json_kind (te : type_expr) =
+  match te with
+  | TEName ("Int" | "Float") -> Some "a number"
+  | TEName "Bool" -> Some "a boolean"
+  | TEName ("String" | "Path" | "Glob" | "Duration" | "URL" | "Size"
+           | "Version" | "Date" | "Time" | "DateTime" | "IPv4" | "CIDR") ->
+    Some "a string"
+  | TEApp (TEName "List", _) -> Some "a list"
+  | TEApp (TEName "Map", _) -> Some "an object"
+  | TEName n | TEQual (_, n) ->
+    (match Hashtbl.find_opt derivable_aliases n with
+     | Some target -> type_json_kind target
+     | None ->
+       match Hashtbl.find_opt derivable_sums n with
+       | Some (Enum _) -> Some "a string"
+       | Some (Untagged _) -> None
+       | None -> if Hashtbl.mem derivable n then Some "an object" else None)
+  | _ -> None
 
 (* A builtin decoder, by the name it is registered under. *)
 and scalar_decoder name j path =
@@ -7043,6 +7173,12 @@ and json_of_typed venv (te : type_expr) (v : value) : Yojson.Basic.t =
         | VJson j -> j
         | other   -> json_of_value other)
      | None -> json_of_value v)
+  (* An alias is written as what it names. *)
+  | (TEName n | TEQual (_, n)), _ when Hashtbl.mem derivable_aliases n ->
+    json_of_typed venv (Hashtbl.find derivable_aliases n) v
+  | (TEName n | TEQual (_, n)), VConstr (c, vals)
+    when Hashtbl.mem derivable_sums n ->
+    sum_json venv (Hashtbl.find derivable_sums n) c vals
   | TEApp (TEName "Option", _), VConstr (Ctor.Builtin "None", []) -> `Null
   | TEApp (TEName "Option", inner), VConstr (Ctor.Builtin "Some", [x]) -> json_of_typed venv inner x
   | TEApp (TEName "List", inner), VList vs ->
@@ -7081,6 +7217,8 @@ and json_of_value (v : value) : Yojson.Basic.t =
   | VJson j -> j
   | VConstr (Ctor.Builtin "None", []) -> `Null
   | VConstr (Ctor.Builtin "Some", [x]) -> json_of_value x
+  | VConstr (ctor, vals) when Hashtbl.mem sum_of_ctor ctor ->
+    sum_json [] (Hashtbl.find sum_of_ctor ctor) ctor vals
   | VConstr (ctor, vals) ->
     (match Hashtbl.find_opt constr_fields ctor with
      | Some names when List.length names = List.length vals ->
@@ -7097,7 +7235,22 @@ and json_of_value (v : value) : Yojson.Basic.t =
          "cannot encode '%s': it has no named fields" (Ctor.name ctor))))
   | _ -> raise (EvalError "cannot encode this value as JSON")
 
+(* A sum without its tag: the word for a bare constructor, the value for one
+   that holds one. *)
+and sum_json venv shape c vals =
+  match shape, vals with
+  | Enum _, [] -> `String (Ctor.name c)
+  | Untagged cases, [x] ->
+    (match List.find_opt (fun (c', _) -> c' = c) cases with
+     | Some (_, te) -> json_of_typed venv te x
+     | None -> json_of_value x)
+  | _ ->
+    raise (EvalError (Printf.sprintf "cannot encode '%s'" (Ctor.name c)))
+
 and encoded_with tname arg_encoders v =
+  match Hashtbl.find_opt derivable_sums tname, v with
+  | Some shape, VConstr (c, vals) -> VJson (sum_json [] shape c vals)
+  | _ ->
   match Hashtbl.find_opt derivable tname with
   | None -> raise (EvalError (Printf.sprintf "no encoder for type '%s'" tname))
   | Some (_, params, fields) ->
@@ -7123,6 +7276,8 @@ and encoded_with tname arg_encoders v =
 (* What `T.encoder` is worth: a function from the type, after one encoder per
    parameter. Encoding cannot fail, so these are plain functions to JSON. *)
 and encoder_value tname =
+  if Hashtbl.mem derivable_sums tname
+  then VBuiltin (fun v -> encoded_with tname [] v) else
   match Hashtbl.find_opt derivable tname with
   | None -> raise (EvalError (Printf.sprintf "no encoder for type '%s'" tname))
   | Some (_, params, _) ->
@@ -7200,6 +7355,9 @@ and reader_value tname =
                 "expected one %s, got %d" aname (List.length vs)))))
 
 and decoder_value tname =
+  match Hashtbl.find_opt derivable_sums tname with
+  | Some shape -> VDecoder (fun j path -> sum_decoder [] shape j path)
+  | None ->
   match Hashtbl.find_opt derivable tname with
   | None -> raise (EvalError (Printf.sprintf "no decoder for type '%s'" tname))
   | Some (_, params, _) ->

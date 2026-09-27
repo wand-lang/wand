@@ -587,9 +587,24 @@ let test_one_armed_if () =
    could read. Naming one has to say which of those it is, since "no field
    'decoder'" would send the reader looking for a field. *)
 let test_underivable_types_say_why () =
-  err_contains "several constructors"
+  (* A sum is read without a tag, so each refusal says why the document
+     could not tell its constructors apart. *)
+  err_contains "a constructor with two values"
     "type Shape = Circle Int | Rect Int Int\nlet d = Shape.decoder"
-    "type 'Shape' has no derived decoder: it has more than one constructor";
+    "type 'Shape' has no derived decoder: constructor 'Rect' does not hold \
+     exactly one value";
+  err_contains "two constructors of one kind"
+    "type N = I Int | F Float\nlet d = N.decoder"
+    "constructors 'I' and 'F' both hold a number";
+  err_contains "words and values mixed"
+    "type M = A | B Int\nlet d = M.decoder"
+    "constructors with a value and constructors without one";
+  err_contains "a generic sum"
+    "type E 'a = L 'a | R String\nlet d = E.decoder"
+    "takes a type parameter";
+  err_contains "a value of no single kind"
+    "type J = A JSON | B Int\nlet d = J.decoder"
+    "a JSON value can be of any kind";
   (* A constructor's positional payload, which is a different thing from the
      positional *construction* of a named-field type that the language does
      not have -- `Wrap Int` is fine to write, it just has nothing to read a
@@ -610,9 +625,11 @@ let test_underivable_types_say_why () =
 match M.decoder with
 | _ -> "ok"|}
     "ok";
-  err_contains "an enum"
-    "type Color = Red | Green\nlet d = Color.decoder"
-    "more than one constructor"
+  ok "an enum is read from its words"
+    {|type Color = Red | Green
+match Color.decoder with
+| _ -> "ok"|}
+    "ok"
 
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"

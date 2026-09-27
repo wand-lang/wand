@@ -332,6 +332,27 @@ match JSON.decode Core.Pod.decoder doc with
   | Ok p -> p.metadata.name
   | Error e -> e|} core)))
 
+(* A sum and an alias declared in one module, used by a record in another
+   through a qualified import, by a file that imports only the second. This
+   is how plimsoll's generated modules use `IntOrString` and `Quantity`. *)
+let test_sum_and_alias_fields_across_modules () =
+  with_module_dir (fun dir ->
+    write_file (Filename.concat dir "p.wand")
+      "type IntOrString = I Int | S String\ntype Quantity = String\n";
+    write_file (Filename.concat dir "apps.wand")
+      "let P = import ./p\n\
+       type Pull = Always | Never\n\
+       type Strategy(maxSurge: P.IntOrString, cpu: P.Quantity, pull: Pull)\n";
+    Alcotest.(check (result string string))
+      "decoded and encoded again"
+      (Ok {|{"maxSurge":"25%","cpu":"1","pull":"Never"}|})
+      (run (Printf.sprintf {|import JSON
+let Apps = import %s
+let doc = JSON.parse! `{"maxSurge":"25%%","cpu":"1","pull":"Never"}`
+match JSON.decode Apps.Strategy.decoder doc with
+  | Ok s -> JSON.stringify (Apps.Strategy.encoder s)
+  | Error e -> e|} (Filename.concat dir "apps"))))
+
 (* ── Suite ───────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -376,5 +397,7 @@ let () =
         test_qualified_field_type_resolves_in_its_module;
       Alcotest.test_case "a selected field type is its module's" `Quick
         test_selected_field_type_resolves_in_its_module;
+      Alcotest.test_case "sum and alias fields across modules" `Quick
+        test_sum_and_alias_fields_across_modules;
     ];
   ]

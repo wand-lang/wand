@@ -2653,14 +2653,54 @@ shape ambiguous.
 values instead of replacing them. A field that needs neither statement is
 left out. The map is empty when every flag takes one value.
 
-A type with more than one constructor has neither. Name one, and the error
-says which:
+A type with more than one constructor has no command line.
+
+### Sums, aliases and JSON in a document
+
+A document has no tag that says which constructor a value is. So a sum has
+a decoder and an encoder only when the value itself says which constructor
+it is. Two shapes do that:
+
+```ocaml
+-- Every constructor is a word. The document holds the word.
+type PullPolicy = Always | Never | IfNotPresent
+
+-- Every constructor holds one value, and no two values are the same kind
+-- of JSON value. The document holds the value.
+type IntOrString = I Int | S String
+
+type Rollout(maxSurge : IntOrString, pull : PullPolicy)
+
+JSON.stringify (Rollout.encoder Rollout(maxSurge = I 1, pull = Always))
+-- {"maxSurge":1,"pull":"Always"}
+```
+
+The kinds are a number (`Int`, `Float`), a string (`String` and the domain
+types written as text, such as `Path`, `Duration` and `DateTime`), a boolean,
+a list, and an object (a `Map` or a record). A word-only sum is a string.
+A `Port` reads from a number or a string, and a `JSON` value can be any
+kind, so neither can be the value of a constructor here. Every other sum is
+refused, and the error says why:
 
 ```ocaml
 type Shape = Circle Int | Rect Int Int
 Shape.decoder
--- type 'Shape' has no derived decoder: it has more than one constructor
+-- type 'Shape' has no derived decoder: constructor 'Rect' does not hold
+-- exactly one value, and a document without a tag holds one
+
+type N = I Int | F Float
+N.decoder
+-- type 'N' has no derived decoder: constructors 'I' and 'F' both hold a
+-- number, so a document cannot say which it is
 ```
+
+A sum that mixes words and values, or that takes a type parameter, is
+refused too. Such a type needs a decoder written with `Decode`.
+
+A field whose type is an alias is read and written as the type the alias
+names: with `type Quantity = String`, a `Quantity` field is a string in the
+document. A field of type `JSON` holds whatever the document holds there,
+unread.
 
 ### Writing it back out
 

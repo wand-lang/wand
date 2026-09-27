@@ -2067,7 +2067,13 @@ let run_item ?modul env item =
   | Ast.TLInterface _ -> env  (* a contract declares no value *)
   (* An alias to a type with one constructor names that constructor too, so
      the alias binds it. An alias to anything else binds nothing. *)
-  | Ast.TLType (Ast.Alias (aname, _, target), _) ->
+  | Ast.TLType ((Ast.Alias (aname, _, target) as tdef), _) ->
+    (* A field of the alias's type is read and written as the target is. *)
+    Evaluator.register_derivable ~ident:(fun c -> Ctor.Local c)
+      (aname :: (match modul with
+                 | Some m -> [Module_types.canonical_type ~modul:m aname]
+                 | None -> []))
+      tdef;
     let rec target_name (te : Ast.type_expr) =
       match te with
       | Ast.TEName n -> Some n
@@ -2089,29 +2095,22 @@ let run_item ?modul env item =
         | Some ((VConstr _ | VPartialConstr _) as v) -> (aname, v) :: env
         | _ -> env)
      | None -> env)
-  | Ast.TLType (Ast.Variants (tname, params, ctors), _) ->
-    (* A single-constructor type with named fields can have its decoder
-       derived, so the definition is kept where the derivation can find it.
-       Anything else -- several constructors, positional fields, a generic --
-       has no shape a decoder could read, and is not recorded. *)
-    (match ctors with
-     | [ctor] when ctor.Ast.fields <> []
-                       && List.for_all (fun (n, _) -> n <> None) ctor.Ast.fields ->
-       (* Under the canonical name, which a field type mentions, and under the
-          short one, which a file writes as `T.decoder`. *)
-       let ident =
-         match modul with
-         | Some m -> Ctor.Owned (m, ctor.Ast.name)
-         | None -> Ctor.Local ctor.Ast.name
-       in
-       let entry = (ident, params, ctor.Ast.fields) in
-       Hashtbl.replace Evaluator.derivable tname entry;
-       (match modul with
-        | Some m ->
-          Hashtbl.replace Evaluator.derivable
-            (Module_types.canonical_type ~modul:m tname) entry
-        | None -> ())
-     | _ -> Hashtbl.remove Evaluator.derivable tname);
+  | Ast.TLType ((Ast.Variants (tname, _, ctors) as tdef), _) ->
+    (* A type a document can hold keeps its definition where derivation can
+       find it: a record with named fields, a sum of bare words, or a sum
+       whose constructors each hold one value of a different kind. Under the
+       canonical name, which a field type mentions, and under the short one,
+       which a file writes as `T.decoder`. *)
+    let ident name =
+      match modul with
+      | Some m -> Ctor.Owned (m, name)
+      | None -> Ctor.Local name
+    in
+    Evaluator.register_derivable ~ident
+      (tname :: (match modul with
+                 | Some m -> [Module_types.canonical_type ~modul:m tname]
+                 | None -> []))
+      tdef;
     let position = ref (-1) in
     List.fold_left (fun env ctor ->
       incr position;
@@ -2591,14 +2590,10 @@ and load_module src_ref ~cache ~loading ~evaluate =
           here, where the canonicalised declaration is. *)
        if evaluate then
          List.iter (fun (n, d) ->
-           match Module_types.canonicalise_tdef module_names d with
-           | Ast.Variants (_, params, [ctor])
-             when ctor.Ast.fields <> []
-                  && List.for_all (fun (fn, _) -> fn <> None) ctor.Ast.fields ->
-             Hashtbl.replace Evaluator.derivable
-               (Module_types.canonical_type ~modul:path n)
-               (Ctor.Owned (path, ctor.Ast.name), params, ctor.Ast.fields)
-           | _ -> ()) own;
+           Evaluator.register_derivable
+             ~ident:(fun c -> Ctor.Owned (path, c))
+             [Module_types.canonical_type ~modul:path n]
+             (Module_types.canonicalise_tdef module_names d)) own;
        let full_import =
          { tenv = List.map (fun (n, d) ->
                     (Module_types.canonical_type ~modul:path n,

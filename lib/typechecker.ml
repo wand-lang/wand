@@ -2169,7 +2169,7 @@ let rec derivable_field_type tenv seen params (te : type_expr) : (unit, string) 
   match te with
   | TEName ("Int" | "Float" | "String" | "Bool" | "Path" | "Glob" | "Duration"
            | "URL" | "Size" | "Version" | "Date" | "Time" | "DateTime"
-           | "IPv4" | "CIDR" | "Port") -> Ok ()
+           | "IPv4" | "CIDR" | "Port" | "JSON") -> Ok ()
   | TEQual (m, n) ->
     derivable_field_type tenv seen params
       (TEName (canonical_type_name (m ^ "." ^ n)))
@@ -2178,6 +2178,9 @@ let rec derivable_field_type tenv seen params (te : type_expr) : (unit, string) 
     if List.mem key seen then Ok ()   (* recursive: read when it is reached *)
     else
       (match List.assoc_opt key tenv with
+       (* A field of an alias type is read as the type the alias names. *)
+       | Some (Alias (_, [], target)) ->
+         derivable_field_type tenv (key :: seen) params target
        | Some tdef -> derivable_typedef tenv (key :: seen) tdef
        | None -> Error (Printf.sprintf "no decoder is known for type '%s'"
                           (short_type_name tname)))
@@ -2221,7 +2224,10 @@ and derivable_typedef tenv seen (tdef : type_def) : (unit, string) result =
      decoder belongs to whatever it names. *)
   | Alias _ -> Error "it is an alias, so its decoder is the one it names"
   | Variants (_, _, []) -> Error "it has no constructor"
-  | Variants (_, _, _ :: _ :: _) -> Error "it has more than one constructor"
+  | Variants (_, _ :: _, _ :: _ :: _) ->
+    Error "it has more than one constructor and takes a type parameter, so \
+           the kind of each value is not known"
+  | Variants (_, [], (_ :: _ :: _ as ctors)) -> derivable_sum tenv seen ctors
   | Variants (_, params, [ctor]) ->
     if ctor.fields = [] then Error "it has no fields"
     else if List.exists (fun (n, _) -> n = None) ctor.fields then
@@ -2240,6 +2246,81 @@ and derivable_typedef tenv seen (tdef : type_def) : (unit, string) result =
              Error (Printf.sprintf "field '%s' cannot be read: %s"
                (match fname with Some n -> n | None -> "?") why))
       ) (Ok ()) ctor.fields
+
+(* A sum is read without a tag, so the document has to say by itself which
+   constructor it holds. Two shapes can: every constructor a bare word,
+   written as that word; or every constructor holding one value, each of a
+   different JSON kind, written as the value. Anything else -- a mix of the
+   two, a constructor with two values, two constructors whose values look
+   alike -- is refused with the reason. *)
+and derivable_sum tenv seen (ctors : ctor_def list) : (unit, string) result =
+  let bare c = c.fields = [] in
+  let one c = match c.fields with [(None, _)] -> true | _ -> false in
+  if List.for_all bare ctors then Ok ()
+  else if List.exists bare ctors && List.exists one ctors then
+    Error "it has constructors with a value and constructors without one, so \
+           a document cannot say which it holds"
+  else
+    match List.find_opt (fun c -> not (one c)) ctors with
+    | Some c ->
+      Error (Printf.sprintf
+        "constructor '%s' does not hold exactly one value, and a document \
+         without a tag holds one" c.name)
+    | None ->
+      let rec check seen_kinds = function
+        | [] -> Ok ()
+        | c :: rest ->
+          let te = match c.fields with [(_, te)] -> te | _ -> assert false in
+          (match json_kind_of_type tenv [] te with
+           | Error why ->
+             Error (Printf.sprintf "constructor '%s' cannot be read: %s" c.name why)
+           | Ok kind ->
+             match List.assoc_opt kind seen_kinds with
+             | Some other ->
+               Error (Printf.sprintf
+                 "constructors '%s' and '%s' both hold %s, so a document \
+                  cannot say which it is" other c.name kind)
+             | None ->
+               (match derivable_field_type tenv seen [] te with
+                | Error why ->
+                  Error (Printf.sprintf "constructor '%s' cannot be read: %s"
+                           c.name why)
+                | Ok () -> check ((kind, c.name) :: seen_kinds) rest))
+      in
+      check [] ctors
+
+(* The kind of JSON value a type is written as, for telling the constructors
+   of an untagged sum apart. *)
+and json_kind_of_type tenv seen (te : type_expr) : (string, string) result =
+  match te with
+  | TEName ("Int" | "Float") -> Ok "a number"
+  | TEName "Bool" -> Ok "a boolean"
+  | TEName ("String" | "Path" | "Glob" | "Duration" | "URL" | "Size"
+           | "Version" | "Date" | "Time" | "DateTime" | "IPv4" | "CIDR") ->
+    Ok "a string"
+  | TEName "Port" -> Error "a Port is read from a number or a string"
+  | TEName "JSON" -> Error "a JSON value can be of any kind"
+  | TEApp (TEName "List", _) -> Ok "a list"
+  | TEApp (TEName "Map", _) -> Ok "an object"
+  | TEApp (TEName "Option", _) ->
+    Error "an Option is read from null or from its value, which another \
+           constructor may hold"
+  | TEQual (m, n) ->
+    json_kind_of_type tenv seen (TEName (canonical_type_name (m ^ "." ^ n)))
+  | TEName tname ->
+    let key = canonical_type_name tname in
+    if List.mem key seen then Error "the type refers to itself"
+    else
+      (match List.assoc_opt key tenv with
+       | Some (Alias (_, [], target)) -> json_kind_of_type tenv (key :: seen) target
+       | Some (Variants (_, _, [_])) -> Ok "an object"
+       | Some (Variants (_, _, ctors)) when List.for_all (fun c -> c.fields = []) ctors ->
+         Ok "a string"
+       | Some _ -> Error (Printf.sprintf "'%s' has no single kind" (short_type_name tname))
+       | None -> Error (Printf.sprintf "no decoder is known for type '%s'"
+                          (short_type_name tname)))
+  | TEVar _ -> Error "a type variable has no kind of its own"
+  | _ -> Error "it has no JSON kind"
 
 (* The types a module declares, under their bare names. An import records
    them twice: as `Status` and as `Foo.Status`. Putting the second set first,
@@ -2440,8 +2521,8 @@ let is_record_field tenv (te : type_expr) =
   match te with
   | TEName n ->
     (match List.assoc_opt n tenv with
-     | Some tdef -> derivable_typedef tenv [n] tdef = Ok ()
-     | None -> false)
+     | Some (Variants (_, _, [_]) as tdef) -> derivable_typedef tenv [n] tdef = Ok ()
+     | _ -> false)
   | _ -> false
 
 let cmdline_shape tenv (ctor : ctor_def) : (cmdline_shape, string) result =
