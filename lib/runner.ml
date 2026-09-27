@@ -4259,3 +4259,41 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
   | (Lexer.LexError _ | Parser.ParseError _ | Module_types.ImportError _
     | Module_types.ImportErrorAt _ | Failure _) as e ->
     Error (diag_of_exn e)
+
+(* ── wand.api ─────────────────────────────────────────────────────────── *)
+
+(* A package's public interface, one line a type or member, in the
+   `wand d --index` format: each module named by its path under the package
+   root, its types, then its members. `modules` is (name, absolute path). *)
+let api_lines ~root (modules : (string * string) list) : (string list, Diag.t) result =
+  let alias i = Printf.sprintf "api_module_%d" i in
+  let src =
+    String.concat "\n"
+      (List.mapi (fun i (_, path) -> Printf.sprintf "let %s = import %s" (alias i) path) modules)
+    ^ "\n()\n"
+  in
+  match typecheck_source ~path:(Filename.concat root "wand.api") src with
+  | Error d -> Error d
+  | Ok check ->
+    let types = List.concat_map (fun (name, path) ->
+      let src = In_channel.with_open_text path In_channel.input_all in
+      let prog = Parser.parse_program (Lexer.tokenize ~file:path src) in
+      List.filter_map (function
+        | Ast.TLType (tdef, _) ->
+          let text = Formatter.emit_type_def tdef in
+          let prefix = "type " in
+          let n = String.length prefix in
+          Some ("type " ^ name ^ "." ^ String.sub text n (String.length text - n))
+        | _ -> None) prog.Ast.items
+      |> List.sort compare) modules
+    in
+    let rows = List.concat (List.mapi (fun i (name, _) ->
+      match List.assoc_opt (alias i) check.sc_scope with
+      | Some (Typechecker.Namespace (members, claims)) ->
+        List.filter_map (fun (m, scheme) ->
+          if Module_types.is_private m then None
+          else Some (name ^ "." ^ m, Typechecker.string_of_scheme scheme,
+                     member_ifaces claims m))
+          (List.sort (fun (a, _) (b, _) -> String.compare a b) members)
+      | _ -> []) modules) in
+    Ok (types @ (if types = [] then [] else [""]) @ aligned_rows rows)

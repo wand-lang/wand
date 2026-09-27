@@ -52,7 +52,12 @@ let usage_for sub =
     print_endline "the nearest wand.pkg.";
     print_endline "";
     print_endline "Commands:";
+    print_endline "  a   api [--check]           Write wand.api from the code, or check that";
+    print_endline "                              it matches the code and the latest release";
     print_endline "  i   init <url>              Start a package here: write wand.pkg";
+    print_endline "  r   release [major|minor|patch]";
+    print_endline "                              Check the bump the interface needs, write";
+    print_endline "                              wand.api, commit it, and tag the release";
     print_endline "  t   tidy                    Make wand.pkg and wand.sum match the imports,";
     print_endline "                              and fetch what they need";
     print_endline "  u   upgrade [url[@version]] Move dependencies to their newest version";
@@ -666,6 +671,12 @@ let main () =
        | ("i" | "init") :: [url] -> run (fun () -> Wand.Package_cmd.init ~dir url)
        | ("i" | "init") :: _ ->
          Printf.eprintf "Error: expected the module's URL: wand p init <url>\n"; exit 1
+       | ["a"] | ["api"] -> run (fun () -> Wand.Package_cmd.api ~dir ~check:false)
+       | ["a"; "--check"] | ["api"; "--check"] ->
+         run (fun () -> Wand.Package_cmd.api ~dir ~check:true)
+       | ["r"] | ["release"] -> run (fun () -> Wand.Package_cmd.release ~dir None)
+       | ("r" | "release") :: [bump] ->
+         run (fun () -> Wand.Package_cmd.release ~dir (Some bump))
        | ["t"] | ["tidy"] -> run (fun () -> Wand.Package_cmd.tidy ~dir)
        | ["u"] | ["upgrade"] -> run (fun () -> Wand.Package_cmd.upgrade ~dir None)
        | ("u" | "upgrade") :: [target] ->
