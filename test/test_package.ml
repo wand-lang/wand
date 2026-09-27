@@ -137,6 +137,58 @@ let test_private_by_path () =
     Alcotest.(check (result string string)) "from its own package" (Ok "1")
       (Runner.run_file (Filename.concat json "inside.wand")))
 
+(* A git repository standing in for https://x.dev/me/json, which git is told
+   to read from disk, and a cache of this test's own. *)
+let with_remote f =
+  let root = fresh_dir () in
+  let repo = Filename.concat root "repos/me/json" in
+  ignore (Sys.command (Filename.quote_command "mkdir" ["-p"; repo]));
+  write (Filename.concat repo "json.wand") {|let parse s = "parsed %{s}"|};
+  write (Filename.concat repo "wand.mod")
+    (Printf.sprintf "{ module = https://x.dev/me/json, wand = %s }" Version.value);
+  let git args = ignore (Sys.command (Filename.quote_command "git" ("-C" :: repo :: args)
+      ~stdout:"/dev/null" ~stderr:"/dev/null")) in
+  git ["init"; "-q"];
+  git ["add"; "."];
+  git ["-c"; "user.email=t@t"; "-c"; "user.name=t"; "commit"; "-qm"; "one"];
+  git ["tag"; "v1.4.0"];
+  Unix.putenv "XDG_CACHE_HOME" (Filename.concat root "cache");
+  Unix.putenv "GIT_CONFIG_COUNT" "1";
+  Unix.putenv "GIT_CONFIG_KEY_0" ("url.file://" ^ root ^ "/repos/.insteadOf");
+  Unix.putenv "GIT_CONFIG_VALUE_0" "https://x.dev/";
+  let app = Filename.concat root "app" in
+  Unix.mkdir app 0o755;
+  f ~app ~repo
+
+let app_mod version =
+  Printf.sprintf
+    "{ module = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = %s } ] }"
+    Version.value version
+
+let test_fetch_and_sum () =
+  with_remote (fun ~app ~repo:_ ->
+    write (Filename.concat app "wand.mod") (app_mod "1.4.0");
+    let main = "import https://x.dev/me/json\njson.parse \"x\"" in
+    error_says "fetched, and no line in wand.sum" "wand.sum has no line for https://x.dev/me/json 1.4.0"
+      (run_in app "main.wand" main);
+    let cached = Package.cache_dir
+        { Package.path = "https://x.dev/me/json"; version = "1.4.0"; name = None; local = None } in
+    Alcotest.(check bool) "in the cache" true
+      (Sys.file_exists (Filename.concat cached "json.wand"));
+    Alcotest.(check bool) "without .git" false
+      (Sys.file_exists (Filename.concat cached ".git"));
+    let h = Package.tree_hash cached in
+    write (Filename.concat app "wand.sum") (Printf.sprintf "https://x.dev/me/json 1.4.0 %s\n" h);
+    Alcotest.(check (result string string)) "runs once recorded" (Ok "parsed x")
+      (run_in app "main.wand" main);
+    Hashtbl.reset Package.hashes;
+    write (Filename.concat app "wand.sum") "https://x.dev/me/json 1.4.0 sha256:00\n";
+    error_says "a mismatch" "does not match wand.sum" (run_in app "main.wand" main);
+    write (Filename.concat app "wand.mod") (app_mod "1.5.0");
+    error_says "no such tag" "git clone of the tag v1.5.0 failed" (run_in app "main.wand" main))
+
+let git_present = Sys.command "git --version >/dev/null 2>&1" = 0
+
 let () =
   Random.self_init ();
   Alcotest.run "Package" [
@@ -151,5 +203,9 @@ let () =
       Alcotest.test_case "by URL"              `Quick test_url_imports;
       Alcotest.test_case "by URL, no package"  `Quick test_url_import_outside_a_package;
       Alcotest.test_case "private by path"     `Quick test_private_by_path;
+    ];
+    "fetching", [
+      Alcotest.test_case "fetch and wand.sum"  `Quick
+        (fun () -> if git_present then test_fetch_and_sum () else Alcotest.skip ());
     ];
   ]

@@ -173,32 +173,29 @@ let check_wand ?(running = Version.value) pkg =
           package works with it"
          pkg.wand (upper_bound pkg.wand) running running)
 
-(* The package a file belongs to, read and checked, or None for a file
-   outside every package. *)
-let of_file path =
-  let dir = Filename.dirname path in
-  let dir = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
-  match find_root dir with
-  | None -> None
-  | Some root ->
-    let pkg = read root in
-    check_wand pkg;
-    Some pkg
-
-let known : (string, t) Hashtbl.t = Hashtbl.create 4
+(* Read once for as long as the file is unchanged, which matters to the
+   language server: it outlives any one edit of wand.mod. *)
+let known : (string, float * t) Hashtbl.t = Hashtbl.create 4
 
 let of_dir dir =
   let dir = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
   match find_root dir with
   | None -> None
   | Some root ->
+    let stamp =
+      try (Unix.stat (Filename.concat root file_name)).Unix.st_mtime with Unix.Unix_error _ -> 0.
+    in
     (match Hashtbl.find_opt known root with
-     | Some pkg -> Some pkg
-     | None ->
+     | Some (at, pkg) when at = stamp -> Some pkg
+     | _ ->
        let pkg = read root in
        check_wand pkg;
-       Hashtbl.replace known root pkg;
+       Hashtbl.replace known root (stamp, pkg);
        Some pkg)
+
+(* The package a file belongs to, read and checked, or None for a file
+   outside every package. *)
+let of_file path = of_dir (Filename.dirname path)
 
 let url_path u =
   match String.index_opt u ':' with
@@ -271,6 +268,120 @@ let check_private_path ~base_dir file =
         (Filename.remove_extension s) root))
     | None -> ()
 
+(* ── Fetching ─────────────────────────────────────────────────────────── *)
+
+let run_git args =
+  let log = Filename.temp_file "wand-git" ".log" in
+  let code = Sys.command (Filename.quote_command "git" args ~stdout:log ~stderr:log) in
+  let out = try In_channel.with_open_text log In_channel.input_all with Sys_error _ -> "" in
+  (try Sys.remove log with Sys_error _ -> ());
+  (code, String.trim out)
+
+let rec files_under dir rel =
+  let names = Sys.readdir (Filename.concat dir rel) in
+  Array.sort compare names;
+  List.concat_map (fun n ->
+    let r = if rel = "" then n else rel ^ "/" ^ n in
+    if Sys.is_directory (Filename.concat dir r) then files_under dir r else [r])
+    (Array.to_list names)
+
+(* One hash for a tree: each file's path and the hash of its bytes, in path
+   order. *)
+let tree_hash dir =
+  let lines = List.map (fun r ->
+    let bytes = In_channel.with_open_bin (Filename.concat dir r) In_channel.input_all in
+    Printf.sprintf "%s %s\n" r Digestif.SHA256.(to_hex (digest_string bytes)))
+    (files_under dir "") in
+  "sha256:" ^ Digestif.SHA256.(to_hex (digest_string (String.concat "" lines)))
+
+let rec remove_tree path =
+  if Sys.is_directory path then begin
+    Array.iter (fun n -> remove_tree (Filename.concat path n)) (Sys.readdir path);
+    Sys.rmdir path
+  end else Sys.remove path
+
+let rec set_read_only path =
+  if Sys.is_directory path then
+    Array.iter (fun n -> set_read_only (Filename.concat path n)) (Sys.readdir path)
+  else Unix.chmod path 0o444
+
+let rec mkdir_p dir =
+  if not (Sys.file_exists dir) then begin
+    mkdir_p (Filename.dirname dir);
+    try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
+  end
+
+let fetch r =
+  let dir = cache_dir r in
+  let parent = Filename.dirname dir in
+  mkdir_p parent;
+  let tmp = Filename.concat parent
+      (Printf.sprintf ".fetch-%d-%s" (Unix.getpid ()) (Filename.basename dir)) in
+  if Sys.file_exists tmp then remove_tree tmp;
+  Printf.eprintf "wand: fetching %s %s\n%!" r.path r.version;
+  let (code, out) =
+    run_git ["-c"; "advice.detachedHead=false"; "clone"; "--quiet"; "--depth"; "1";
+             "--branch"; "v" ^ r.version; r.path; tmp] in
+  if code <> 0 then begin
+    (try remove_tree tmp with Sys_error _ -> ());
+    raise (Unresolved (Printf.sprintf
+      "cannot fetch %s %s: git clone of the tag v%s failed%s"
+      r.path r.version r.version (if out = "" then "" else ":\n" ^ out)))
+  end;
+  remove_tree (Filename.concat tmp ".git");
+  let h = tree_hash tmp in
+  set_read_only tmp;
+  (try Unix.rename tmp dir
+   with Unix.Unix_error _ -> remove_tree tmp);
+  h
+
+let hashes : (string, string) Hashtbl.t = Hashtbl.create 4
+
+(* The hash of a version in the cache, fetching it first when it is not
+   there. Hashed once a run. *)
+let cached_hash r =
+  let dir = cache_dir r in
+  match Hashtbl.find_opt hashes dir with
+  | Some h -> h
+  | None ->
+    let h = if Sys.file_exists dir then tree_hash dir else fetch r in
+    Hashtbl.replace hashes dir h;
+    h
+
+(* ── wand.sum ──────────────────────────────────────────────────────────── *)
+
+let sum_file pkg = Filename.concat pkg.root "wand.sum"
+
+let read_sums pkg =
+  match In_channel.with_open_text (sum_file pkg) In_channel.input_all with
+  | exception Sys_error _ -> []
+  | text ->
+    List.filter_map (fun line ->
+      match String.split_on_char ' ' (String.trim line) with
+      | [url; version; hash] -> Some ((url, version), hash)
+      | _ -> None) (String.split_on_char '\n' text)
+
+let write_sums pkg sums =
+  let sums = List.sort_uniq compare sums in
+  Out_channel.with_open_text (sum_file pkg) (fun oc ->
+    List.iter (fun ((url, version), hash) ->
+      Printf.fprintf oc "%s %s %s\n" url version hash) sums)
+
+let verify pkg r =
+  let h = cached_hash r in
+  match List.assoc_opt (r.path, r.version) (read_sums pkg) with
+  | Some want when want = h -> ()
+  | Some want ->
+    raise (Unresolved (Printf.sprintf
+      "%s %s does not match wand.sum: wand.sum has %s, and the copy in %s \
+       hashes to %s. The module changed after it was recorded, or the cache \
+       was changed. Remove %s to fetch it again, and change wand.sum only if \
+       you trust the new code"
+      r.path r.version want (cache_dir r) h (cache_dir r)))
+  | None ->
+    raise (Unresolved (Printf.sprintf
+      "wand.sum has no line for %s %s. Run `wand p tidy`" r.path r.version))
+
 let resolve_url ~base_dir url =
   let pkg = match of_dir base_dir with
     | Some p -> p
@@ -295,10 +406,12 @@ let resolve_url ~base_dir url =
     | Some l -> if Filename.is_relative l then Filename.concat pkg.root l else l
     | None -> cache_dir r
   in
-  if not (Sys.file_exists dir) then
-    raise (Unresolved (match r.local with
-      | Some l -> Printf.sprintf "%s has `local = %s`, and there is no such directory" r.path l
-      | None -> Printf.sprintf "%s %s is not fetched. Run `wand p tidy`" r.path r.version));
+  (match r.local with
+   | Some l ->
+     if not (Sys.file_exists dir) then
+       raise (Unresolved (Printf.sprintf
+         "%s has `local = %s`, and there is no such directory" r.path l))
+   | None -> verify pkg r);
   let file = match rest with
     | [] -> last_segment r.path
     | _ -> String.concat Filename.dir_sep rest
