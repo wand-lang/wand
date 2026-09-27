@@ -22,7 +22,11 @@ type completion = { start : int; candidates : string list }
 
 (* `limit` is the offset the identifier cannot begin before -- the end of a
    `:t `-style command prefix, or 0 for a bare line. *)
-let ident_at ?(limit = 0) (env : Typechecker.env) (line : string) : completion =
+(* `ctors` are the constructors the scope cannot show: a module's, which the
+   scope holds none of, and every spelling with its type -- `PullPolicy.`,
+   `apps.PullPolicy.`. They are offered once a dot has been typed. *)
+let ident_at ?(limit = 0) ?(ctors = []) (env : Typechecker.env) (line : string)
+    : completion =
   let n = String.length line in
   let i = ref (n - 1) in
   while !i >= limit && is_ident_char line.[!i] do decr i done;
@@ -49,9 +53,17 @@ let ident_at ?(limit = 0) (env : Typechecker.env) (line : string) : completion =
        | _ -> [])
     | [ident_prefix] ->
       List.filter_map (fun (name, _) ->
-        if has_prefix ~prefix:ident_prefix name then Some name else None) env
+        if has_prefix ~prefix:ident_prefix name
+           && not (String.contains name '.') then Some name else None) env
       @ List.filter (has_prefix ~prefix:ident_prefix) builtin_names
     | _ -> []
+  in
+  let candidates =
+    if String.contains prefix '.' then
+      candidates
+      @ List.filter (fun c ->
+          has_prefix ~prefix c && not (List.mem c candidates)) ctors
+    else candidates
   in
   { start; candidates }
 

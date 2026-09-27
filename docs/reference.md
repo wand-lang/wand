@@ -7689,6 +7689,11 @@ formatting of the whole document. It gets go to definition, and a jump into
 the standard library opens the source of the module from the binary, as a
 read-only document.
 
+Completion offers constructors after a dot: `Color.` lists the constructors
+of `Color`, `apps.PullPolicy.` the constructors of a type in an imported
+module, and `apps.` those constructors of the module that no other type in it
+shares. Editors show them as constructors, apart from functions and values.
+
 Hover reads the position as well as the word. A label inside `uses {...}` is
 an effect and is described as one: `Env` names a module elsewhere in the same
 file, and on the manifest line what it declares is the effect that module's

@@ -576,6 +576,7 @@ let code_lenses (d : doc) : J.t list =
 let kind_module = 9
 let kind_function = 3
 let kind_value = 12
+let kind_constructor = 20  (* EnumMember: what editors show a constructor as *)
 
 (* Completion items at a cursor. The environment is the buffer's scope; a
    qualified prefix whose namespace is unimported completes from the
@@ -597,7 +598,8 @@ let completion_items (d : doc) line_idx line_text character : J.t list =
        | None -> (None, scope))
     | _ -> (None, scope)
   in
-  let { Complete.start; candidates } = Complete.ident_at env prefix_line in
+  let ctors = match d.d_check with Some sc -> sc.Runner.sc_ctors | None -> [] in
+  let { Complete.start; candidates } = Complete.ident_at ~ctors env prefix_line in
   (* Bare prefixes also offer the stdlib modules themselves; typing the dot
      then completes their members. *)
   let module_candidates =
@@ -612,9 +614,11 @@ let completion_items (d : doc) line_idx line_text character : J.t list =
   let lines = lines_of d.d_text in
   let item cand =
     let is_module = List.mem cand module_candidates in
+    let is_ctor = List.mem cand ctors in
     let described = if is_module then None else describe d cand in
     let kind =
       if is_module then kind_module
+      else if is_ctor then kind_constructor
       else match described with
         | Some (t, _) when t = "module" -> kind_module
         | Some (t, _) when Diag.contains t "->" -> kind_function

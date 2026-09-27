@@ -4094,6 +4094,12 @@ type source_check = {
   (* per top-level item: its extent and the local binders typed inside it
      (parameters, `let ... in` names, pattern variables) -- what a hover
      answers for names sc_scope never sees. Innermost binding first. *)
+  sc_ctors    : string list;
+  (* every way a constructor can be written here that has a dot in it:
+     `Type.Ctor` for the file's own types, `m.Type.Ctor` for a module's, and
+     `m.Ctor` where only one of the module's types has the name. The scope
+     holds a module's values but not its constructors, so completion reads
+     them from here. *)
   sc_manifest : Token.loc option;
   (* the extent of `uses {...}`, when the file declares one. A label inside
      it is an effect and nothing else, which is not something the name on
@@ -4105,6 +4111,44 @@ type source_check = {
      with the binaries narrowing it where every command word in the file is
      literal. *)
 }
+
+(* The constructors a file can write with a dot, for completion. The file's
+   own come from the scope, where the typechecker keeps each one under
+   `Type.Ctor`. A module's come from its types, which an import brings under
+   `m.Type`: each constructor as `m.Type.Ctor`, and as `m.Ctor` too when no
+   other type in the module has the name. *)
+let ctor_spellings (imp : import_env) (scope : Typechecker.env) =
+  let own =
+    List.filter_map (fun (n, _) ->
+      match String.index_opt n '.' with
+      | Some i when i > 0 && n.[0] >= 'A' && n.[0] <= 'Z' -> Some n
+      | _ -> None) scope
+  in
+  let through_modules =
+    List.filter_map (fun (written, canon) ->
+      match String.split_on_char '.' written with
+      | [m; t] ->
+        (match List.assoc_opt canon imp.tenv with
+         | Some (Ast.Variants (_, _, ctors)) ->
+           Some (m, t, List.map (fun (c : Ast.ctor_def) -> c.Ast.name) ctors)
+         | _ -> None)
+      | _ -> None) imp.type_names
+  in
+  let qualified =
+    List.concat_map (fun (m, t, cs) ->
+      List.map (fun c -> m ^ "." ^ t ^ "." ^ c) cs) through_modules
+  in
+  let unique =
+    List.concat_map (fun (m, _, cs) ->
+      List.filter_map (fun c ->
+        let owners =
+          List.filter (fun (m', _, cs') -> m' = m && List.mem c cs')
+            through_modules
+        in
+        if List.length owners = 1 then Some (m ^ "." ^ c) else None) cs)
+      through_modules
+  in
+  List.sort_uniq compare (own @ qualified @ unique)
 
 (* Checks text that need not exist on disk -- an editor's unsaved buffer.
    `path` says where the text lives, which decides how its imports resolve
@@ -4172,6 +4216,7 @@ let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
                    if j = i then Some (n, Typechecker.string_of_typ t)
                    else None) all))
                 item_locs);
+           sc_ctors    = ctor_spellings imp full_type_env;
            sc_manifest = Option.map snd prog.Ast.manifest;
            sc_effects  = effects }
   with

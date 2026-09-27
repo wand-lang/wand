@@ -110,6 +110,42 @@ let test_eq_in_string_or_operator () =
   complete (Repl.is_complete "let ok =\n  1 == 1");
   complete (Repl.is_complete "let ok =\n  1 <= 2")
 
+(* Constructors the scope cannot show, read from a checked buffer as the
+   language server reads them: a type's own with its name in front, and a
+   module's, which the scope holds none of. *)
+let test_constructors_after_a_dot () =
+  let dir = Filename.temp_file "wand_complete" "" in
+  Sys.remove dir; Sys.mkdir dir 0o700;
+  let write name text =
+    Out_channel.with_open_text (Filename.concat dir name)
+      (fun oc -> output_string oc text) in
+  write "apps.wand"
+    "type PullPolicy = Always | Never | IfNotPresent\n\
+     type RestartPolicy = Always | OnFailure | Never\n";
+  let buffer =
+    "let apps = import ./apps\n\
+     type Color = Red | Green\n\
+     let c = Color.Red\n\
+     c\n" in
+  let ctors =
+    match Runner.typecheck_source ~path:(Filename.concat dir "main.wand") buffer with
+    | Ok sc -> sc.Runner.sc_ctors
+    | Error d -> Alcotest.failf "the buffer did not check: %s" (Diag.legacy d)
+  in
+  let offered line =
+    (Complete.ident_at ~ctors [] line).Complete.candidates in
+  Alcotest.(check (list string)) "a type in the file"
+    ["Color.Green"; "Color.Red"] (List.sort compare (offered "Color."));
+  Alcotest.(check (list string)) "a type in a module"
+    ["apps.PullPolicy.Always"; "apps.PullPolicy.IfNotPresent"; "apps.PullPolicy.Never"]
+    (List.sort compare (offered "apps.PullPolicy."));
+  Alcotest.(check bool) "a name only one type in the module has, bare" true
+    (List.mem "apps.IfNotPresent" (offered "apps.I"));
+  Alcotest.(check bool) "and not a name two of its types share" false
+    (List.mem "apps.Always" (offered "apps.A"));
+  Alcotest.(check (list string)) "nothing without a dot" []
+    (List.filter (fun c -> String.contains c '.') (offered "Col"))
+
 let () =
   Alcotest.run "completion" [
     "identifiers", [
@@ -118,6 +154,7 @@ let () =
       Alcotest.test_case "a namespace member"     `Quick test_namespace_member;
       Alcotest.test_case "an unknown namespace"   `Quick test_unknown_namespace;
       Alcotest.test_case "two dots"               `Quick test_two_dots;
+      Alcotest.test_case "constructors after a dot" `Quick test_constructors_after_a_dot;
     ];
     "lines", [
       Alcotest.test_case "whole line rebuilt"     `Quick test_whole_line_rebuilt;
