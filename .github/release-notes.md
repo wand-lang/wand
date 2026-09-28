@@ -1,33 +1,45 @@
-## 0.90.1 - 2026-09-28
+## 0.90.2 - 2026-09-28
 
-`wand p interface --check` passes the section it writes, and `wand f` keeps a wide arm body under its arm.
+`wand f` breaks wide condition chains, and puts a wide value below the text before it.
 
 ### Fixed
 
-- **`wand p interface --check` passes the section that `wand p interface`
-  writes.** A record whose fields do not fit on one line is written with a
-  line for each field, and the check reads each of those lines as an entry
-  of its own. `wand p release` compared entries in the same
-  way. Both now read a record over several lines as one entry.
-
-- **`wand f` keeps a wide operator chain in an arm under the arm.** A
-  `match` or `handle` arm whose body did not fit on the arrow's line was
-  broken at the arm's own indent, so the `|>` sat level with the `|` of
-  the arm:
+- **`wand f` breaks a wide `&&` or `||` chain.** It stayed on one line
+  however wide it was. It now breaks as a pipeline does, one condition on
+  each line with the operator first:
 
   ```
-  | s -> String.to_int s
-  |> Result.map (fn n -> n * 1000)
+  let inline? j =
+    Option.none? (ref_of j)
+    && Map.size (obj "properties" j) > 0
+    && !(flag? "x-kubernetes-preserve-unknown-fields" j)
   ```
 
-  The body now goes on its own line, and its operators line up under it:
+- **`wand f` puts a wide value below the text before it.** After an
+  `else`, a field's `name = ` or an arm's `->`, an operator chain or an
+  application that did not fit broke at the indent of that line, so its
+  second line read as the start of something new:
 
   ```
-  | s ->
-    String.to_int s
-    |> Result.map (fn n -> n * 1000)
+    else JSON.decode (Decode.list Diagnostic.decoder) (JSON.parse! r.stdout)
+    |> Result.get!
   ```
 
-  A `handle` arm is now measured from after its arrow, as a `match` arm
-  is. Before, a `handle` arm whose line was wider than the margin could
-  stay on one line.
+  It now goes on its own line, two columns in:
+
+  ```
+    else
+      JSON.decode (Decode.list Diagnostic.decoder) (JSON.parse! r.stdout)
+      |> Result.get!
+  ```
+
+  An application whose first line opens a bracket or a lambda, such as
+  `List.map (fn x ->` or `Decl(`, stays where it starts.
+
+- **`wand f` measures a construction through a module from where it
+  starts.** `core.PodTemplateSpec(...)` after `template = ` was measured
+  from the indent, and went on one line past the margin.
+
+- **`wand f` opens a one-armed `if`'s block on the `then` line.** When a
+  statement in the block did not fit, the `(` went below `then` on a line
+  of its own, with the statements at its column.
