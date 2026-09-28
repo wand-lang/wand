@@ -1,4 +1,4 @@
-uses {Clock, Env, FS.Read, FS.Write, Shell(dune)}
+uses {Clock, Env, FS.Read, FS.Write, Shell(dune, nc)}
 
 import HTTP
 import Test

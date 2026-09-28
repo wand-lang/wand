@@ -22,6 +22,7 @@ examples. Most tasks need only one part.
   - `typechecker.ml`, `effect_set.ml` — Hindley-Milner inference extended with effect sets (the twelve labels below); manifests are checked against inferred effects here.
   - `evaluator.ml` — tree-walking interpreter; effect handlers, `Par`, signals, shell execution.
   - `lint.ml`, `lint_rules.ml` — the `V-*`/`A-*` rules `wand t` reports.
+  - `command_words.ml` — the command words each top-level function runs, read from the parse. A file that calls an imported function counts its words toward the file's `Shell(...)` list.
   - `formatter.ml` — `wand f`; comments are never dropped or restyled.
   - `package.ml` — `wand.pkg`, its record and its interface and sum sections: reading, the `wand` range, URL imports, fetching with `git`, Minimal Version Selection. `package_cmd.ml` — `wand p add`, `init`, `interface`, `release`, `tidy`, `upgrade`.
   - `runner.ml` — the public API (`Runner.run_string`, `typecheck_file`, sessions); `repl.ml`; `compile_cache.ml`; `module_types.ml`; `util.ml`.

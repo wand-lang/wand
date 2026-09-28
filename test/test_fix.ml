@@ -191,6 +191,86 @@ let test_piped_inspect_takes_input () =
     "uses {Shell(cat)}\n\nlet S = import Shell\n\nlet main! () = \"x\" |> S.inspect_with! $*(cat)\n"
     fixed
 
+(* A function from another module runs its own commands, so a script's
+   `Shell(...)` list has to hold the words of what it calls -- and only
+   those: a function it does not call adds nothing (issue #42). *)
+let kube = {|uses {Shell(git, kubectl)}
+
+import Shell
+
+let apply! (s: String) = s |> Shell.inspect_with! $*(kubectl apply -f -)
+let version! () = Shell.inspect! $*(git describe)
+let both! () = (apply! "x"; version! ())
+|}
+
+let dyn = {|uses {Shell}
+
+import Shell
+
+let run! (tool: String) = Shell.inspect! $*(%{tool} --version)
+|}
+
+let with_modules f =
+  let dir = Filename.temp_dir "wand_words" "" in
+  let write name src =
+    Out_channel.with_open_text (Filename.concat dir name) (fun oc ->
+      output_string oc src)
+  in
+  write "kube.wand" kube;
+  write "dyn.wand" dyn;
+  f (Filename.concat dir "script.wand")
+
+let script manifest import call =
+  Printf.sprintf "%s\n\n%s\n\nlet main! () = %s\n" manifest import call
+
+let check path src =
+  match Runner.typecheck_source ~path src with
+  | Ok _ -> None
+  | Error d -> Some d.Diag.message
+
+let fix_at path src =
+  match Fix.fix_source ~path src with
+  | Ok (fixed, _) -> fixed
+  | Error d -> Alcotest.failf "expected fixes, got refusal: %s" (Diag.legacy d)
+
+let first_line s = List.hd (String.split_on_char '\n' s)
+
+let test_called_words_count () =
+  with_modules @@ fun path ->
+  let k = "let K = import ./kube.wand" in
+  Alcotest.(check (option string)) "a word the callee runs is allowed" None
+    (check path (script "uses {Shell(kubectl)}" k "K.apply! \"x\""));
+  Alcotest.(check (option string)) "and through a destructuring" None
+    (check path (script "uses {Shell(kubectl)}"
+                   "let {apply!} = import ./kube.wand" "apply! \"x\""));
+  (match check path (script "uses {Shell(kubectl)}" k "K.both! ()") with
+   | Some m when Lint.contains m "'K.both!' runs 'git'" -> ()
+   | other ->
+     Alcotest.failf "a word the callee's callee runs is required: %s"
+       (Option.value other ~default:"no error"));
+  (match check path (script "uses {Shell(git)}" "let D = import ./dyn.wand"
+                       "D.run! \"git\"") with
+   | Some m when Lint.contains m "name is not written out" -> ()
+   | other ->
+     Alcotest.failf "a command no list bounds cannot be narrowed: %s"
+       (Option.value other ~default:"no error"))
+
+let test_called_words_fix () =
+  with_modules @@ fun path ->
+  let k = "let K = import ./kube.wand" in
+  let fixed manifest call = first_line (fix_at path (script manifest k call)) in
+  Alcotest.(check string) "a missing word is added"
+    "uses {Shell(git, kubectl)}" (fixed "uses {Shell(kubectl)}" "K.both! ()");
+  Alcotest.(check string) "a word nothing called runs is removed"
+    "uses {Shell(kubectl)}" (fixed "uses {Shell(git, kubectl)}" "K.apply! \"x\"");
+  Alcotest.(check string) "a new manifest names the words"
+    "uses {Shell(kubectl)}" (first_line (fix_at path
+      (Printf.sprintf "%s\n\nlet main! () = K.apply! \"x\"\n" k)));
+  Alcotest.(check string) "an unbounded callee needs bare Shell"
+    "uses {Shell}"
+    (first_line (fix_at path (script "uses {Shell(git)}"
+       "let D = import ./dyn.wand" "D.run! \"git\"")))
+
 let () =
   Alcotest.run "fix" [
     "manifest", [
@@ -226,5 +306,9 @@ let () =
       Alcotest.test_case "an empty default" `Quick
         test_empty_default_becomes_a_literal;
       Alcotest.test_case "a piped inspect!" `Quick test_piped_inspect_takes_input;
+    ];
+    "the words of what a file calls", [
+      Alcotest.test_case "count toward its manifest" `Quick test_called_words_count;
+      Alcotest.test_case "and its fixes" `Quick test_called_words_fix;
     ];
   ]

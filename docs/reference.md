@@ -1810,10 +1810,22 @@ What counts as the binary:
   imported helper answer to the first line of the helper. A manifest is an
   audit surface against drift and accident. It is not a sandbox. Hostile
   code writes `Shell(sh)`, where you can see it.
+- **A call runs the commands of the function it calls.** A script that
+  calls `K.apply!`, where `apply!` runs `kubectl`, runs `kubectl` too. So
+  `uses {Shell(kubectl)}` is correct for that script, and a word that a
+  called function runs and the list omits is a type error. Only the
+  functions that the file names count. A function that the file does not
+  name adds nothing. wand reads the words from the text of the module. A
+  function counts when the file names it, also when the file only passes
+  it to another function. A function that runs a command whose word is not
+  written out, in a module with bare `Shell`, can run any binary. A file
+  that names such a function cannot narrow `Shell`, and the error tells
+  you to declare bare `Shell`.
 
 `wand t` suggests the narrowed form when every command position in the file
-is literal: `it could declare "uses {Shell(git, curl)}"`. If one position is
-not literal, it suggests bare `Shell`. A listed binary that no command runs is
+is literal: `it could declare "uses {Shell(git, curl)}"`. The words include
+the words of the functions that the file calls. If one position is not
+literal, it suggests bare `Shell`. A listed binary that no command runs is
 an `A-USES1` warning, with the trimmed line. wand judges that only in a file
 where every position is literal. An interpolated site may be the place where
 the unused binary runs.

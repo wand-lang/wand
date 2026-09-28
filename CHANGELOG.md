@@ -15,6 +15,29 @@
 
 ### Changed
 
+- **A script can name the commands that its imported functions run.**
+  A call runs the commands of the function it calls. So a script that
+  calls `plimsoll.apply!`, which runs `kubectl`, can now say so on its
+  first line:
+
+  ```
+  uses {IO, Shell(kubectl)}
+  ```
+
+  Before, `wand t` said that `kubectl` was not used, and `--fix` changed
+  the line to bare `Shell`, which allows any command. Only the functions
+  that the script names count. A function that it does not call adds
+  nothing, so you do not copy a module's manifest into each script.
+
+  A word that a called function runs and the list omits is now a type
+  error, and `wand t --fix` adds it. A suggested manifest includes these
+  words. If a called function can run any command, because its module has
+  bare `Shell` and the command name is not written out, a narrow list
+  cannot hold it: the error tells you to declare bare `Shell`, and
+  `--fix` does that.
+
+  This can make a file that passed before fail. `--fix` corrects it.
+
 - **Four errors now tell you what to write.** Before, each one gave only
   the types:
 
