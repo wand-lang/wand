@@ -2233,10 +2233,16 @@ and emit_if ?col indent c t el =
             ^^ bracket_if_wrapped_app_at ~anchor:cont c (emit_expr cont c)
             ^^ Doc.text " then" in
           let prefix = head ^^ Doc.text " " in
+          (* A block opens on the `then` line and closes at the `if`'s
+             indent, as it does after `=` and in the one-armed `if`. Put
+             below, its `(` stood alone and its statements two further in. *)
           let below () =
-            let body = Doc.spaces (cont + 2) in
-            head ^^ Doc.text "\n" ^^ body
-            ^^ bracket_if_wrapped_app_at ~anchor:(cont + 2) t (emit_expr (cont + 2) t)
+            if is_block t && not (Doc.has_newline head) then
+              prefix ^^ emit_block ~col:(cont + Doc.width prefix) cont t
+            else
+              let body = Doc.spaces (cont + 2) in
+              head ^^ Doc.text "\n" ^^ body
+              ^^ bracket_if_wrapped_app_at ~anchor:(cont + 2) t (emit_expr (cont + 2) t)
           in
           (* Same reading as the one-line form above: the branch is not laid
              out beside the `then` unless it can stand there. *)

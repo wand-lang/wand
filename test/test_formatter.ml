@@ -1239,6 +1239,35 @@ let test_a_then_block_opens_on_the_then_line () =
   Alcotest.(check string) "the layout is kept" src (fmt src);
   assert_idempotent "a then block" src
 
+(* An `if` with an `else` whose `then` branch is a block opens the block
+   on the `then` line, as the one-armed `if` does. Put below, the `(` stood
+   alone on a line and the statements went two further in. *)
+let test_a_then_block_with_an_else_opens_on_the_then_line () =
+  let src =
+    "let f found =\n\
+     \  if List.empty? found then (\n\
+     \    IO.println_err\n\
+     \      \"no module under k8s/ names the group-versions it came from; run gen first\";\n\
+     \    Proc.exit 2\n\
+     \  )\n\
+     \  else found\n\
+     \n\
+     let h found =\n\
+     \  if List.empty? found then (\n\
+     \    IO.println_err\n\
+     \      \"no module under k8s/ names the group-versions it came from; run gen first\";\n\
+     \    []\n\
+     \  )\n\
+     \  else if List.length found > 3 then found\n\
+     \  else (\n\
+     \    IO.println_err\n\
+     \      \"a short list of group-versions was found, which is fine for this test here\";\n\
+     \    found\n\
+     \  )\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "a then block with an else" src
+
 let test_blank_lines () =
   let src = "let x = 1\n\n\n\nlet y = 2\nx + y" in
   let out = fmt src in
@@ -2137,6 +2166,8 @@ let () =
       Alcotest.test_case "a wide value goes below its head" `Quick test_a_wide_value_goes_below_its_head;
       Alcotest.test_case "a then block opens on the then line" `Quick
         test_a_then_block_opens_on_the_then_line;
+      Alcotest.test_case "a then block with an else opens on the then line" `Quick
+        test_a_then_block_with_an_else_opens_on_the_then_line;
       Alcotest.test_case "a qualified construction is measured where it starts" `Quick
         test_a_qualified_construction_is_measured_where_it_starts;
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
