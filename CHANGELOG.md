@@ -1,5 +1,62 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **`List.empty` and `Map.empty?`.** Now each of `List` and `Map` has the
+  empty value and the test for it. `List.empty` is `[]`, and
+  `Map.empty? m` is true when `m` has no entries:
+
+  ```
+  Map.empty? {}        -- true
+  Map.empty? {a = 1}   -- false
+  ```
+
+### Changed
+
+- **Four errors now tell you what to write.** Before, each one gave only
+  the types:
+
+  - A name used above the line that defines it:
+    `'g' is defined below, at line 2. Move the definition above its first use`.
+    Before, the error said the name was unbound and suggested a different
+    name.
+  - `|>` after a call, as in `List.length xs |> List.map f`, pipes the
+    whole call, not its last argument. The type error now says so, and
+    shows the brackets that pipe one argument: `f a (b |> g)`.
+  - A field default that is not a literal, such as
+    `env: Map String = Map.empty`. The error now adds
+    ``An empty map is `{}` `` (or ``An empty list is `[]` ``).
+  - A value piped into `Shell.inspect!`, which takes no input. The error
+    now says to write `x |> Shell.inspect_with! $*(...)`.
+
+- **`wand t --fix` corrects two of them.** It changes a default of
+  `Map.empty` to `{}` and `List.empty` to `[]`. It changes
+  `x |> Shell.inspect! cmd` to `x |> Shell.inspect_with! cmd`. The other
+  two need a decision from you, so `--fix` does not change them.
+
+- An error in one stage of a `|>` pipeline now points at that stage, not
+  at the start of the pipeline.
+
+### Fixed
+
+- **`wand f` no longer breaks a function that a value shadows.** A
+  function reads each `let` of the same name below it as one more
+  equation, and only a `;` stops that. `wand f` put the two on separate
+  lines and removed the `;`:
+
+  ```
+  let f i = i; let f = 3
+  ```
+
+  The result did not parse. Now `wand f` keeps the `;`:
+
+  ```
+  let f i = i;
+  let f = 3
+  ```
+
 ## [0.92.0] - 2026-09-28
 
 ### Added
