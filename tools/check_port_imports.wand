@@ -118,8 +118,8 @@ let main! () = (
   )
   | _ -> (
     match List.flatten (List.map faults! names) with
-    | [] -> IO.println
-      "%{List.length names} imported ports keep their effects behind `main`"
+    | [] ->
+      IO.println "%{List.length names} imported ports keep their effects behind `main`"
     | faults -> report faults
   )
 )

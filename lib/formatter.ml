@@ -1258,11 +1258,9 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
           (List.map (fun (k, v) ->
              if all_pun then Doc.text (match k with Some n -> n | None -> "")
              else
-               let label =
-                 Doc.text (match k with Some n -> n ^ " = " | None -> "") in
-               (* The value is written after its field name, so that is where
-                  it starts. *)
-               label ^^ emit_expr ~col:(indent + 2 + Doc.width label) (indent + 2) v) kvs)
+               match k with
+               | Some n -> emit_field_value (indent + 2) n v
+               | None -> emit_expr (indent + 2) v) kvs)
       ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
   (* `T(r, a = 1)`: the base reads as the first item, and the fields that
      change follow it, so the one-per-line form puts the base on its own
@@ -1281,8 +1279,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
       let lines =
         emit_expr (indent + 2) base
         :: List.map (fun (k, v) ->
-             let label = Doc.text (k ^ " = ") in
-             label ^^ emit_expr ~col:(indent + 2 + Doc.width label) (indent + 2) v) kvs
+             emit_field_value (indent + 2) k v) kvs
       in
       Doc.text (name ^ "(\n") ^^ inner
       ^^ Doc.concat (Doc.text ",\n" ^^ inner) lines
@@ -2194,6 +2191,12 @@ and emit_if ?col indent c t el =
     in
     (match one_line with
      | Some oneline -> oneline
+     (* A block opens on the `then` line and closes at the `if`'s indent, as
+        it does after `=`. Put below, its `(` stood alone and its statements
+        at the column of the bracket. *)
+     | None when is_block t && not (Doc.has_newline cs) ->
+       let head = Doc.text "if " ^^ cs ^^ Doc.text " then " in
+       head ^^ emit_block ~col:(col + Doc.width head) indent t
      | None ->
        let ts = emit_expr indent t in
        Doc.text "if " ^^ cs ^^ Doc.text " then\n" ^^ Doc.spaces (indent + 2)
@@ -2245,13 +2248,23 @@ and emit_if ?col indent c t el =
                let flat = prefix ^^ td in
                if fits cont flat then flat else below ()) in
         match strip_located el with
-        | Unit -> [clause]
-        | If (c2, t2, el2) -> clause :: ladder c2 t2 el2
+        | Unit -> ([clause], None)
+        | If (c2, t2, el2) ->
+          let (clauses, last) = ladder c2 t2 el2 in
+          (clause :: clauses, last)
         | _ ->
-          [clause;
-           bracket_if_wrapped_app_at ~anchor:cont el (emit_expr ~col:(cont + 5) cont el)]
+          let last =
+            if goes_below ~col:(cont + 5) cont el then emit_below (cont + 2) el
+            else
+              Doc.text " "
+              ^^ bracket_if_wrapped_app_at ~anchor:cont el (emit_expr ~col:(cont + 5) cont el)
+          in
+          ([clause], Some last)
       in
-      Doc.concat (Doc.text "\n" ^^ ind ^^ Doc.text "else ") (ladder c t el)
+      let (clauses, last) = ladder c t el in
+      let else_ = Doc.text "\n" ^^ ind ^^ Doc.text "else" in
+      Doc.concat (else_ ^^ Doc.text " ") clauses
+      ^^ (match last with Some d -> else_ ^^ d | None -> Doc.empty)
 
 (* A `match`/`handle` case body ends only where the next `|`-prefixed case
    begins -- there's no other terminator. So an unparenthesized Match or
@@ -2286,21 +2299,51 @@ and case_body_tail e = match strip_located e with
   | If (_, _, els)        -> case_body_tail els
   | e -> e
 
-(* An operator chain too wide for the arrow's line. Started there, it
-   broke at the arm's own indent: the `|>` of its second line sat level
-   with the `|` of the arm, where it read as the start of something else.
-   It takes a line of its own below the arrow instead, two in from the arm,
-   and its operators line up under it. A line that opens with an operator
-   continues the one above, so no bracket is needed. *)
-and arm_body_goes_below ~col indent body =
-  match strip_located body with
-  | BinOp _ -> Doc.has_newline (emit_expr ~col indent body)
+(* A value written after text that opens its line -- an arm's `-> `, an
+   `else `, a field's `name = ` -- and too wide to finish there. Started
+   there, an operator chain or an application broke at the indent of that
+   line: the `|>` of its second line sat level with the `|` of the arm, the
+   `else` or the field, where it read as the start of something else. It
+   takes a line of its own below instead, two further in, and what it
+   continues with lines up under it.
+
+   An application whose first line ends by opening a bracket or a lambda is
+   a block, `List.map (fn x ->` or `Decl(`, and its lines already sit
+   inside it; it stays where it starts. *)
+and goes_below ~col indent e =
+  let block_shaped d =
+    let s = Doc.to_string d in
+    let first = match String.index_opt s '\n' with Some i -> String.sub s 0 i | None -> s in
+    let t = String.trim first in
+    let n = String.length t in
+    n = 0 || List.mem t.[n - 1] ['('; '['; '{']
+    || (n >= 2 && String.sub t (n - 2) 2 = "->")
+  in
+  match strip_located e with
+  | BinOp _ -> Doc.has_newline (emit_expr ~col indent e)
+  | App _ ->
+    let d = emit_expr ~col indent e in
+    Doc.has_newline d && not (block_shaped d)
   | _ -> false
+
+(* `name = value` for a field of a construction or an update laid out one
+   field per line, at `indent`. The value is written after its field name,
+   so that is where it starts, unless it goes below. *)
+and emit_field_value indent name v =
+  let label = name ^ " =" in
+  let col = indent + String.length label + 1 in
+  if goes_below ~col indent v then Doc.text label ^^ emit_below (indent + 2) v
+  else Doc.text (label ^ " ") ^^ emit_expr ~col indent v
+
+(* `e` on a line of its own below, at `indent`. *)
+and emit_below indent e =
+  Doc.text "\n" ^^ Doc.spaces indent
+  ^^ bracket_if_wrapped_app_at ~anchor:indent e (emit_expr indent e)
 
 (* The arrow and the body of an arm, after the text before the arrow. *)
 and emit_arm_rest ~col indent body =
-  if arm_body_goes_below ~col:(col + 4) indent body then
-    Doc.text " ->\n" ^^ Doc.spaces (indent + 2) ^^ emit_expr (indent + 2) body
+  if goes_below ~col:(col + 4) indent body then
+    Doc.text " ->" ^^ emit_below (indent + 2) body
   else Doc.text " -> " ^^ emit_case_body ~col:(col + 4) indent body
 
 and emit_case_body ?col indent body =

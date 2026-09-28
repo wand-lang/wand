@@ -104,8 +104,8 @@ let main () = (
   let results = outcomes steps (apply ());
   results |> List.each (fn (step, o) -> IO.println (line step o));
   match failures results with
-  | [] -> IO.println
-    (if changed? results then "host changed" else "host already as declared")
+  | [] ->
+    IO.println (if changed? results then "host changed" else "host already as declared")
   | bad -> (
     IO.println_err "%{List.length bad} step(s) failed:";
     bad |> List.each (fn (name, code) -> IO.println_err "  %{name} exited %{code}");

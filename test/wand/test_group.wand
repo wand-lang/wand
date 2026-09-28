@@ -29,8 +29,8 @@ test "a raising child fails alone, and its sibling still runs" (fn t ->
     test "boom" (fn tt -> tt.eq (1 / 0) 0),
     test "fine" (fn tt -> tt.ok true)
   ]) with
-  | Suite _ [Fail m, Pass _] -> t.ok
-    (String.contains? "boom: raised:" m && String.contains? "division by zero" m)
+  | Suite _ [Fail m, Pass _] ->
+    t.ok (String.contains? "boom: raised:" m && String.contains? "division by zero" m)
   | _ -> t.fail "expected one Fail then one Pass")
 
 test "a raising body is the group's one failure" (fn t ->

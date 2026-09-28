@@ -38,8 +38,10 @@ let used dir =
 let check budget dir = (
   let total = used dir;
   IO.println "%{Path.to_string dir} is %{Size.format total}";
-  if total > budget then
-    (IO.println_err "over budget by %{Size.format (total - budget)}"; Proc.exit 1)
+  if total > budget then (
+    IO.println_err "over budget by %{Size.format (total - budget)}";
+    Proc.exit 1
+  )
 )
 
 check 500MB ./stdlib

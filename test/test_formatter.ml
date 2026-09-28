@@ -1180,6 +1180,53 @@ let test_a_qualified_construction_is_measured_where_it_starts () =
   Alcotest.(check string) "the layout is kept" src (fmt src);
   assert_idempotent "a qualified construction" src
 
+(* A value after `else `, a field's `name = ` or an arm's `-> ` that does
+   not fit there goes on a line of its own, two further in. Started beside
+   its head, it broke at the head's indent. *)
+let test_a_wide_value_goes_below_its_head () =
+  let src =
+    "let errors r =\n\
+     \  if r.code == 0 then []\n\
+     \  else\n\
+     \    JSON.decode (Decode.list Diagnostic.decoder) (JSON.parse! r.stdout)\n\
+     \    |> Result.get!\n\
+     \    |> List.filter (fn (d: Diagnostic) -> d.severity == \"error\")\n\
+     \n\
+     let open_decl name values =\n\
+     \  Decl(\n\
+     \    name = name,\n\
+     \    sum = true,\n\
+     \    items =\n\
+     \      String.split \"|\" values\n\
+     \      |> List.map String.trim\n\
+     \      |> List.filter (fn v -> !(String.empty? v))\n\
+     \      |> List.map (fn v -> (v, true))\n\
+     \  )\n\
+     \n\
+     let show d msg =\n\
+     \  match String.lines msg with\n\
+     \  | [] -> \"\"\n\
+     \  | [first :: rest] ->\n\
+     \    String.join \"\\n\" (\"- %{d.file}:%{d.line}: %{first}\" :: List.map (fn l -> l) rest)\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "values below their heads" src
+
+(* A one-armed `if` whose block does not fit on one line opens the block on
+   the `then` line. Put below, its `(` stood alone and its statements at the
+   column of the bracket. *)
+let test_a_then_block_opens_on_the_then_line () =
+  let src =
+    "let g found =\n\
+     \  if found then (\n\
+     \    IO.println_err\n\
+     \      \"no module under k8s/ names the group-versions it came from; run gen first\";\n\
+     \    Proc.exit 2\n\
+     \  )\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "a then block" src
+
 let test_blank_lines () =
   let src = "let x = 1\n\n\n\nlet y = 2\nx + y" in
   let out = fmt src in
@@ -2074,6 +2121,9 @@ let () =
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;
       Alcotest.test_case "a wide arm chain goes below" `Quick test_a_wide_arm_chain_goes_below;
       Alcotest.test_case "a wide condition chain breaks" `Quick test_a_wide_condition_chain_breaks;
+      Alcotest.test_case "a wide value goes below its head" `Quick test_a_wide_value_goes_below_its_head;
+      Alcotest.test_case "a then block opens on the then line" `Quick
+        test_a_then_block_opens_on_the_then_line;
       Alcotest.test_case "a qualified construction is measured where it starts" `Quick
         test_a_qualified_construction_is_measured_where_it_starts;
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;

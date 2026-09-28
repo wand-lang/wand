@@ -69,8 +69,9 @@ let main! () =
     copy_into! dir;
     format_in! dir;
     match rewritten! dir with
-    | [] -> IO.println
-      "every checked directory is a wand f fixed point (%{List.length sources} files)"
+    | [] ->
+      IO.println
+        "every checked directory is a wand f fixed point (%{List.length sources} files)"
     | changed -> report changed
   )
 
