@@ -1,35 +1,17 @@
-## 0.91.0 - 2026-09-28
+## 0.91.1 - 2026-09-28
 
-A constructor can have its own spelling in JSON, TOML, YAML and CSV.
-
-### Added
-
-- **A constructor can have its own spelling in JSON, TOML, YAML and CSV.**
-  Some values cannot be wand constructor names, such as `None`, `*` or
-  `client auth`. Give the constructor a name that wand accepts, and put the
-  real spelling after it in quotes:
-
-  ```
-  type DnsPolicy = ClusterFirst | Default | None_ "None"
-  type Operation = All "*" | CREATE
-  ```
-
-  wand reads `"None"` as `DnsPolicy.None_`, and writes `DnsPolicy.None_` as
-  `"None"`. This applies to JSON, TOML, YAML, CSV and the values of
-  command-line flags. In your code you still write `DnsPolicy.None_`.
-
-  Only a constructor with no payload can have a spelling. Two constructors
-  of one type cannot have the same spelling:
-
-  ```
-  type P = A | B "A"
-  -- constructors 'A' and 'B' of 'P' have the same spelling "A"; give one
-  -- of them another spelling
-  ```
+A long list of values no longer hides the value that was wrong.
 
 ### Fixed
 
-- **Text after a type declaration is now an error.** Before, wand ignored
-  the problem: `type P = A | B 42` declared the type, and then ran `42` as a
-  separate statement. Now wand stops with "a type declaration ends at the
-  end of its line".
+- **A long list of values no longer hides the value that was wrong.** When
+  a document has a value that an enum does not have, the error lists the
+  values the enum has. For a large enum, the value that was received was
+  lost at the end of a very long line. Now, when there are more than five
+  values, the error shows the count and the first five:
+
+  ```
+  .stopSignal: expected one of 65 values (SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCLD, …), got "SIGNEW"
+  ```
+
+  An enum with five values or fewer still lists all of them.
