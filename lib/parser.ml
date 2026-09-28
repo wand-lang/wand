@@ -2385,7 +2385,7 @@ let parse_type_def s =
   if peek s = Token.LParen && not (newline_breaks_expr s) then begin
     let (fields, defaults, keys) = parse_ctor_fields () in
     Ast.Variants (type_name, !params,
-      [{ Ast.name = type_name; loc = Some type_loc; fields; defaults; keys }])
+      [{ Ast.name = type_name; loc = Some type_loc; fields; defaults; keys; spelling = None }])
   end else begin
     expect s Token.Eq;
     (* After `=`, a shape that cannot be a constructor is a type expression,
@@ -2433,8 +2433,22 @@ let parse_type_def s =
          fail_at (peek_loc s)
            "a constructor takes its payload directly: 'Circle Int', not \
             'Circle of Int'");
+      (* `None_ "None"`: how documents spell the constructor. Read before
+         the payload, so that a spelling followed by a payload is refused
+         below rather than read as something else. *)
+      let spelling =
+        match peek s with
+        | Token.String w when not (newline_breaks_expr s) ->
+          ignore (advance s); Some w
+        | _ -> None
+      in
+      let fields_loc = peek_loc s in
       let (fields, defaults, keys) = parse_ctor_fields () in
-      { Ast.name; loc = Some ctor_loc; fields; defaults; keys }
+      if spelling <> None && fields <> [] then
+        fail_at fields_loc
+          "only a constructor with no payload can have a spelling: a \
+           constructor that holds a value is written as that value";
+      { Ast.name; loc = Some ctor_loc; fields; defaults; keys; spelling }
     in
     let ctors = ref [parse_ctor ()] in
     while peek s = Token.Pipe do
@@ -2832,6 +2846,23 @@ let parse_program_generic ~on_item tokens =
       (* The type's own name, which is what a declaration error is about. *)
       let tdef_loc = peek_loc s in
       let tdef = parse_type_def s in
+      (* A type declaration ends at the end of its line, as an import does.
+         What followed on the same line used to become a statement of its
+         own: `type P = A | B "x"` declared the type and then evaluated
+         "x", and `type P = A | B 42` then 42, and nothing said so. Asked of
+         the raw next token, because `peek` steps over the newline. *)
+      let trailing =
+        if s.pos < Array.length s.tokens then fst s.tokens.(s.pos) else Token.EOF
+      in
+      (match trailing with
+       | Token.Newline | Token.LineComment _ | Token.Semicolon | Token.EOF -> ()
+       | t ->
+         fail_at (peek_loc s) (Format.asprintf
+           "a type declaration ends at the end of its line, so '%a' cannot \
+            follow it here -- a constructor's payload is a type, and a \
+            constructor with no payload can have a spelling in quotes: \
+            'None_ \"None\"'"
+           Token.pp t));
       (match tdef with
        | Ast.Variants (name, _, _) | Ast.Alias (name, _, _) -> attach_doc name);
       items := !items @ [Ast.TLType (tdef, Some tdef_loc)]

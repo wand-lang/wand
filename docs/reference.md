@@ -2742,6 +2742,47 @@ type A(port "x": Int, x: Int)
 The key is part of the type's shape: `wand f` keeps it, and the interface
 section of `wand.pkg` records it.
 
+### A constructor's own spelling
+
+Some values in documents cannot be wand constructor names, such as `None`,
+`*` or `client auth`. Give the constructor a name that wand accepts, and put
+the real spelling after it in quotes:
+
+```ocaml
+type DnsPolicy = ClusterFirst | Default | None_ "None"
+type Operation = All "*" | CREATE
+```
+
+wand reads `"None"` as `DnsPolicy.None_`, and writes `DnsPolicy.None_` as
+`"None"`. This applies to the derived decoder and encoder, `JSON.of`,
+`TOML.of`, `TOML.decode`, `YAML.decode`, `CSV.rows` and the values of
+command-line flags. In your code you still write `DnsPolicy.None_`, in
+patterns too. A constructor with no spelling of its own is spelled as its
+name.
+
+An error shows the spellings, because it is about the document:
+
+```ocaml
+JSON.decode DnsPolicy.decoder (JSON.parse! `"None_"`)
+-- Error("expected one of ClusterFirst, Default, None, got \"None_\"")
+```
+
+Only a constructor with no payload can have a spelling. A constructor that
+holds a value is written as that value. Two constructors of one type cannot
+have the same spelling:
+
+```ocaml
+type P = A | B "A"
+-- constructors 'A' and 'B' of 'P' have the same spelling "A"; give one of
+-- them another spelling
+```
+
+`wand f` keeps the spelling, and the interface section of `wand.pkg`
+records it.
+
+Nothing else can follow a type declaration on its line. A spelling after a
+constructor is the only exception.
+
 ### Writing it back out
 
 The same type gives an encoder. It is an ordinary function, not a type of

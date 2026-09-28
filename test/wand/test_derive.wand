@@ -1,9 +1,12 @@
 let {test} = import Test
 import Args
+import CSV
 import Decode
 import JSON
+import List
 import Result
 import TOML
+import YAML
 
 -- A single-constructor type whose fields are named already says what a
 -- decoder for it would do: the field names, and what each one holds. So
@@ -326,3 +329,46 @@ test "and a sum without its tag" (fn t ->
   t.eq
     (Ok "maxSurge = \"25%\"\npull = \"Never\"\n")
     (TOML.of Rollout(maxSurge = S "25%", pull = Never) |> Result.map TOML.stringify))
+
+-- A constructor with no payload can have its own spelling in documents,
+-- for a value that cannot be a constructor name. In wand code the
+-- constructor is its name.
+type DnsPolicy = ClusterFirst | Default | None_ "None"
+type Operation = All "*" | CREATE | ClientAuth "client auth"
+type Workload(dns: DnsPolicy, op: Operation)
+
+test "a constructor is read by its spelling" (fn t ->
+  t.eq
+    (Ok Workload(dns = DnsPolicy.None_, op = Operation.All))
+    (JSON.decode Workload.decoder (JSON.parse! `{"dns": "None", "op": "*"}`)))
+
+test "and written by it" (fn t ->
+  t.eq
+    `{"dns":"None","op":"client auth"}`
+    (JSON.stringify
+      (Workload.encoder Workload(dns = DnsPolicy.None_, op = Operation.ClientAuth))))
+
+test "JSON.of and TOML.of write the spelling" (fn t ->
+  let p = Workload(dns = DnsPolicy.None_, op = Operation.All);
+  t.eq (Ok `{"dns":"None","op":"*"}`, Ok "dns = \"None\"\nop = \"*\"\n") (
+    Result.map JSON.stringify (JSON.of p),
+    Result.map TOML.stringify (TOML.of p)
+  ))
+
+test "TOML, YAML and CSV read the spelling" (fn t ->
+  let want = Workload(dns = DnsPolicy.None_, op = Operation.All);
+  t.eq [Ok want, Ok want, Ok want] [
+    TOML.decode Workload.decoder (TOML.parse! "dns = \"None\"\nop = \"*\""),
+    YAML.decode Workload.decoder (YAML.parse! "dns: None\nop: \"*\""),
+    CSV.rows Workload.decoder "dns,op\nNone,*" |> Result.map (fn ps -> List.head! ps)
+  ])
+
+test "the constructor's name is not its spelling" (fn t ->
+  t.eq
+    (Error `.dns: expected one of ClusterFirst, Default, None, got "None_"`)
+    (JSON.decode Workload.decoder (JSON.parse! `{"dns": "None_", "op": "*"}`)))
+
+test "a flag's value is the spelling too" (fn t ->
+  t.eq
+    (Ok Workload(dns = DnsPolicy.Default, op = Operation.ClientAuth))
+    (Args.read Workload.parser ["--dns", "Default", "--op", "client auth"]))

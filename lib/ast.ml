@@ -483,6 +483,11 @@ type ctor_def = {
      wand code the field is its name. Keyed by field name, and absent for a
      field whose key is its name. *)
   keys : (string * string) list;
+  (* `None_ "None"`. How documents spell a constructor with no payload,
+     when that is not its name: `None`, `*` and `client auth` cannot be
+     constructor names. Only a derived decoder and encoder read it; in wand
+     code the constructor is its name. *)
+  spelling : string option;
 }
 
 type type_def =

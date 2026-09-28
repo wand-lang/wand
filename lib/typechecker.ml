@@ -5284,8 +5284,8 @@ let stdlib_type_env : env = [
    declaration. *)
 let option_tdef : type_def =
   Variants ("Option", ["a"], [
-    { name = "None"; loc = None; fields = []; defaults = []; keys = [] };
-    { name = "Some"; loc = None; fields = [ (None, TEVar ("a", None)) ]; defaults = []; keys = [] };
+    { name = "None"; loc = None; fields = []; defaults = []; keys = []; spelling = None };
+    { name = "Some"; loc = None; fields = [ (None, TEVar ("a", None)) ]; defaults = []; keys = []; spelling = None };
   ])
 
 let shell_result_tdef : type_def =
@@ -5295,7 +5295,7 @@ let shell_result_tdef : type_def =
     fields = [ (Some "stdout", TEName "String");
                (Some "stderr", TEName "String");
                (Some "code",   TEName "Int") ];
-    defaults = []; keys = [];
+    defaults = []; keys = []; spelling = None;
   }])
 
 (* Everything needed to read one command line and to describe it: what the
@@ -5317,7 +5317,7 @@ let command_line_tdef : type_def =
     fields = [ (Some "spec",   TEApp (TEName "Map", TEName "String"));
                (Some "reader", TEApp (TEName "Decoder", TEVar ("a", None)));
                (Some "usage",  TEName "String") ];
-    defaults = []; keys = [];
+    defaults = []; keys = []; spelling = None;
   }])
 
 (* What a request is made of, and what one answers with.
@@ -5347,7 +5347,7 @@ let command_line_tdef : type_def =
    builder pattern does elsewhere and record update gives the chaining. *)
 let http_method_tdef : type_def =
   Variants ("HTTPMethod", [],
-    List.map (fun n -> { name = n; loc = None; fields = []; defaults = []; keys = [] })
+    List.map (fun n -> { name = n; loc = None; fields = []; defaults = []; keys = []; spelling = None })
       ["GET"; "POST"; "PUT"; "PATCH"; "DELETE"; "HEAD"])
 
 let http_request_tdef : type_def =
@@ -5365,7 +5365,7 @@ let http_request_tdef : type_def =
                  ("body",      Ast.String "");
                  ("timeout",   Ast.Duration "30s");
                  ("redirects", Ast.Int 5) ];
-    keys = [];
+    keys = []; spelling = None;
   }])
 
 (* A body is a `String` because a wand `String` is a byte string, and
@@ -5379,7 +5379,7 @@ let http_response_tdef : type_def =
     fields = [ (Some "status",  TEName "Int");
                (Some "headers", TEApp (TEName "Map", TEName "String"));
                (Some "body",    TEName "String") ];
-    defaults = []; keys = [];
+    defaults = []; keys = []; spelling = None;
   }])
 
 let builtin_tenv : typedef_env = [
@@ -6023,7 +6023,21 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
          | Some () ->
            fail_at_opt c.loc (Printf.sprintf
              "constructor '%s' is declared twice in '%s'" c.name tname)
-         | None -> Hashtbl.add seen_ctors (tname, c.name) ())) ctors
+         | None -> Hashtbl.add seen_ctors (tname, c.name) ())) ctors;
+      (* Two constructors cannot have one spelling: a decoder could not tell
+         which one a document means. A constructor with no spelling of its
+         own is spelled as its name. *)
+      let seen_spellings = Hashtbl.create 8 in
+      List.iter (fun c ->
+        if c.fields = [] then begin
+          let w = Option.value c.spelling ~default:c.name in
+          match Hashtbl.find_opt seen_spellings w with
+          | Some other ->
+            fail_at_opt c.loc (Printf.sprintf
+              "constructors '%s' and '%s' of '%s' have the same spelling \"%s\"; \
+               give one of them another spelling" other c.name tname w)
+          | None -> Hashtbl.add seen_spellings w c.name
+        end) ctors
     | _ -> ()) prog.items;
   (* A value cannot take a name a type or a constructor already has. The two
      were accepted together and read by position: `Pod.decoder` gave the

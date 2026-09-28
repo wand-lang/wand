@@ -139,7 +139,9 @@ let derivable :
    only these two. Kubernetes writes `imagePullPolicy` the first way and
    `maxSurge` the second. *)
 type sum_shape =
-  | Enum of Ctor.t list
+  (* Each constructor with how documents spell it: its own spelling
+     (`None_ "None"`), or its name. *)
+  | Enum of (Ctor.t * string) list
   | Untagged of (Ctor.t * type_expr) list
 
 let derivable_sums : (string, sum_shape) Hashtbl.t = Hashtbl.create 8
@@ -147,6 +149,14 @@ let derivable_sums : (string, sum_shape) Hashtbl.t = Hashtbl.create 8
 (* The same shape by constructor, for a value encoded where its type is not
    written down: `JSON.of (I 1)`. *)
 let sum_of_ctor : (Ctor.t, sum_shape) Hashtbl.t = Hashtbl.create 8
+
+(* How documents spell a constructor with no payload: its own spelling
+   (`None_ "None"`), or its name. Every writer asks here, so JSON and TOML
+   spell it the same way. *)
+let spelling_of_ctor c =
+  match Hashtbl.find_opt sum_of_ctor c with
+  | Some (Enum spellings) -> Option.value (List.assoc_opt c spellings) ~default:(Ctor.name c)
+  | _ -> Ctor.name c
 
 (* An alias names a type that already exists, so a field of an alias type is
    read and written as its target is. `type Quantity = String` is a string in
@@ -174,8 +184,8 @@ let register_derivable ~ident keys (tdef : type_def) =
     put derivable (ident ctor.name, params, ctor.fields)
   | Variants (_, [], (_ :: _ :: _ as ctors))
     when List.for_all (fun c -> c.fields = []) ctors ->
-    let cs = List.map (fun c -> ident c.name) ctors in
-    put_sum (Enum cs) cs
+    let cs = List.map (fun c -> (ident c.name, Option.value c.spelling ~default:c.name)) ctors in
+    put_sum (Enum cs) (List.map fst cs)
   | Variants (_, [], (_ :: _ :: _ as ctors))
     when List.for_all (fun c -> match c.fields with
                          | [(None, _)] -> true | _ -> false) ctors ->
@@ -7106,11 +7116,11 @@ and named_decoder venv tname j path =
 and sum_decoder venv shape j path =
   match shape with
   | Enum ctors ->
-    let names = List.map Ctor.name ctors in
+    let names = List.map snd ctors in
     (match j with
      | `String w ->
-       (match List.find_opt (fun c -> Ctor.name c = w) ctors with
-        | Some c -> Ok (VConstr (c, []))
+       (match List.find_opt (fun (_, spelled) -> spelled = w) ctors with
+        | Some (c, _) -> Ok (VConstr (c, []))
         | None ->
           decode_error path (Printf.sprintf "expected one of %s, got %S"
                                (String.concat ", " names) w))
@@ -7332,7 +7342,7 @@ and json_of_value (v : value) : Yojson.Basic.t =
    that holds one. *)
 and sum_json venv shape c vals =
   match shape, vals with
-  | Enum _, [] -> `String (Ctor.name c)
+  | Enum _, [] -> `String (spelling_of_ctor c)
   | Untagged cases, [x] ->
     (match List.find_opt (fun (c', _) -> c' = c) cases with
      | Some (_, te) -> json_of_typed venv te x
@@ -7900,7 +7910,7 @@ let rec toml_of_value (v : value) : Toml.Types.value =
      constructor, the value for one that holds one. *)
   | VConstr (ctor, vals) when Hashtbl.mem sum_of_ctor ctor ->
     (match vals with
-     | [] -> Toml.Types.TString (Ctor.name ctor)
+     | [] -> Toml.Types.TString (spelling_of_ctor ctor)
      | [x] -> toml_of_value x
      | _ ->
        raise (EvalError (Printf.sprintf "cannot write '%s' as TOML" (Ctor.name ctor))))

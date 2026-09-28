@@ -1038,6 +1038,18 @@ let test_wrapped_sum_has_no_trailing_space () =
 
 (* A field's key in a document is written between its name and its type,
    and survives formatting in both layouts. *)
+(* A constructor's spelling is written after its name, and survives
+   formatting in both layouts. *)
+let test_a_constructor_spelling_is_kept () =
+  assert_contains "on one line" (fmt "type Op = All   \"*\" | CREATE\n1")
+    "type Op = All \"*\" | CREATE";
+  assert_idempotent "one line" "type Op = All \"*\" | CREATE\n1";
+  let wide =
+    "type Policy = ClusterFirstWithHostNetAndSomeMoreText | \
+     ClusterFirstWithHostNetAndEvenMoreText | None_ \"None\"\n1" in
+  assert_contains "wrapped" (fmt wide) "\n  | None_ \"None\"";
+  assert_idempotent "wrapped" wide
+
 let test_a_field_key_is_kept () =
   assert_contains "on one line" (fmt "type D(port   \"Port\" : Int)\n1")
     "type D(port \"Port\": Int)";
@@ -2116,6 +2128,7 @@ let () =
       Alcotest.test_case "wide type wraps" `Quick test_wide_type_definition_wraps;
       Alcotest.test_case "a wrapped sum has no trailing space" `Quick test_wrapped_sum_has_no_trailing_space;
       Alcotest.test_case "a field key is kept" `Quick test_a_field_key_is_kept;
+      Alcotest.test_case "a constructor spelling is kept" `Quick test_a_constructor_spelling_is_kept;
       Alcotest.test_case "named field arrow" `Quick test_named_field_arrow_loses_brackets;
       Alcotest.test_case "interface settles" `Quick test_interface_and_implement_settle;
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;

@@ -2552,6 +2552,12 @@ let emit_ctor_fields_wrapped ?(defaults = []) ?(keys = []) name fields =
     ^ "\n)"
   | _ -> name ^ emit_ctor_fields fields
 
+(* ` "None"` where a constructor has its own spelling in documents. *)
+let emit_ctor_spelling (c : ctor_def) =
+  match c.spelling with
+  | Some w -> " \"" ^ escape_string_body w ^ "\""
+  | None -> ""
+
 let emit_type_def = function
   | Alias (name, params, te) ->
     let name_and_params =
@@ -2584,7 +2590,7 @@ let emit_type_def = function
   let oneline =
     head ^ String.concat " | "
       (List.map (fun c ->
-         c.name ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
+         c.name ^ emit_ctor_spelling c ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
   in
   if fits_text 0 oneline then oneline
   else match ctors with
@@ -2599,7 +2605,7 @@ let emit_type_def = function
       "type " ^ name_and_params ^ " =\n  "
       ^ String.concat "\n  | "
           (List.map (fun c ->
-             c.name ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
+             c.name ^ emit_ctor_spelling c ^ emit_ctor_fields ~defaults:c.defaults ~keys:c.keys c.fields) ctors)
 
 (* An interface declares its members the way a record declares its fields,
    so it wraps the same way: one to a line past the margin, with the closing

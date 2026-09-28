@@ -721,6 +721,44 @@ let test_lines_read_as_one_expression () =
    cannot read one key, whether the key is written or is the field's own
    name: a decoder would fill both from it, and an encoder would write it
    twice. *)
+(* A constructor with no payload can have its own spelling in documents.
+   Two constructors of one type cannot have the same spelling, whether it is
+   written or is the constructor's own name. A constructor with a payload is
+   written as its value, so it has no spelling. *)
+let test_two_constructors_cannot_share_a_spelling () =
+  err_contains "two written spellings"
+    "type P = A \"x\" | B \"x\"\n1"
+    "constructors 'A' and 'B' of 'P' have the same spelling \"x\"";
+  err_contains "a written spelling and a constructor's own name"
+    "type P = A | B \"A\"\n1"
+    "constructors 'A' and 'B' of 'P' have the same spelling \"A\"";
+  err_contains "a spelling and a payload"
+    "type P = A \"x\" (Int) | B\n1"
+    "only a constructor with no payload can have a spelling";
+  ok "different spellings"
+    "type P = A \"*\" | None_ \"None\"\nlet p = P.None_\n1"
+    "1"
+
+(* A type declaration ends at the end of its line. What followed on the same
+   line used to become a statement of its own, so `type P = A | B "x"`
+   declared the type and then evaluated "x". *)
+let test_a_type_declaration_ends_with_its_line () =
+  err_contains "a string after a payload"
+    "type P = A Int \"x\"\n1"
+    "a type declaration ends at the end of its line";
+  err_contains "a string after a record"
+    "type P(a: Int) \"x\"\n1"
+    "a type declaration ends at the end of its line";
+  err_contains "a number"
+    "type P = A | B 42\n1"
+    "a type declaration ends at the end of its line";
+  err_contains "a list"
+    "type P = A | B [1]\n1"
+    "a type declaration ends at the end of its line";
+  ok "a comment"
+    "type P = A | B -- the two\n1"
+    "1"
+
 let test_two_fields_cannot_share_a_key () =
   err_contains "two written keys"
     "type A(port \"Port\": Int, other \"Port\": Int)\n1"
@@ -2466,6 +2504,10 @@ let () =
         test_lines_read_as_one_expression;
       Alcotest.test_case "two fields cannot share a key" `Quick
         test_two_fields_cannot_share_a_key;
+      Alcotest.test_case "two constructors cannot share a spelling" `Quick
+        test_two_constructors_cannot_share_a_spelling;
+      Alcotest.test_case "a type declaration ends with its line" `Quick
+        test_a_type_declaration_ends_with_its_line;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
     ];
