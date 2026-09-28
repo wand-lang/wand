@@ -161,6 +161,36 @@ let test_drift_still_declines () =
   Alcotest.(check bool) "refused rather than rewritten" true
     (Lint.contains (Diag.legacy d) "boolean not is")
 
+(* `Map.empty` and `List.empty` as a field default are the literals under
+   another spelling, so the literal is written in their place. Anything
+   else is a guess about the value, and is refused. *)
+let test_empty_default_becomes_a_literal () =
+  let (fixed, _) =
+    fix "type App(name: String, env: Map String = Map.empty)\nApp(name = \"a\")\n" in
+  Alcotest.(check string) "a map"
+    "type App(name: String, env: Map String = {})\nApp(name = \"a\")\n" fixed;
+  let (fixed, _) =
+    fix "type App(name: String, xs: List Int = List.empty)\nApp(name = \"a\")\n" in
+  Alcotest.(check string) "a list"
+    "type App(name: String, xs: List Int = [])\nApp(name = \"a\")\n" fixed;
+  ignore (refuse
+    "import List\ntype App(name: String, xs: List Int = List.reverse [])\n1\n")
+
+(* A value piped into `inspect!` has nowhere to go, and `inspect_with!` is
+   the same call with stdin. The module is renamed as it was written. *)
+let test_piped_inspect_takes_input () =
+  let (fixed, applied) =
+    fix "uses {Shell(cat)}\n\nimport Shell\n\nlet main! () = \"x\" |> Shell.inspect! $*(cat)\n" in
+  Alcotest.(check string) "renamed"
+    "uses {Shell(cat)}\n\nimport Shell\n\nlet main! () = \"x\" |> Shell.inspect_with! $*(cat)\n"
+    fixed;
+  Alcotest.(check (list string)) "via the E-TYPE fix" ["E-TYPE"] (codes applied);
+  let (fixed, _) =
+    fix "uses {Shell(cat)}\n\nlet S = import Shell\n\nlet main! () = \"x\" |> S.inspect! $*(cat)\n" in
+  Alcotest.(check string) "under an alias"
+    "uses {Shell(cat)}\n\nlet S = import Shell\n\nlet main! () = \"x\" |> S.inspect_with! $*(cat)\n"
+    fixed
+
 let () =
   Alcotest.run "fix" [
     "manifest", [
@@ -191,5 +221,10 @@ let () =
     "refusals", [
       Alcotest.test_case "parse error"    `Quick test_refuses_parse_error;
       Alcotest.test_case "type error"     `Quick test_refuses_unfixable_type_error;
+    ];
+    "errors that say the fix", [
+      Alcotest.test_case "an empty default" `Quick
+        test_empty_default_becomes_a_literal;
+      Alcotest.test_case "a piped inspect!" `Quick test_piped_inspect_takes_input;
     ];
   ]

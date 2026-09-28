@@ -2941,7 +2941,7 @@ and eval_binop (env : env) op a b : value =
      | _ -> raise (EvalError "'||' requires bools"))
   | "|>" ->
     let va = eval env a in
-    (match b with
+    (match Ast.strip_located b with
      | RunCmd (e, allow) ->
        let cmd = command_line env e allow "$(…)" in
        let stdin = to_text va in

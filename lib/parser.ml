@@ -1180,7 +1180,9 @@ let rec expr_ bp s =
 
 and infix_ left op s =
   match op with
-  | Token.PipeArrow  -> BinOp ("|>", left, expr_ 10 s)
+  (* Located, so an error about the stage -- and a `--fix` of it -- can
+     point at the stage and not at the start of the pipeline. *)
+  | Token.PipeArrow  -> BinOp ("|>", left, locate s (fun () -> expr_ 10 s))
   | Token.DoubleColon -> BinOp ("::", left, expr_ 14 s)
   (* `:` was cons until 0.31.0. It is a type now, and a type does not
      belong between two expressions, so the correction is the whole
@@ -2593,6 +2595,7 @@ let looks_like_manifest s =
 let parse_program_generic ~on_item tokens =
   let s = make tokens in
   let items = ref [] in
+  let item_lines = ref [] in
   let docs  = ref [] in
   let manifest = ref None in
   let pending_doc : string option ref = ref None in
@@ -2901,10 +2904,12 @@ let parse_program_generic ~on_item tokens =
       let last_loc = if s.pos > 0 then snd s.tokens.(s.pos - 1) else start_loc in
       previous_item := Some (start_loc.Token.col, last_loc.Token.line);
       check_bindings bound start_loc (List.nth !items (List.length !items - 1));
+      item_lines := !item_lines @ [start_loc.Token.line];
       on_item start_loc last_loc
     end
   done;
-  { Ast.items = !items; docs = !docs; manifest = !manifest }
+  { Ast.items = !items; item_lines = !item_lines; docs = !docs;
+    manifest = !manifest }
 
 let parse_program tokens = parse_program_generic ~on_item:(fun _ _ -> ()) tokens
 

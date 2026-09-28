@@ -910,6 +910,16 @@ let fail_at_opt (loc : Token.loc option) msg =
 let loc_of_expr (e : expr) : Token.loc option =
   match e with Located (l, _) -> Some l | _ -> None
 
+(* `M.name` as the module and the name, however the parser built it. *)
+let module_member (e : expr) : (string * string) option =
+  match strip_located e with
+  | Field (m, name) ->
+    (match strip_located m with
+     | Var m | Constr m -> Some (m, name)
+     | _ -> None)
+  | Qualified (m, Var name) -> Some (m, name)
+  | _ -> None
+
 (* The two types that did not fit, raised by the one case below that has
    nothing better to say. `unify` turns it into a message: which of the two
    the reader expected is known at the call site, not here. Every other
@@ -1193,7 +1203,25 @@ let foreign_member_hint ns member =
 let discovery_hint =
   " -- 'wand d' lists the modules, 'wand d List' one module's members"
 
+(* Each name bound below the point the check is at, with the line that binds
+   it: the top-level items after the one being checked, and the local lets
+   after the one whose value is being checked. A name used above its
+   definition is unbound where it is used, and the fix is to move the
+   definition up, not to guess another name. *)
+let defined_below : (string * int) list ref = ref []
+
+let with_defined_below names f =
+  let saved = !defined_below in
+  defined_below := names @ saved;
+  Fun.protect ~finally:(fun () -> defined_below := saved) f
+
 let unbound_message name (env : env) =
+  match List.assoc_opt name !defined_below with
+  | Some line ->
+    Printf.sprintf
+      "'%s' is defined below, at line %d. Move the definition above its \
+       first use" name line
+  | None ->
   let hint = match foreign_name_hint name with
     | Some h -> " -- " ^ h
     | None ->
@@ -3189,6 +3217,30 @@ let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : string option 
 
 let is_import_expr e = match strip_located e with ImportExpr _ -> true | _ -> false
 
+(* The line an expression starts on, from the first location inside it. *)
+let rec first_line e =
+  match e with
+  | Located (l, _) -> Some l.Token.line
+  | Fn (_, body) | Annot (_, body) -> first_line body
+  | _ -> None
+
+(* The names the lets after this one bind, each with the line its value
+   starts on. *)
+let rec binders_below e =
+  match e with
+  | Located (_, e) -> binders_below e
+  | Let (p, e1, e2, _) ->
+    (match first_line e1 with
+     | Some line -> List.map (fun n -> (n, line)) (Ast.pat_names p)
+     | None -> [])
+    @ binders_below e2
+  | LetRec (bindings, e2, _) ->
+    List.filter_map (fun (n, _, body) ->
+      Option.map (fun line -> (n, line)) (first_line body)) bindings
+    @ binders_below e2
+  | Seq (_, e2) -> binders_below e2
+  | _ -> []
+
 let rec infer tenv (env : env) (e : expr) : typ =
   match e with
   | Int _      -> TInt
@@ -3412,16 +3464,18 @@ let rec infer tenv (env : env) (e : expr) : typ =
        performs latent;
        tr))
   | Let (p, e1, e2, _) ->
+    let below = binders_below e2 in
     (match p, e1 with
      | PVar name, Fn _ ->
        let placeholder = fresh () in
        let env_rec = (name, Mono placeholder) :: env in
-       let t1 = with_current_fn name (fun () -> infer tenv env_rec e1) in
+       let t1 = with_defined_below below (fun () ->
+         with_current_fn name (fun () -> infer tenv env_rec e1)) in
        unify placeholder t1;
        record_local name t1;
        infer tenv ((name, generalize env t1) :: env) e2
      | _ ->
-       let t1     = infer tenv env e1 in
+       let t1     = with_defined_below below (fun () -> infer tenv env e1) in
        (match p, e1 with
         | Wild, Located (loc, _) ->
           wild_let_types := (loc, t1) :: !wild_let_types
@@ -4520,8 +4574,62 @@ and infer_binop tenv (env : env) op a b : typ =
     unify (infer tenv env b) TBool;
     TBool
   | "|>" ->
+    (* `f a b |> g` pipes the whole call, not `b`. A reader who meant
+       `f a (b |> g)` sees a type error with no pipe in it, so the error
+       says how the line is read. Found by an LLM writing plimsoll. *)
+    let whole_call =
+      "`|>` takes the whole call on its left as its input, not the call's \
+       last argument. To pipe only that argument, put it and the `|>` in \
+       brackets: `f a (b |> g)`"
+    in
+    let with_hint msg =
+      if Diag.contains msg whole_call then msg else msg ^ ". " ^ whole_call in
+    (* Only an error at the call itself: one inside an argument, a lambda
+       body say, is about that argument and not about the pipe. *)
+    let at_the_call (loc : Token.loc) =
+      match a with
+      | Located (l, _) -> l.Token.line = loc.Token.line && l.Token.col = loc.Token.col
+      | _ -> false
+    in
+    let explained f =
+      match strip_located a with
+      | App _ ->
+        (try f () with
+         | TypeError msg -> raise (TypeError (with_hint msg))
+         | TypeErrorAt (loc, msg) when at_the_call loc ->
+           raise (TypeErrorAt (loc, with_hint msg)))
+      | _ -> f ()
+    in
+    (* `Shell.inspect! cmd` is a String, not a function, so the value piped
+       into it has nowhere to go. `inspect_with!` is the form that takes
+       stdin. *)
+    (match strip_located b with
+     | App (head, _) ->
+       (match module_member head with
+        | Some (m, "inspect!") ->
+          (* Flagged on the name alone, so `--fix` can rename it. The name
+             carries no location of its own, but the call starts with it. *)
+          let name = m ^ ".inspect!" in
+          let n = String.length name in
+          let at_name =
+            match loc_of_expr head, loc_of_expr b with
+            | Some l, _ | None, Some l ->
+              Some { l with Token.end_line = l.Token.line;
+                            end_col = l.Token.col + n;
+                            end_offset = l.Token.offset + n }
+            | None, None -> None
+          in
+          pending_fix := Some (Diag.Replace
+            { from_ = name; to_ = m ^ ".inspect_with!" });
+          fail_at_opt at_name
+            "`Shell.inspect!` takes no input. To send the piped value to \
+             the command's stdin, write \
+             `x |> Shell.inspect_with! $*(...)`"
+        | _ -> ())
+     | _ -> ());
+    explained @@ fun () ->
     let ta = infer tenv env a in
-    (match b with
+    (match strip_located b with
      (* A value piped into a command runs the command all the same, so it
         performs what the command does on its own. These two recorded
         nothing: `x |> $(cat)` in a file whose manifest was `uses {IO}`
@@ -6124,17 +6232,37 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     | TLType (Variants (_, _, ctors), _) ->
       List.iter (fun c ->
         List.iter (fun (fname, e) ->
-          if not (Ast.is_written_value e) then
-            fail_at_opt (loc_of_expr e) (Printf.sprintf
-              "the default for field '%s' of '%s' has to be a value written \
-               out: a literal, or a constructor applied to literals. It is \
-               read with nothing in scope, so it says the same thing at \
-               every construction that leaves the field out" fname c.name);
           let declared =
             match List.find_opt (fun (dn, _) -> dn = Some fname) c.fields with
             | Some (_, te) -> type_of_te te
             | None -> fresh ()
           in
+          (* `Map.empty` is the default people write, and it is a call. The
+             literal is the answer, so the message says what it is. *)
+          if not (Ast.is_written_value e) then begin
+            (* `Map.empty` and `List.empty` are the literals' values under
+               another spelling, so `--fix` writes the literal. *)
+            (match module_member e with
+             | Some (m, "empty") ->
+               (match repr declared with
+                | TMap _ ->
+                  pending_fix := Some (Diag.Replace
+                    { from_ = m ^ ".empty"; to_ = "{}" })
+                | TList _ ->
+                  pending_fix := Some (Diag.Replace
+                    { from_ = m ^ ".empty"; to_ = "[]" })
+                | _ -> ())
+             | _ -> ());
+            fail_at_opt (loc_of_expr e) (Printf.sprintf
+              "the default for field '%s' of '%s' has to be a value written \
+               out: a literal, or a constructor applied to literals. It is \
+               read with nothing in scope, so it says the same thing at \
+               every construction that leaves the field out%s" fname c.name
+              (match repr declared with
+               | TMap _ -> ". An empty map is `{}`"
+               | TList _ -> ". An empty list is `[]`"
+               | _ -> ""))
+          end;
           let got = infer tenv (tenv_to_ctor_env tenv) e in
           (try unify_expected ~expected:declared ~got
            with TypeError why ->
@@ -6144,10 +6272,34 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
         ) c.defaults) ctors
     | _ -> ()) prog.items;
   let item_index = ref (-1) in
+  (* What each item binds, with its line, for `defined_below`. A program
+     built without lines gives none, and the message is the plain one. *)
+  let item_binders =
+    if List.length prog.item_lines <> List.length prog.items then
+      List.map (fun _ -> []) prog.items
+    else
+      List.map2 (fun item line ->
+        let names = match item with
+          | TLLet (n, _, _) -> [n]
+          | TLLetRec bindings -> List.map (fun (n, _, _) -> n) bindings
+          | TLLetPat (p, _) -> Ast.pat_names p
+          | _ -> []
+        in
+        List.map (fun n -> (n, line)) names) prog.items prog.item_lines
+  in
+  (* For each item, what the items after it bind. *)
+  let below_each =
+    Array.of_list
+      (List.tl (List.fold_right (fun b acc -> (b @ List.hd acc) :: acc)
+                  item_binders [[]]))
+  in
+  let saved_below = !defined_below in
   let (env, last_t) =
+  Fun.protect ~finally:(fun () -> defined_below := saved_below) @@ fun () ->
   List.fold_left (fun (env, last_t) item ->
     incr item_index;
     current_item := !item_index;
+    defined_below := below_each.(!item_index);
     match item with
     | TLLet (_, [], body) when is_import_expr body ->
       (env, last_t)  (* pre-loaded by load_imports_for *)

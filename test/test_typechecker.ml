@@ -2344,6 +2344,39 @@ let test_a_member_cannot_leave_its_effects_open () =
   (* A member performing nothing says nothing. *)
   iface_ok "interface Plain(name: Unit -> String)\n\nlet f (m: Plain) = m\n\nf\n"
 
+(* Four errors that gave the types and not the fix. An LLM writing plimsoll
+   met each one, and each now says what to write (issue #37). *)
+let test_errors_say_the_fix () =
+  (* A name used above the line that defines it. *)
+  err_contains "used before a top-level definition"
+    "let f x = g x\nlet g x = x + 1\nf 1"
+    "'g' is defined below, at line 2. Move the definition above its first use";
+  err_contains "used before a local definition"
+    "let h u =\n  let a = b\n  let b = u\n  a\nh 1"
+    "'b' is defined below, at line 3";
+  err_contains "defined nowhere is still unbound"
+    "let f x = zzz x\nf 1" "unbound variable 'zzz'";
+  (* `|>` after a call pipes the whole call. *)
+  err_contains "a pipe after a call"
+    "import List\nlet n = List.length [[1]] |> List.map (fn x -> x)"
+    "`|>` takes the whole call on its left as its input";
+  (match run "import List\nlet n = List.map (fn x -> x + \"s\") [1] |> List.length" with
+   | Error msg when contains msg "whole call" ->
+     Alcotest.failf "an error inside a lambda is not about the pipe: %s" msg
+   | _ -> ());
+  (* A default that is not a literal. *)
+  err_contains "a map default"
+    "import Map\ntype App(name: String, env: Map String = Map.empty)\n1"
+    "An empty map is `{}`";
+  err_contains "a list default"
+    "import List\ntype App(name: String, xs: List Int = List.empty)\n1"
+    "An empty list is `[]`";
+  (* Input piped into a command that takes none. *)
+  err_contains "a pipe into inspect!"
+    "import Shell\nlet main! () = \"x\" |> Shell.inspect! $*(cat)"
+    "`Shell.inspect!` takes no input. To send the piped value to the \
+     command's stdin, write `x |> Shell.inspect_with! $*(...)`"
+
 let () =
   Alcotest.run "Typechecker" [
     "shared", [
@@ -2510,5 +2543,8 @@ let () =
         test_a_type_declaration_ends_with_its_line;
       Alcotest.test_case "derived decoder types"     `Quick test_derived_decoder_has_the_type;
       Alcotest.test_case "generic derivation"        `Quick test_generic_derivation;
+    ];
+    "errors say the fix", [
+      Alcotest.test_case "four errors from issue 37" `Quick test_errors_say_the_fix;
     ];
   ]

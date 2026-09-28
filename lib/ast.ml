@@ -545,6 +545,9 @@ type top_item =
 
 type program = {
   items : top_item list;
+  (* The line each item starts on, in the order of `items`. The typechecker
+     reads it to say where a name that is used too early is defined. *)
+  item_lines : int list;
   docs  : (string * string) list;  (* name -> doc string *)
   (* `uses {Shell, FS.Write}`, when the file declares one. Syntactically the
      first item, so a reader knows the bound without searching. Each label
