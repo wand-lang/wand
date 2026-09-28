@@ -1,17 +1,29 @@
-## 0.91.1 - 2026-09-28
+## 0.91.2 - 2026-09-28
 
-A long list of values no longer hides the value that was wrong.
+`wand f` opens a `then` block on the `then` line when the `if` has an `else`.
 
 ### Fixed
 
-- **A long list of values no longer hides the value that was wrong.** When
-  a document has a value that an enum does not have, the error lists the
-  values the enum has. For a large enum, the value that was received was
-  lost at the end of a very long line. Now, when there are more than five
-  values, the error shows the count and the first five:
+- **`wand f` opens a `then` block on the `then` line when the `if` has an
+  `else`.** Before, the `(` went on a line of its own:
 
   ```
-  .stopSignal: expected one of 65 values (SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCLD, …), got "SIGNEW"
+  if List.empty? found then
+    (
+      IO.println_err
+        "no module under k8s/ names the group-versions it came from; run gen first";
+      Proc.exit 2
+    )
+  else found
   ```
 
-  An enum with five values or fewer still lists all of them.
+  Now it is written the same way as an `if` with no `else`:
+
+  ```
+  if List.empty? found then (
+    IO.println_err
+      "no module under k8s/ names the group-versions it came from; run gen first";
+    Proc.exit 2
+  )
+  else found
+  ```
