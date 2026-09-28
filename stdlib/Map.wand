@@ -95,6 +95,15 @@ let values m = map_values m
 -- 2 : Int
 let size m = map_size m
 
+-- Return true if the map has no entries.
+--
+-- >> Map.empty? {}
+-- true : Bool
+--
+-- >> Map.empty? {a = 1}
+-- false : Bool
+let empty? m = map_size m == 0
+
 -- Return the map as a list of (key, value) tuples, in the order the keys
 -- were added. `List.sort_by` on the result gives key order.
 --

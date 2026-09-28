@@ -82,6 +82,12 @@ let tail [_ :: t] = Some t
 -- [2, 3] : List Int
 let tail! [_ :: t] = t
 
+-- An empty list. `[]` is the same value written as a literal.
+--
+-- >> List.empty
+-- [] : List 'a
+let empty = []
+
 -- Return true if the list is empty.
 --
 -- >> List.empty? []

@@ -1056,6 +1056,7 @@ Map.delete "x" m   -- {y = 2, z = 3}
 Map.keys   m       -- ["x", "y", "z"]
 Map.values m       -- [1, 2, 3]
 Map.size   m       -- 3
+Map.empty? m       -- false
 Map.to_list m      -- [("x", 1), ("y", 2), ("z", 3)]
 Map.from_list [("a", 1), ("b", 2)]   -- {a = 1, b = 2}
 Map.map    (fn x -> x * 2) m         -- {x = 2, y = 4, z = 6}
@@ -4156,6 +4157,7 @@ head       : List 'a -> Option 'a
 head!      : List 'a -> 'a ! {Raise}
 tail       : List 'a -> Option (List 'a)
 tail!      : List 'a -> List 'a ! {Raise}
+empty      : List 'a
 empty?     : List 'a -> Bool
 any?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
 all?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
@@ -4365,6 +4367,7 @@ has?      : String -> Map 'a -> Bool
 keys      : Map 'a -> List String
 values    : Map 'a -> List 'a
 size      : Map 'a -> Int
+empty?    : Map 'a -> Bool
 to_list   : Map 'a -> List (String, 'a)
 from_list : List (String, 'a) -> Map 'a
 merge     : Map 'a -> Map 'a -> Map 'a
