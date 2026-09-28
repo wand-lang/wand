@@ -2,17 +2,20 @@ uses {FS.Read}
 
 import FS
 
--- Reading YAML: Kubernetes manifests, docker-compose files, GitHub Actions
--- workflows.
+-- Reading and writing YAML: Kubernetes manifests, docker-compose files,
+-- GitHub Actions workflows.
 --
--- The questions this is for read a document, pull a few fields and report:
--- does every Deployment set resource limits, is any image pinned to
--- `:latest`, which workflows still run on an unsupported runner. None of
--- them rewrites the file, and this module cannot: there is no `stringify`
--- to pair with `JSON`'s and `TOML`'s. Emitting YAML means choosing among
--- many equivalent spellings, and the one job that would want it -- editing
--- a workflow in place -- needs the comments and the layout kept, which is a
--- different data structure and a different tool.
+-- `of` and `stringify` write a new document from a value, as `JSON.of` and
+-- `JSON.stringify` do. They do not edit a file in place: a document that is
+-- read and written again loses its comments and its layout.
+--
+-- YAML can spell one value in many ways, and `stringify` always picks the
+-- same one: block style, two spaces for each level, and a sequence under
+-- its key indented under it. A string is written without quotes only when
+-- no YAML reader can read it as something else. Other strings are in
+-- double quotes. That includes the YAML 1.1 words `yes`, `no`, `on`, `off`,
+-- `y` and `n`, because some readers, kubectl among them, read those as
+-- booleans.
 --
 -- Scalars are read against the **YAML 1.2 core schema**, not 1.1. A
 -- workflow's `on:` is the string `"on"` and not the boolean true; a compose
@@ -29,6 +32,44 @@ import FS
 -- Helm charts are not YAML. A chart's templates are Go templates that
 -- happen to produce it, so read the output of `helm template` rather than
 -- the chart.
+
+-- Any value as YAML, as `JSON.of` writes it: a record's fields by their
+-- keys, a constructor by its spelling, and a field that holds `None` left
+-- out. A function, a resource or a stream is an `Error`.
+--
+-- >> YAML.of {name = "web"} |> Result.map YAML.stringify
+-- Ok("name: web\n") : Result String String
+let of v = yaml_of v
+
+-- Any value as YAML. Raises on what cannot be written.
+--
+-- >> YAML.stringify (YAML.of! {replicas = 3})
+-- "replicas: 3\n" : String
+let of! v = yaml_of_exn v
+
+-- A JSON value as YAML. The two hold the same tree, so this cannot fail:
+-- use it for what an encoder gives, such as `T.encoder x`.
+--
+-- >> YAML.stringify (YAML.of_json (JSON.parse! `{"port": 80}`))
+-- "port: 80\n" : String
+let of_json j = yaml_of_json j
+
+-- One document as YAML text, ending with a newline. A string that a YAML
+-- reader could read as a boolean, a number or a null is quoted.
+--
+-- >> YAML.stringify (YAML.of! {name = "web", enabled = "yes", port = "8080"})
+-- "name: web\nenabled: \"yes\"\nport: \"8080\"\n" : String
+--
+-- >> YAML.stringify (YAML.of! {ports = [80, 443]})
+-- "ports:\n  - 80\n  - 443\n" : String
+let stringify y = yaml_stringify y
+
+-- Several documents in one stream, with `---` between them: the form of a
+-- manifest file that holds more than one object.
+--
+-- >> YAML.stringify_all [YAML.of! {kind = "Service"}, YAML.of! {kind = "Deployment"}]
+-- "kind: Service\n---\nkind: Deployment\n" : String
+let stringify_all ys = yaml_stringify_all ys
 
 -- Read one document.
 --

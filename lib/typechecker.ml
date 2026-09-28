@@ -5083,6 +5083,10 @@ let stdlib_type_env : env = [
                       generalize [] ((a @-> TResult (TString, TJson))));
   ("json_of_exn",     let a = fresh () in
                       generalize [] (effs [Effect_set.Raise] (a) (TJson)));
+  ("yaml_of",         let a = fresh () in
+                      generalize [] ((a @-> TResult (TString, TYaml))));
+  ("yaml_of_exn",     let a = fresh () in
+                      generalize [] (effs [Effect_set.Raise] (a) (TYaml)));
   ("json_of_list",      generalize [] ((TList TJson @-> TJson)));
   ("json_of_map",       generalize [] ((TMap TJson @-> TJson)));
   ("json_is_null",      generalize [] ((TJson @-> TBool)));
@@ -5218,6 +5222,9 @@ let stdlib_type_env : env = [
      spellings and the one job that would want it -- editing a workflow in
      place -- needs comments and layout kept, which this does not carry. *)
   ("yaml_parse",         generalize [] ((TString @-> TResult (TString, TYaml))));
+  ("yaml_stringify",     generalize [] ((TYaml @-> TString)));
+  ("yaml_of_json",       generalize [] ((TJson @-> TYaml)));
+  ("yaml_stringify_all", generalize [] ((TList TYaml @-> TString)));
   ("yaml_parse_exn",     generalize [] (effs [Effect_set.Raise] (TString) (TYaml)));
   ("yaml_parse_all",     generalize [] ((TString @-> TResult (TString, (TList TYaml)))));
   ("yaml_parse_all_exn", generalize [] (effs [Effect_set.Raise] (TString) ((TList TYaml))));

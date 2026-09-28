@@ -6617,6 +6617,15 @@ let stdlib_eval_env : env = [
        | Ok ys     -> VList (List.map (fun y -> VYaml y) ys)
        | Error msg -> raise (EvalError ("yaml_parse_all: " ^ msg)))
     | _ -> raise (EvalError "yaml_parse_all_exn: expected String")));
+  ("yaml_stringify", VBuiltin (function
+    | VYaml y -> VString (Yaml_out.document y)
+    | _ -> raise (EvalError "yaml_stringify: expected YAML")));
+  ("yaml_stringify_all", VBuiltin (function
+    | VList ys ->
+      VString (Yaml_out.documents (List.map (function
+        | VYaml y -> y
+        | _ -> raise (EvalError "yaml_stringify_all: expected a list of YAML")) ys))
+    | _ -> raise (EvalError "yaml_stringify_all: expected a list of YAML")));
   ("yaml_is_mapping", VBuiltin (function
     | VYaml (`Assoc _) -> VBool true | VYaml _ -> VBool false
     | _ -> raise (EvalError "yaml_is_mapping: expected YAML")));
@@ -7986,6 +7995,18 @@ let serialise_builtins : env = [
     | j -> VConstr (Ctor.Builtin "Ok", [VJson j])
     | exception EvalError m -> VConstr (Ctor.Builtin "Error", [VString m])));
   ("json_of_exn", VBuiltin (fun v -> VJson (json_of_value v)));
+  (* A YAML document holds the same tree a JSON one does, so a value is
+     written as YAML the way `JSON.of` writes it: keys, spellings, and a
+     field holding None left out. *)
+  ("yaml_of", VBuiltin (fun v ->
+    match json_of_value v with
+    | j -> VConstr (Ctor.Builtin "Ok", [VYaml j])
+    | exception EvalError m -> VConstr (Ctor.Builtin "Error", [VString m])));
+  ("yaml_of_exn", VBuiltin (fun v -> VYaml (json_of_value v)));
+  (* The two hold the same tree, so this cannot fail. *)
+  ("yaml_of_json", VBuiltin (function
+    | VJson j -> VYaml j
+    | _ -> raise (EvalError "yaml_of_json: expected JSON")));
   ("toml_of", VBuiltin (fun v ->
     match toml_document v with
     | t -> VConstr (Ctor.Builtin "Ok", [VToml t])

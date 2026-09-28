@@ -2,6 +2,7 @@ uses {FS.Read, FS.Write}
 
 import Decode
 import FS
+import JSON
 import List
 import Map
 import Path
@@ -165,4 +166,114 @@ group "out of range numbers" (fn () -> [
     t.eq true (Result.error? (YAML.parse_all "a: 1\n---\nb: .inf"))),
   test "a number in range still reads" (fn t ->
     t.eq (Ok 1.5) (YAML.parse! "a: 1.5" |> YAML.field! "a" |> YAML.get_float))
+])
+
+-- ── Writing ─────────────────────────────────────────────────────────────
+
+-- Strings that a YAML reader could read as something else, or that hold a
+-- character YAML gives a meaning to.
+let special_words =
+  List.flatten
+    (List.map (fn w -> [
+      w,
+      String.upper w,
+      String.upper (String.slice 0 1 w) ++ String.slice 1 (String.length w) w
+    ]) [
+      "true",
+      "false",
+      "yes",
+      "no",
+      "on",
+      "off",
+      "y",
+      "n",
+      "null",
+      "~",
+      ".inf",
+      "-.inf",
+      ".nan"
+    ])
+
+let number_like = [
+  "0",
+  "1",
+  "-1",
+  "+1",
+  "1.10",
+  ".5",
+  "1e3",
+  "0x1F",
+  "0o17",
+  "1_000",
+  "12:30",
+  "2026-09-28",
+  "1.0"
+]
+
+-- Every printable ASCII character, one to a string.
+let ascii =
+  ` !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_abcdefghijklmnopqrstuvwxyz{|}~`
+
+let printable =
+  "`" :: List.map (fn i -> String.slice i (i + 1) ascii) (List.range 0 (String.length ascii))
+
+let around c = [c, "a" ++ c, c ++ "a", "a" ++ c ++ "b", "a " ++ c ++ " b"]
+
+let odd_space = [
+  "",
+  " ",
+  "  x",
+  "x ",
+  "a  b",
+  "\t",
+  "a\tb",
+  "line1\nline2",
+  "\n",
+  "é",
+  "日本",
+  "a: b",
+  "a #b",
+  "- x",
+  "? x"
+]
+
+let tricky = List.flatten [
+  special_words,
+  number_like,
+  List.flatten (List.map around printable),
+  odd_space
+]
+
+let round_trip! y = YAML.parse! (YAML.stringify y)
+
+group "writing YAML" (fn () -> [
+  test "every tricky string reads back as itself, as a value" (fn t ->
+    let y =
+      YAML.of! (Map.from_list (List.map (fn (i, s) -> ("k%{i}", s)) (List.indexed tricky)));
+    t.eq y (round_trip! y)),
+  test "and as a key" (fn t ->
+    let y = YAML.of! (Map.from_list (List.map (fn s -> (s, "v")) tricky));
+    t.eq y (round_trip! y)),
+  test "an Int stays an Int" (fn t ->
+    let y = YAML.of! [0, -1, 4611686018427387903];
+    t.eq y (round_trip! y)),
+  test "a Float stays a Float, a whole one too" (fn t ->
+    let y = YAML.of! [1.0, 0.5, -2.5, 123456789012.25];
+    t.eq y (round_trip! y)),
+  test "nesting, and empty lists and maps" (fn t ->
+    let y = YAML.of! [{a = [[1, 2], [], [3]]}, {a = [[]]}];
+    t.eq y (round_trip! y)),
+  test "a list of maps puts the first key on the dash's line" (fn t ->
+    t.eq
+      "- name: web\n  image: nginx\n- name: side\n  image: busybox\n"
+      (YAML.stringify
+        (YAML.of! [{name = "web", image = "nginx"}, {name = "side", image = "busybox"}]))),
+  test "several documents" (fn t ->
+    let ys = [YAML.of! {kind = "Service"}, YAML.of! {kind = "Deployment"}];
+    t.eq ys (YAML.parse_all! (YAML.stringify_all ys))),
+  test "of_json keeps the JSON tree" (fn t ->
+    let j = JSON.parse! `{"a": [1, 2.5, "yes", null, {"b": true}]}`;
+    t.eq (YAML.of! j) (YAML.of_json j)),
+  test "a bare value is a document too" (fn t ->
+    t.eq "\"yes\"\n" (YAML.stringify (YAML.of! "yes")))
 ])

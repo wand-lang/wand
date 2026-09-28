@@ -2723,8 +2723,8 @@ type Props(ref "$ref": Option String = None, list_type "x-kubernetes-list-type":
 ```
 
 The derived decoder reads the field from that key, and the derived encoder,
-`JSON.of` and `TOML.of` write it there. `TOML.decode` and `YAML.decode` read
-it too; wand writes no YAML. A field with no key is read and written by its
+`JSON.of`, `TOML.of` and `YAML.of` write it there. `TOML.decode` and
+`YAML.decode` read it too. A field with no key is read and written by its
 name, as before.
 
 The key is for documents only. In wand code the field is its name:
@@ -2764,7 +2764,7 @@ type Operation = All "*" | CREATE
 
 wand reads `"None"` as `DnsPolicy.None_`, and writes `DnsPolicy.None_` as
 `"None"`. This applies to the derived decoder and encoder, `JSON.of`,
-`TOML.of`, `TOML.decode`, `YAML.decode`, `CSV.rows` and the values of
+`TOML.of`, `YAML.of`, `TOML.decode`, `YAML.decode`, `CSV.rows` and the values of
 command-line flags. In your code you still write `DnsPolicy.None_`, in
 patterns too. A constructor with no spelling of its own is spelled as its
 name.
@@ -5544,12 +5544,34 @@ get_mapping    : YAML -> Result String (Map YAML)
 field          : String -> YAML -> Result String YAML
 field!         : String -> YAML -> YAML ! {Raise}
 decode         : Decoder 'a -> YAML -> Result String 'a
+of             : 'a -> Result String YAML
+of!            : 'a -> YAML ! {Raise}
+of_json        : JSON -> YAML
+stringify      : YAML -> String
+stringify_all  : List YAML -> String
 ```
 
-**Reading only.** There is no `stringify` and no `of` to pair with `JSON`'s
-and `TOML`'s. Emitting YAML means choosing among many equivalent spellings,
-and the one job that would want it — editing a workflow in place — needs the
-comments and the layout kept, which is a different data structure.
+**Writing makes a new document.** `YAML.of` turns a value into YAML as
+`JSON.of` does: a record's fields by their keys, a constructor by its
+spelling, and a field that holds `None` left out. `stringify` writes one
+document, and `stringify_all` writes several with `---` between them, the
+form of a manifest file. `YAML.of_json` takes a JSON value, such as what an
+encoder gives, and cannot fail:
+
+```ocaml
+FS.write_file! ./deploy.yaml (YAML.stringify_all [YAML.of_json (Service.encoder s), YAML.of_json (Deployment.encoder d)])
+```
+
+Writing does not edit a file in place. A document that is read and written
+again loses its comments and its layout.
+
+**One spelling for each value.** YAML can write a value in many ways, and
+`stringify` always writes the same one: block style, two spaces for each
+level, and a sequence indented under its key. A string has no quotes only
+when no YAML reader can read it as something else; other strings are in
+double quotes. That includes the YAML 1.1 words `yes`, `no`, `on`, `off`,
+`y` and `n`, because kubectl and other 1.1 readers read those as booleans.
+A whole `Float` keeps its `.0`, so `1.0` reads back as a `Float`.
 
 **Scalars follow the YAML 1.2 core schema.** That is what these three rows
 turn on, and each one is a real file read wrongly under 1.1:
