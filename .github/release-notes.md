@@ -1,40 +1,27 @@
-## 0.89.0 - 2026-09-27
+## 0.90.0 - 2026-09-27
 
-A field may name its key in a document.
+`Shell.inspect_with` sends input to a command that only reads.
 
 ### Added
 
-- **A field may name its key in a document.** Write the key between the
-  field's name and its type when the document spells it in a way a field
-  name cannot be:
+- **`Shell.inspect_with!` and `Shell.inspect_with` send input to a command
+  that only reads.** They are `inspect!` and `inspect` with text for the
+  command's stdin, in the way that `input |> $(cmd)` writes it. A rehearsal
+  runs them, and the line says `ran (inspect): ...`:
 
   ```
-  type DaemonEndpoint(port "Port": Int)
-  type Props(ref "$ref": Option String = None, list_type "x-kubernetes-list-type": Option String = None)
+  let stored =
+    json |> Shell.inspect_with! $*(kubectl apply --server-side --dry-run=server -o json -f -)
   ```
 
-  The derived decoder reads the field from the key, and the derived
-  encoder, `JSON.of` and `TOML.of` write it there. `TOML.decode` and
-  `YAML.decode` read it too; wand writes no YAML. In wand code the field is
-  its name: `DaemonEndpoint(port = 10250)`, `e.port`. A command line reads a
-  flag by the field's name (`--port`). An error names the key: `.Port: no
-  such field`.
+  Before, a command that reads its input from stdin could not be run with
+  `inspect`. A server-side dry run was run with `$(...)`, so a rehearsal
+  withheld it and gave `""`, and the script stopped at the first step that
+  read the result.
 
-  Before, one key that a field name cannot be cost the type its derived
-  decoder and encoder, and every type that held it.
+### Changed
 
-  Two fields of one constructor cannot read one key, written or implied by
-  a field's name:
-
-  ```
-  type A(port "x": Int, x: Int)
-  -- fields 'port' and 'x' of 'A' both read the key "x" in a document;
-  -- give one of them another key
-  ```
-
-### Fixed
-
-- **`TOML.of` writes a sum** as `JSON.of` does: the word for a bare
-  constructor (`pull = "Never"`), the value for one that holds one
-  (`maxSurge = "25%"`). Before, it refused one with "it has no named
-  fields".
+- **V-SHELL3 accepts a kubectl dry run.** A kubectl command with
+  `--dry-run=server` or `--dry-run=client` stores nothing, whatever its
+  verb, so `Shell.inspect!` can run `kubectl apply --dry-run=server`.
+  `--dry-run=none` is a real run and is still a violation.
