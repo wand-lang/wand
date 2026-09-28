@@ -393,8 +393,23 @@ let interface_entry line =
 
 type change = Removed of string | Changed of string * string | Added of string
 
+(* The entries of an interface, one for each name. A record whose fields do
+   not fit on one line is one entry of several lines: the code gives it as
+   one string with newlines in it, and wand.pkg, read back, as one line for
+   each. A line that opens with a space or with `)` continues the entry
+   above it, so both come to the same entries. *)
+let entries lines =
+  let continues l = l <> "" && (l.[0] = ' ' || l.[0] = ')') in
+  List.fold_left (fun acc l ->
+    match acc with
+    | prev :: rest when continues l -> (prev ^ "\n" ^ l) :: rest
+    | _ -> l :: acc) []
+    (List.concat_map (String.split_on_char '\n') lines)
+  |> List.rev
+
 let changes ~before ~after =
-  let b = List.map interface_entry before and a = List.map interface_entry after in
+  let b = List.map interface_entry (entries before)
+  and a = List.map interface_entry (entries after) in
   List.filter_map (fun (name, old) ->
     match List.assoc_opt name a with
     | None -> Some (Removed old)
@@ -504,7 +519,11 @@ let interface ~dir ~check =
     if sections.iface = None then
       fail "wand.pkg has no interface section. Run `wand p interface` and commit it";
     let found = changes ~before:recorded ~after:(List.filter (( <> ) "") lines) in
-    if found <> [] || sections.iface <> Some (render_interface version lines) then
+    (* As text, with no blank lines at the ends: wand.pkg read back has
+       none, and the code can end a group of entries with one. *)
+    let text l = String.trim (String.concat "\n" l) in
+    if found <> []
+       || Option.map text sections.iface <> Some (text (render_interface version lines)) then
       fail (String.concat "\n"
         ("the interface section of wand.pkg does not match the code. Run `wand p interface` \
           and commit the change:"

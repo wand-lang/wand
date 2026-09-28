@@ -448,10 +448,30 @@ let test_bump_rules () =
     (bump ["type m.Algorithm = Sha256 | Sha512"; "m.of : String -> Int ! {IO}"]);
   check "a variant added" Major
     (bump ["type m.Algorithm = Sha256 | Sha512 | Md5"; "m.of : String -> Int"]);
+  (* A record whose fields do not fit on one line: the code gives it as one
+     string, and wand.pkg read back as a line for each field. *)
+  let long = "type m.Pod(\n  name: String,\n  image: String\n)" in
+  let read_back = ["type m.Pod("; "  name: String,"; "  image: String"; ")"] in
+  let bump_long before after = Package_cmd.needed (Package_cmd.changes ~before ~after) in
+  check "a record on several lines, read back" Patch (bump_long read_back [long]);
+  check "and a field of it changed" Major
+    (bump_long read_back ["type m.Pod(\n  name: String,\n  image: Int\n)"]);
   let next last b = Package_cmd.next_version last b in
   Alcotest.(check (list string)) "versions"
     ["0.4.0"; "0.3.2"; "2.0.0"; "1.3.0"; "1.2.4"]
     [next "0.3.1" Major; next "0.3.1" Minor; next "1.2.3" Major; next "1.2.3" Minor; next "1.2.3" Patch]
+
+(* A record whose fields go on several lines passes the check that the
+   section written for it is held to. *)
+let test_interface_with_a_long_record () =
+  let root = fresh_dir () in
+  Package_cmd.init ~dir:root (Some "x.dev/me/pods");
+  write (Filename.concat root "pods.wand")
+    "type Pod(name: String, image: String, replicas: Int = 1, namespace: String = \"default\", labels: Map String = {})\n";
+  Package_cmd.interface ~dir:root ~check:false;
+  Alcotest.(check bool) "the fields went on lines of their own" true
+    (contains (interface_section root) "\n  image: String,\n");
+  Package_cmd.interface ~dir:root ~check:true
 
 let test_interface_and_release () =
   List.iter (fun (k, v) -> Unix.putenv k v)
@@ -631,6 +651,7 @@ let () =
     ];
     "releasing", [
       Alcotest.test_case "the bump rules"      `Quick test_bump_rules;
+      Alcotest.test_case "a long record passes the check" `Quick test_interface_with_a_long_record;
       Alcotest.test_case "sections"            `Quick test_sections;
       Alcotest.test_case "tidy keeps the interface section" `Quick test_tidy_keeps_the_interface_section;
       Alcotest.test_case "interface and release"     `Quick
