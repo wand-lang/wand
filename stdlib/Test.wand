@@ -159,7 +159,10 @@ let with_shell_results mocks thunk =
 let shell_calls thunk =
   handle thunk () with
   | Shell!run cmd k -> (let rest = k ""; cmd :: rest)
-  | Shell!capture cmd k -> (let rest = k ShellResult(stdout = "", stderr = "", code = 0); cmd :: rest)
+  | Shell!capture cmd k -> (
+    let rest = k ShellResult(stdout = "", stderr = "", code = 0);
+    cmd :: rest
+  )
   | return _ -> []
 
 -- Run `thunk` with every write of a file's contents swallowed, returning
@@ -351,5 +354,8 @@ let with_http mocks thunk =
 let http_calls thunk =
   handle thunk () with
   | Net!download arg k -> (let (url, _) = arg; let rest = k (); url :: rest)
-  | Net!http req k -> (let rest = k HTTPResponse(status = 200, headers = {}, body = ""); req.url :: rest)
+  | Net!http req k -> (
+    let rest = k HTTPResponse(status = 200, headers = {}, body = "");
+    req.url :: rest
+  )
   | return _ -> []

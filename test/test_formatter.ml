@@ -1117,6 +1117,32 @@ let test_a_pipeline_aligns_its_stages () =
   assert_contains "the pipe joins them at the same column" out "\n  |> List.filter_map";
   assert_idempotent "a wrapped pipeline" src
 
+(* An arm whose body is an operator chain too wide for the arrow's line.
+   It broke at the arm's indent, so its `|>` sat level with the `|` of the
+   arm. It goes on a line of its own below the arrow, and its operators
+   line up under it. *)
+let test_a_wide_arm_chain_goes_below () =
+  let src =
+    "let f s =\n\
+     \  match s with\n\
+     \  | \"\" -> Ok 0\n\
+     \  | s ->\n\
+     \    String.to_int s\n\
+     \    |> Result.map (fn n -> if n >= 0 then (n * 1000000, 1) else (1, n * 1000000000))\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "a wide arm chain" src;
+  let handle_src =
+    "let f () =\n\
+     \  handle g () with\n\
+     \  | Shell!run cmd k ->\n\
+     \    String.to_int cmd\n\
+     \    |> Result.map (fn n -> if n >= 0 then (n * 1000000, 1) else (1, n * 1000000000))\n"
+  in
+  assert_contains "a handle arm too" (fmt handle_src)
+    "| Shell!run cmd k ->\n    String.to_int cmd\n    |> Result.map";
+  assert_idempotent "a wide handle arm chain" handle_src
+
 let test_blank_lines () =
   let src = "let x = 1\n\n\n\nlet y = 2\nx + y" in
   let out = fmt src in
@@ -2009,6 +2035,7 @@ let () =
       Alcotest.test_case "named field arrow" `Quick test_named_field_arrow_loses_brackets;
       Alcotest.test_case "interface settles" `Quick test_interface_and_implement_settle;
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;
+      Alcotest.test_case "a wide arm chain goes below" `Quick test_a_wide_arm_chain_goes_below;
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
     ];
   ]

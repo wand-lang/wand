@@ -1393,11 +1393,11 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        `->`. Found by test/fuzz. *)
     let emit_arm = function
       | EffectCase (op, p, k, b) ->
-        Doc.text (Printf.sprintf "| %s %s %s -> " op (emit_pat_atom p) k)
-        ^^ emit_case_body arm_indent b
+        let head = Printf.sprintf "| %s %s %s" op (emit_pat_atom p) k in
+        Doc.text head ^^ emit_arm_rest ~col:(arm_indent + String.length head) arm_indent b
       | ReturnCase (p, b) ->
-        Doc.text (Printf.sprintf "| return %s -> " (emit_pat_atom p))
-        ^^ emit_case_body arm_indent b
+        let head = Printf.sprintf "| return %s" (emit_pat_atom p) in
+        Doc.text head ^^ emit_arm_rest ~col:(arm_indent + String.length head) arm_indent b
     in
     (* `with` has to follow the body, so a body that wrapped puts the
        keyword out of the parser's reach. `with ... as` has the same shape,
@@ -2278,6 +2278,23 @@ and case_body_tail e = match strip_located e with
   | If (_, _, els)        -> case_body_tail els
   | e -> e
 
+(* An operator chain too wide for the arrow's line. Started there, it
+   broke at the arm's own indent: the `|>` of its second line sat level
+   with the `|` of the arm, where it read as the start of something else.
+   It takes a line of its own below the arrow instead, two in from the arm,
+   and its operators line up under it. A line that opens with an operator
+   continues the one above, so no bracket is needed. *)
+and arm_body_goes_below ~col indent body =
+  match strip_located body with
+  | BinOp _ -> Doc.has_newline (emit_expr ~col indent body)
+  | _ -> false
+
+(* The arrow and the body of an arm, after the text before the arrow. *)
+and emit_arm_rest ~col indent body =
+  if arm_body_goes_below ~col:(col + 4) indent body then
+    Doc.text " ->\n" ^^ Doc.spaces (indent + 2) ^^ emit_expr (indent + 2) body
+  else Doc.text " -> " ^^ emit_case_body ~col:(col + 4) indent body
+
 and emit_case_body ?col indent body =
   (* A chain of bindings brings the block shape with it -- `emit_block`
      writes the brackets and puts the statements between them -- so it needs
@@ -2363,9 +2380,8 @@ and emit_match ?col indent scr cases =
     in
     (* The body starts after the pattern and the arrow, not at the case's
        indent -- which is the whole of this bug. *)
-    let prefix =
-      ind ^^ Doc.text ("| " ^ emit_pat p) ^^ guard_s ^^ Doc.text " -> " in
-    let text = prefix ^^ emit_case_body ~col:(Doc.width prefix) arm_indent body in
+    let prefix = ind ^^ Doc.text ("| " ^ emit_pat p) ^^ guard_s in
+    let text = prefix ^^ emit_arm_rest ~col:(Doc.width prefix) arm_indent body in
     Doc.concat Doc.empty lead ^^ text
   in
   Doc.text "match " ^^ emit_scrutinee indent scr ^^ Doc.text " with\n"

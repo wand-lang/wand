@@ -37,8 +37,8 @@ let report path name =
   |> Result.and_then (fn rows ->
     match rows with
     | [] -> Error "%{Path.to_string path} is empty"
-    | [header :: body] -> column name header
-    |> Result.map (fn i -> tally (List.tally (values i body))))
+    | [header :: body] ->
+      column name header |> Result.map (fn i -> tally (List.tally (values i body))))
 
 match report ./inventory.csv "owner" with
 | Error why -> (IO.println_err why; Proc.exit 1)
