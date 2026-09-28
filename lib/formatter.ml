@@ -2851,6 +2851,25 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
       | Some t -> t
       | None -> rstrip_ws (String.sub src start_loc.offset (stop - start_loc.offset))
     in
+    (* A function reads every `let` of its own name below it as one more
+       equation, and a newline does not stop it -- only a `;` does. So
+       `let f i = i; let f = t` is a function and then a value that shadows
+       it, and the same two on two lines are one function whose second
+       equation takes no parameters, which is a parse error. The `;` stays.
+       A verbatim slice runs to the next item and already holds it. Found
+       by test/fuzz. *)
+    let text =
+      let shadowed_below name =
+        i + 1 < n
+        && (match items.(i + 1) with
+            | TLLet (next, _, _) -> next = name
+            | _ -> false)
+      in
+      match item with
+      | TLLet (name, _ :: _, _) when (not is_verbatim) && shadowed_below name ->
+        text ^ ";"
+      | _ -> text
+    in
     (* A verbatim slice runs to the next item's offset, so it absorbs any
        comment sitting between the two. Its text therefore ends later than
        the AST's end_loc says, and trusting that would leave an apparent gap

@@ -179,6 +179,21 @@ let test_a_nested_pipeline_keeps_its_brackets () =
   if Lint.contains out "|> (" then
     Alcotest.failf "an ordinary pipeline gained brackets:\n%s" out
 
+(* A function reads each `let` of its name below it as one more equation,
+   and only a `;` stops that. `let f i = i; let f = t` is a function and a
+   value that shadows it; on two lines with no `;`, the value became a
+   second equation that takes no parameters, which does not parse. Found by
+   test/fuzz. *)
+let test_a_shadowed_function_keeps_its_semicolon () =
+  List.iter (fun src -> formats_and_parses "shadowed function" 92 src)
+    [ "let f i = i; let f = 3\n";
+      "let f 0 = 1\nlet f n = 2; let f = 3\n";
+      "let f i = i; -- note\nlet f = 3\n" ];
+  (* A function above a value of another name needs no `;`. *)
+  let out = fmt "let f i = i; let g = 3\n" in
+  if Lint.contains out ";" then
+    Alcotest.failf "a `;` was kept where nothing needs it:\n%s" out
+
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
    wrapped shape, so it stayed on one line however narrow the margin. The
@@ -2052,6 +2067,8 @@ let () =
         test_a_nested_pipeline_keeps_its_brackets;
       Alcotest.test_case "a bare field list wraps" `Quick
         test_a_bare_field_list_wraps;
+      Alcotest.test_case "a shadowed function keeps its ;" `Quick
+        test_a_shadowed_function_keeps_its_semicolon;
       Alcotest.test_case "parameterless fn spacing" `Quick
         test_a_parameterless_fn_has_one_space;
       Alcotest.test_case "a string is not a comment" `Quick
