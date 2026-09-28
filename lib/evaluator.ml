@@ -7881,6 +7881,14 @@ let rec toml_of_value (v : value) : Toml.Types.value =
   | VList vs -> Toml.Types.TArray (toml_array vs)
   | VMap kvs_m -> let kvs = vmap_list kvs_m in Toml.Types.TTable (toml_table kvs)
   | VRecord vr_ -> let kvs = vr_.r_fields in Toml.Types.TTable (toml_table kvs)
+  (* A sum without its tag, as JSON writes one: the word for a bare
+     constructor, the value for one that holds one. *)
+  | VConstr (ctor, vals) when Hashtbl.mem sum_of_ctor ctor ->
+    (match vals with
+     | [] -> Toml.Types.TString (Ctor.name ctor)
+     | [x] -> toml_of_value x
+     | _ ->
+       raise (EvalError (Printf.sprintf "cannot write '%s' as TOML" (Ctor.name ctor))))
   | VConstr (ctor, vals) ->
     (match Hashtbl.find_opt constr_fields ctor with
      | Some names when List.length names = List.length vals ->
@@ -7888,7 +7896,7 @@ let rec toml_of_value (v : value) : Toml.Types.value =
          List.concat (List.map2 (fun n v ->
            match n, v with
            | Some _, VConstr (Ctor.Builtin "None", []) -> []   (* absent, not empty *)
-           | Some name, v -> [(name, v)]
+           | Some name, v -> [(doc_key ctor name, v)]
            | None, _ -> []) names vals)
        in
        Toml.Types.TTable (toml_table pairs)

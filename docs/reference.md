@@ -2713,9 +2713,10 @@ type DaemonEndpoint(port "Port": Int)
 type Props(ref "$ref": Option String = None, list_type "x-kubernetes-list-type": Option String = None)
 ```
 
-The derived decoder reads the field from that key, and the derived encoder
-and `JSON.of` write it there. The same holds for TOML and YAML. A field with
-no key is read and written by its name, as before.
+The derived decoder reads the field from that key, and the derived encoder,
+`JSON.of` and `TOML.of` write it there. `TOML.decode` and `YAML.decode` read
+it too; wand writes no YAML. A field with no key is read and written by its
+name, as before.
 
 The key is for documents only. In wand code the field is its name:
 `DaemonEndpoint(port = 10250)`, `e.port`, patterns and updates. A command

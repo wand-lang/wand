@@ -2,6 +2,8 @@ let {test} = import Test
 import Args
 import Decode
 import JSON
+import Result
+import TOML
 
 -- A single-constructor type whose fields are named already says what a
 -- decoder for it would do: the field names, and what each one holds. So
@@ -315,3 +317,12 @@ type Flags(dry_run "dry-run": Bool = false)
 
 test "a flag keeps the field's name" (fn t ->
   t.eq (Ok Flags(dry_run = true)) (Args.read Flags.parser ["--dry_run"]))
+
+-- TOML writes what JSON writes: a field by its key, a sum without its tag.
+test "TOML.of writes a field by its key" (fn t ->
+  t.eq (Ok "Port = 7\n") (TOML.of DaemonEndpoint(port = 7) |> Result.map TOML.stringify))
+
+test "and a sum without its tag" (fn t ->
+  t.eq
+    (Ok "maxSurge = \"25%\"\npull = \"Never\"\n")
+    (TOML.of Rollout(maxSurge = S "25%", pull = Never) |> Result.map TOML.stringify))
