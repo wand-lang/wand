@@ -1,48 +1,40 @@
-## 0.88.1 - 2026-09-27
+## 0.89.0 - 2026-09-27
 
-A manifest fix: piping a value into a command needs Shell. And a clearer message for lines read as one expression.
+A field may name its key in a document.
+
+### Added
+
+- **A field may name its key in a document.** Write the key between the
+  field's name and its type when the document spells it in a way a field
+  name cannot be:
+
+  ```
+  type DaemonEndpoint(port "Port": Int)
+  type Props(ref "$ref": Option String = None, list_type "x-kubernetes-list-type": Option String = None)
+  ```
+
+  The derived decoder reads the field from the key, and the derived
+  encoder, `JSON.of` and `TOML.of` write it there. `TOML.decode` and
+  `YAML.decode` read it too; wand writes no YAML. In wand code the field is
+  its name: `DaemonEndpoint(port = 10250)`, `e.port`. A command line reads a
+  flag by the field's name (`--port`). An error names the key: `.Port: no
+  such field`.
+
+  Before, one key that a field name cannot be cost the type its derived
+  decoder and encoder, and every type that held it.
+
+  Two fields of one constructor cannot read one key, written or implied by
+  a field's name:
+
+  ```
+  type A(port "x": Int, x: Int)
+  -- fields 'port' and 'x' of 'A' both read the key "x" in a document;
+  -- give one of them another key
+  ```
 
 ### Fixed
 
-- **A value piped into a command needs `Shell` in the manifest.** `x |>
-  $(cmd)` and `x |> $?(cmd)` recorded no effect, so a file whose manifest
-  said `uses {IO}` typechecked and ran the command:
-
-  ```
-  uses {IO}
-  import IO
-  let s = "x" |> $(cat)      -- accepted, and a run ran cat
-  IO.println s
-  ```
-
-  It is refused now: "performs Shell, which the manifest does not allow.
-  The manifest should be: "uses {IO, Shell(cat)}"". `wand t --fix` writes
-  that line. A file that pipes into a command and declares no `Shell`
-  needs its manifest changed.
-
-- **Lines meant as statements, read as one expression, say so.** A `match`
-  arm holds one expression, so two statements written one per line in an
-  arm were read as one call, and the message named two types. It now quotes
-  the lines and writes the fix:
-
-  ```
-  | Some n ->
-    IO.println "a"
-    IO.println "b"
-  ```
-
-  Before:
-
-  ```
-  expected Unit, got ('a -> Unit ! {IO}) -> 'b
-  ```
-
-  Now:
-
-  ```
-  lines 6 to 7 are read as one expression, so line 6 is called with line 7 as its argument:
-    6 | IO.println "a"
-    7 | IO.println "b"
-  To run them one after the other, put them in brackets with ';' between them:
-    ( IO.println "a"; IO.println "b" )
-  ```
+- **`TOML.of` writes a sum** as `JSON.of` does: the word for a bare
+  constructor (`pull = "Never"`), the value for one that holds one
+  (`maxSurge = "25%"`). Before, it refused one with "it has no named
+  fields".
