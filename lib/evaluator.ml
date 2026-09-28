@@ -7113,6 +7113,17 @@ and named_decoder venv tname j path =
     | Some shape -> sum_decoder venv shape j path
     | None -> derived_decoder tname [] j path
 
+(* The values an enum takes, for an error. A long list hid the value that
+   was received at the end of the line -- 65 stop signals, then
+   `got "SIGNEW"` -- so past five values it gives the count and the first
+   five. *)
+and one_of names =
+  let n = List.length names in
+  if n <= 5 then "one of " ^ String.concat ", " names
+  else
+    Printf.sprintf "one of %d values (%s, …)" n
+      (String.concat ", " (List.filteri (fun i _ -> i < 5) names))
+
 and sum_decoder venv shape j path =
   match shape with
   | Enum ctors ->
@@ -7122,9 +7133,8 @@ and sum_decoder venv shape j path =
        (match List.find_opt (fun (_, spelled) -> spelled = w) ctors with
         | Some (c, _) -> Ok (VConstr (c, []))
         | None ->
-          decode_error path (Printf.sprintf "expected one of %s, got %S"
-                               (String.concat ", " names) w))
-     | _ -> expected ("one of " ^ String.concat ", " names) path j)
+          decode_error path (Printf.sprintf "expected %s, got %S" (one_of names) w))
+     | _ -> expected (one_of names) path j)
   | Untagged cases ->
     let kind = json_kind j in
     (match List.find_opt (fun (_, te) -> type_json_kind te = Some kind) cases with

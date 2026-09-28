@@ -372,3 +372,18 @@ test "a flag's value is the spelling too" (fn t ->
   t.eq
     (Ok Workload(dns = DnsPolicy.Default, op = Operation.ClientAuth))
     (Args.read Workload.parser ["--dns", "Default", "--op", "client auth"]))
+
+-- A long list of values is cut to the count and the first five, so the
+-- value that was received is not lost at the end of the line.
+type Signal = SIGA | SIGB | SIGC | SIGD | SIGE | SIGF
+type Five = Alpha | Bravo | Charlie | Delta | Echo
+
+test "a long list of values is shortened" (fn t ->
+  t.eq
+    (Error `expected one of 6 values (SIGA, SIGB, SIGC, SIGD, SIGE, …), got "SIGNEW"`)
+    (JSON.decode Signal.decoder (JSON.parse! `"SIGNEW"`)))
+
+test "five values are listed in full" (fn t ->
+  t.eq
+    (Error `expected one of Alpha, Bravo, Charlie, Delta, Echo, got "Foxtrot"`)
+    (JSON.decode Five.decoder (JSON.parse! `"Foxtrot"`)))

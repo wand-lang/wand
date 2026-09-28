@@ -2675,6 +2675,15 @@ JSON.stringify (Rollout.encoder Rollout(maxSurge = I 1, pull = Always))
 -- {"maxSurge":1,"pull":"Always"}
 ```
 
+A word that the sum does not have is an error that names the words it has.
+When there are more than five, the error gives the count and the first
+five, so the word that was received stays easy to see:
+
+```ocaml
+-- .pull: expected one of Always, Never, IfNotPresent, got "Sometimes"
+-- .stopSignal: expected one of 65 values (SIGABRT, SIGALRM, SIGBUS, SIGCHLD, SIGCLD, …), got "SIGNEW"
+```
+
 The kinds are a number (`Int`, `Float`), a string (`String` and the domain
 types written as text, such as `Path`, `Duration` and `DateTime`), a boolean,
 a list, and an object (a `Map` or a record). A word-only sum is a string.
