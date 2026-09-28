@@ -1,27 +1,35 @@
-## 0.90.0 - 2026-09-27
+## 0.90.1 - 2026-09-28
 
-`Shell.inspect_with` sends input to a command that only reads.
+`wand p interface --check` passes the section it writes, and `wand f` keeps a wide arm body under its arm.
 
-### Added
+### Fixed
 
-- **`Shell.inspect_with!` and `Shell.inspect_with` send input to a command
-  that only reads.** They are `inspect!` and `inspect` with text for the
-  command's stdin, in the way that `input |> $(cmd)` writes it. A rehearsal
-  runs them, and the line says `ran (inspect): ...`:
+- **`wand p interface --check` passes the section that `wand p interface`
+  writes.** A record whose fields do not fit on one line is written with a
+  line for each field, and the check read each of those lines as an entry
+  of its own. It failed on a section written a moment before, and named
+  every field as removed. `wand p release` compared entries in the same
+  way, so the next release of such a package asked for a major bump that
+  nothing needed. Both now read a record over several lines as one entry.
+
+- **`wand f` keeps a wide operator chain in an arm under the arm.** A
+  `match` or `handle` arm whose body did not fit on the arrow's line was
+  broken at the arm's own indent, so the `|>` sat level with the `|` of
+  the arm:
 
   ```
-  let stored =
-    json |> Shell.inspect_with! $*(kubectl apply --server-side --dry-run=server -o json -f -)
+  | s -> String.to_int s
+  |> Result.map (fn n -> n * 1000)
   ```
 
-  Before, a command that reads its input from stdin could not be run with
-  `inspect`. A server-side dry run was run with `$(...)`, so a rehearsal
-  withheld it and gave `""`, and the script stopped at the first step that
-  read the result.
+  The body now goes on its own line, and its operators line up under it:
 
-### Changed
+  ```
+  | s ->
+    String.to_int s
+    |> Result.map (fn n -> n * 1000)
+  ```
 
-- **V-SHELL3 accepts a kubectl dry run.** A kubectl command with
-  `--dry-run=server` or `--dry-run=client` stores nothing, whatever its
-  verb, so `Shell.inspect!` can run `kubectl apply --dry-run=server`.
-  `--dry-run=none` is a real run and is still a violation.
+  A `handle` arm is now measured from after its arrow, as a `match` arm
+  is. Before, a `handle` arm whose line was wider than the margin could
+  stay on one line.
