@@ -212,6 +212,21 @@ IO.println "%{a}|%{b}"|} in
       "looked|" ]
     (String.split_on_char '\n' (String.trim out))
 
+(* `Shell.inspect_with!` is `inspect!` with text for stdin: a rehearsal runs
+   it, and the command reads what it is given. *)
+let test_a_rehearsal_runs_what_inspects_with_input () =
+  if not (Sys.file_exists wand_binary) then
+    Alcotest.failf "wand binary not found at %s" wand_binary;
+  let out = rehearse {|uses {IO, Shell(cat)}
+import IO
+import Shell
+let a = "given" |> Shell.inspect_with! $*(cat)
+IO.println a|} in
+  Alcotest.(check (list string)) "the read ran with its input"
+    [ "ran (inspect): cat";
+      "given" ]
+    (String.split_on_char '\n' (String.trim out))
+
 let temp_dir_script =
   {|uses {FS.Read, FS.Write, IO}
 import FS
@@ -915,6 +930,8 @@ let () =
         test_a_rehearsal_names_a_fresh_directory;
       Alcotest.test_case "a rehearsal runs what only inspects" `Quick
         test_a_rehearsal_runs_what_only_inspects;
+      Alcotest.test_case "a rehearsal runs what inspects with input" `Quick
+        test_a_rehearsal_runs_what_inspects_with_input;
       Alcotest.test_case "reads back what it wrote" `Quick
         test_a_rehearsal_reads_back_what_it_wrote;
       Alcotest.test_case "writes nothing" `Quick

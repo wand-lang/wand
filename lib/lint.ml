@@ -213,8 +213,15 @@ let mutating_in text =
         if c = '\t' then ' ' else c) cmd)
       |> List.filter (fun w -> w <> "" && not (String.contains w '='))
     in
+    (* kubectl with a client or a server dry run stores nothing, whatever
+       its verb. `--dry-run=none` is a real run. *)
+    let dry_run =
+      List.exists (fun w -> w = "--dry-run=server" || w = "--dry-run=client")
+        (String.split_on_char ' ' cmd)
+    in
     match words with
     | [] -> None
+    | first :: _ when Filename.basename first = "kubectl" && dry_run -> None
     | first :: rest ->
       let name = Filename.basename first in
       (match List.assoc_opt name mutating_commands with
@@ -224,10 +231,11 @@ let mutating_in text =
            if List.mem w verbs then Some (name ^ " " ^ w) else None) rest
        | None -> None)) commands
 
-(* `Shell.inspect!` or `Shell.inspect`, written with the module. *)
+(* `Shell.inspect!`, `Shell.inspect` or their `_with` forms, written with
+   the module. *)
 let inspect_call (f : Ast.expr) =
   match strip_located f with
-  | Ast.Field (m, (("inspect!" | "inspect") as fn)) ->
+  | Ast.Field (m, (("inspect!" | "inspect" | "inspect_with!" | "inspect_with") as fn)) ->
     (match strip_located m with
      | Ast.Var "Shell" | Ast.Constr "Shell" -> Some fn
      | _ -> None)

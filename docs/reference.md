@@ -6201,6 +6201,8 @@ run!    : Command -> String ! {Raise, Shell}
 run     : Command -> Result String String ! {Shell}
 inspect! : Command -> String ! {Raise, Shell}
 inspect  : Command -> Result String String ! {Shell}
+inspect_with! : Command -> String -> String ! {Raise, Shell}
+inspect_with  : Command -> String -> Result String String ! {Shell}
 query   : Command -> ShellResult ! {Shell}
 stream  : Command -> Stream {Raise, Shell | ..} String
 stream_err    : Command -> Stream {Raise, Shell | ..} String
@@ -6225,7 +6227,10 @@ somewhere else. See [A command as a value](#a-command-as-a-value).
 `inspect!` and `inspect` are `run!` and `run` for a command that only reads.
 Use them only for a command that changes nothing, such as a query, a
 listing or a status, because a rehearsal runs them for real. See
-[What a rehearsal does](#what-a-rehearsal-does).
+[What a rehearsal does](#what-a-rehearsal-does). `inspect_with!` and
+`inspect_with` also write text to the command's stdin, in the way that
+`input |> $(cmd)` writes it. For example, a server-side dry run:
+`json |> Shell.inspect_with! $*(kubectl apply --dry-run=server -f -)`.
 
 `stream` reads a command's output as it arrives. See
 [Streaming a command](#streaming-a-command). `stream_err` reads its stderr
@@ -7185,7 +7190,8 @@ would run: kubectl apply -f web.json -> ""
 The name is the script's promise that the command changes nothing. wand
 cannot see what a subprocess does, so it takes the promise. Use `inspect`
 only for a read. A command known to change things, such as `kubectl apply`,
-`git push` or `rm`, is a `V-SHELL3` violation there, and a command whose
+`git push` or `rm`, is a `V-SHELL3` violation there, unless it is a kubectl
+command with `--dry-run=server` or `--dry-run=client`, and a command whose
 words only the run decides is an `A-SHELL2` advisory, because nothing could
 check it.
 

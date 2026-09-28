@@ -108,6 +108,21 @@ let inspect! (c: Command) = shell_inspect c
 -- Error("command exited with code 3: exit 3") : Result String String
 let inspect (c: Command) = try inspect! c
 
+-- `inspect!`, with `input` written to the command's stdin, as
+-- `input |> $(cmd)` writes it. Use it for a command that reads what it is
+-- given and changes nothing, such as a server-side dry run:
+-- `json |> Shell.inspect_with! $*(kubectl apply --dry-run=server -f -)`.
+--
+-- >> "looked" |> Shell.inspect_with! $*(cat)
+-- "looked" : String
+let inspect_with! (c: Command) (input: String) = shell_inspect_with c input
+
+-- `inspect_with!`, giving an `Error` where it raises.
+--
+-- >> "x" |> Shell.inspect_with $*(false)
+-- Error("command exited with code 1: false") : Result String String
+let inspect_with (c: Command) (input: String) = try inspect_with! c input
+
 -- Run a command and report how it went instead of raising: a `ShellResult`
 -- with its output, its error output and its exit code.
 --

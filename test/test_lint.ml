@@ -371,6 +371,19 @@ let test_shell3 () =
     "V-SHELL3";
   silent "a read"
     "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl get --raw /openapi/v3)\na";
+  silent "a kubectl server dry run"
+    "uses {Shell}\nimport Shell\nlet a = \"{}\" |> Shell.inspect_with! $*(kubectl apply --server-side --dry-run=server -o json -f -)\na";
+  silent "a kubectl client dry run"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl delete pod web --dry-run=client)\na";
+  fires "a kubectl dry run of none is a real run"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect! $*(kubectl delete pod web --dry-run=none)\na"
+    "V-SHELL3";
+  fires "with stdin, a mutating subcommand"
+    "uses {Shell}\nimport Shell\nlet a = \"{}\" |> Shell.inspect_with! $*(kubectl apply -f -)\na"
+    "V-SHELL3";
+  fires "with stdin, applied to both arguments"
+    "uses {Shell}\nimport Shell\nlet a = Shell.inspect_with $*(kubectl apply -f -) \"{}\"\na"
+    "V-SHELL3";
   silent "a read with a hole after the verb"
     "uses {Shell}\nimport Shell\nlet n = \"x\"\nlet a = Shell.inspect! $*(kubectl get pod %{n})\na";
   fires "a command word the run decides"

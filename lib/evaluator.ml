@@ -6391,6 +6391,21 @@ let stdlib_eval_env : env = [
         ~finally:(fun () -> Domain.DLS.set ambient_shell_read saved)
         (fun () -> perform_shell "Shell!run" allow (VString cmd))
     | _ -> raise (EvalError "shell_inspect: expected a Command")));
+  (* The same, with text for the command's stdin: `input |> $(cmd)`. *)
+  ("shell_inspect_with", VBuiltin (function
+    | VCommand (cmd, allow) ->
+      VBuiltin (fun input ->
+        let stdin = match input with
+          | VString s -> s
+          | _ -> raise (EvalError "shell_inspect_with: expected a String")
+        in
+        let saved = Domain.DLS.get ambient_shell_read in
+        Domain.DLS.set ambient_shell_read true;
+        Fun.protect
+          ~finally:(fun () -> Domain.DLS.set ambient_shell_read saved)
+          (fun () ->
+            perform_shell "Shell!run" allow (VTuple [VString cmd; VString stdin])))
+    | _ -> raise (EvalError "shell_inspect_with: expected a Command")));
   ("shell_query", VBuiltin (function
     | VCommand (cmd, allow) -> perform_shell "Shell!capture" allow (VString cmd)
     | _ -> raise (EvalError "shell_query: expected a Command")));

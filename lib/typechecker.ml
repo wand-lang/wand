@@ -5041,6 +5041,8 @@ let stdlib_type_env : env = [
      builtin here takes a command as text. *)
   ("shell_run",   generalize [] (effs [Effect_set.Shell; Effect_set.Raise] (TCommand) (TString)));
   ("shell_inspect", generalize [] (effs [Effect_set.Shell; Effect_set.Raise] (TCommand) (TString)));
+  ("shell_inspect_with", generalize []
+     (TFun (TCommand, effs [Effect_set.Shell; Effect_set.Raise] TString TString, Effect_set.pure)));
   ("shell_query", generalize [] (effs [Effect_set.Shell] (TCommand) (TName "ShellResult")));
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a
