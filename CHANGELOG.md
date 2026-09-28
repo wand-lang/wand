@@ -6,11 +6,9 @@
 
 - **`wand p interface --check` passes the section that `wand p interface`
   writes.** A record whose fields do not fit on one line is written with a
-  line for each field, and the check read each of those lines as an entry
-  of its own. It failed on a section written a moment before, and named
-  every field as removed. `wand p release` compared entries in the same
-  way, so the next release of such a package asked for a major bump that
-  nothing needed. Both now read a record over several lines as one entry.
+  line for each field, and the check reads each of those lines as an entry
+  of its own. `wand p release` compared entries in the same
+  way. Both now read a record over several lines as one entry.
 
 - **`wand f` keeps a wide operator chain in an arm under the arm.** A
   `match` or `handle` arm whose body did not fit on the arrow's line was
