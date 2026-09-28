@@ -189,7 +189,9 @@ test "bump_patch of a prerelease is the release it names" (fn t ->
 
 test "every bump is above what it came from" (fn t ->
   t.ok
-    (1.2.3 < Version.bump_patch 1.2.3 && Version.bump_patch 1.2.3 < Version.bump_minor 1.2.3 && Version.bump_minor 1.2.3 < Version.bump_major 1.2.3))
+    (1.2.3 < Version.bump_patch 1.2.3
+    && Version.bump_patch 1.2.3 < Version.bump_minor 1.2.3
+    && Version.bump_minor 1.2.3 < Version.bump_major 1.2.3))
 
 -- ── setting the tail ───────────────────────────────────────────────────
 

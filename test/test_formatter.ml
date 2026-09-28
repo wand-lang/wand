@@ -1143,6 +1143,43 @@ let test_a_wide_arm_chain_goes_below () =
     "| Shell!run cmd k ->\n    String.to_int cmd\n    |> Result.map";
   assert_idempotent "a wide handle arm chain" handle_src
 
+(* A chain of `&&` or `||` too wide for its line breaks as a pipeline does,
+   one condition per line with the operator leading. It stayed on one line
+   however wide it was. *)
+let test_a_wide_condition_chain_breaks () =
+  let src =
+    "let inline? j =\n\
+     \  Option.none? (ref_of j)\n\
+     \  && Map.size (obj \"properties\" j) > 0\n\
+     \  && !(flag? \"x-kubernetes-preserve-unknown-fields\" j)\n\
+     \n\
+     let odd c =\n\
+     \  named_like_a_type c.name\n\
+     \  || List.any? named_like_a_type c.values\n\
+     \  || List.any? (fn v -> v == c.name) c.values\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "a wide condition chain" src;
+  Alcotest.(check string) "a narrow one stays on one line"
+    "let f a b = a && b || a\n" (fmt "let f a b = a && b || a\n")
+
+(* A construction through a module is measured from after the module's
+   name. Measured from the indent, it went on one line past the margin. *)
+let test_a_qualified_construction_is_measured_where_it_starts () =
+  let src =
+    "let web =\n\
+     \  apps.Deployment(\n\
+     \    spec = apps.DeploymentSpec(\n\
+     \      selector = meta.LabelSelector(matchLabels = Some labels),\n\
+     \      template = core.PodTemplateSpec(\n\
+     \        spec = Some core.PodSpec(containers = [core.Container(name = \"web\")])\n\
+     \      )\n\
+     \    )\n\
+     \  )\n"
+  in
+  Alcotest.(check string) "the layout is kept" src (fmt src);
+  assert_idempotent "a qualified construction" src
+
 let test_blank_lines () =
   let src = "let x = 1\n\n\n\nlet y = 2\nx + y" in
   let out = fmt src in
@@ -2036,6 +2073,9 @@ let () =
       Alcotest.test_case "interface settles" `Quick test_interface_and_implement_settle;
       Alcotest.test_case "pipeline stages align" `Quick test_a_pipeline_aligns_its_stages;
       Alcotest.test_case "a wide arm chain goes below" `Quick test_a_wide_arm_chain_goes_below;
+      Alcotest.test_case "a wide condition chain breaks" `Quick test_a_wide_condition_chain_breaks;
+      Alcotest.test_case "a qualified construction is measured where it starts" `Quick
+        test_a_qualified_construction_is_measured_where_it_starts;
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
     ];
   ]

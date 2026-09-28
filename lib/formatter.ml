@@ -1219,7 +1219,11 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        in
        Doc.text (m ^ ".") ^^ emit_expr indent f
        ^^ Doc.text "(" ^^ payload ^^ Doc.text ")"
-     | _ -> Doc.text (m ^ ".") ^^ emit_expr indent e)
+     (* What follows the module starts after its name and the dot, and it
+        is measured from there. Measured from the indent, a construction
+        `core.Pod(...)` after `template = ` took a line of its own width
+        past the margin. *)
+     | _ -> Doc.text (m ^ ".") ^^ emit_expr ~col:(col + String.length m + 1) indent e)
   | ConstrApp (name, kvs, _) ->
     (* Punned only where every field puns, and there are two or more of
        them. That is the whole of what reads back as a construction: one
@@ -1720,14 +1724,17 @@ and emit_sequence ?col indent opening closing items =
 (* A pipeline reads as a list of stages, so when it does not fit it breaks
    into one stage per line with the operator leading -- which is where a
    reader looks to see what happens next, and what makes the stages line up
-   under each other. *)
-and emit_pipeline indent a b =
+   under each other. A chain of `&&` or `||` reads as a list of conditions,
+   and breaks the same way. Before, it stayed on one line however wide it
+   was. All three operators group to the left, which is the shape `stages`
+   takes apart. *)
+and emit_chain op indent a b =
   let rec stages e =
     match strip_located e with
-    | BinOp ("|>", l, r) -> stages l @ [r]
+    | BinOp (op', l, r) when op' = op -> stages l @ [r]
     | other -> [other]
   in
-  let all = stages (BinOp ("|>", a, b)) in
+  let all = stages (BinOp (op, a, b)) in
   (* Every stage starts at the pipeline's own column: the first where the
      pipeline begins, and each later one under the `|>` that leads it. So a
      stage that wraps closes its brackets in line with the ones it opened. *)
@@ -1743,7 +1750,7 @@ and emit_pipeline indent a b =
        program, and the reprint of that was different again, which is how the
        fuzzer saw it. Found by test/fuzz. *)
     | BinOp (op2, _, _) as inner ->
-      let prec = bin_prec "|>" and cp = bin_prec op2 in
+      let prec = bin_prec op and cp = bin_prec op2 in
       let rendered = emit_expr at inner in
       if cp > prec || (cp = prec && side = `Left)
       then bracket_if_wrapped_app_at ~anchor:at e rendered
@@ -1758,7 +1765,7 @@ and emit_pipeline indent a b =
     let inner = Doc.spaces indent in
     piece `Left first
     ^^ Doc.concat Doc.empty
-        (List.map (fun e -> Doc.text "\n" ^^ inner ^^ Doc.text "|> " ^^ piece `Right e) rest)
+        (List.map (fun e -> Doc.text "\n" ^^ inner ^^ Doc.text (op ^ " ") ^^ piece `Right e) rest)
 
 and emit_binop ?col indent op a b =
   let col = match col with Some c -> c | None -> indent in
@@ -1784,7 +1791,8 @@ and emit_binop ?col indent op a b =
   in
   let oneline =
     side_str `Left a ^^ Doc.text (" " ^ op ^ " ") ^^ side_str `Right b in
-  if op = "|>" && not (fits col oneline) then emit_pipeline indent a b
+  if (op = "|>" || op = "&&" || op = "||") && not (fits col oneline)
+  then emit_chain op indent a b
   else oneline
 
 (* If `body` is `Annot (te, real_body)` -- a return-type annotation on a
