@@ -1,22 +1,22 @@
 # Changelog
 
-## [Unreleased]
+## [0.93.0] - 2026-09-29
+
+### Upgrading
+
+Three changes can make a file fail that passed with 0.92.0. `wand t`
+names each place, and `wand t --fix` corrects the first two:
+
+- A `Shell(...)` list must now hold the commands of the imported
+  functions that the file calls. `--fix` adds the missing words.
+- `V-DROP3` reports a statement whose value is a function, such as
+  `main!` with no `()`. `--fix` adds the `()` to a bare `main!`. For a
+  call that is short of an argument, give it the argument.
+- The lines under a `match` or `handle` arm are statements now. An arm
+  that wrote one call over two lines at the same column must indent the
+  second line further.
 
 ### Added
-
-- **A warning for a function that nothing calls (`V-DROP3`).** A call
-  that is short of an argument makes a function, not an error. As a
-  statement, that function does nothing, and before, nothing said so:
-
-  ```
-  let count! n =
-    log! "found"      -- log! takes a label and an Int; this line does nothing
-    n
-  ```
-
-  The same rule finds a script that ends with `main!` and not `main! ()`,
-  which runs nothing. `wand t --fix` adds the `()`. `wand t --expr` and the
-  REPL do not report the expression you ask about.
 
 - **A `Wand` module: `wand f` and `wand t` as functions.** A program that
   writes wand can format its output as `wand f` does, and a program that
@@ -59,6 +59,20 @@
   the first, as a second `cd` is. A directory that is not there raises
   when the command runs. `--dry-run` shows the directory.
 
+- **A warning for a function that nothing calls (`V-DROP3`).** A call
+  that is short of an argument makes a function, not an error. As a
+  statement, that function does nothing, and before, nothing said so:
+
+  ```
+  let count! n =
+    log! "found"      -- log! takes a label and an Int; this line does nothing
+    n
+  ```
+
+  The same rule finds a script that ends with `main!` and not `main! ()`,
+  which runs nothing. `wand t --fix` adds the `()`. `wand t --expr` and the
+  REPL do not report the expression you ask about.
+
 - **`List.empty` and `Map.empty?`.** Now each of `List` and `Map` has the
   empty value and the test for it. `List.empty` is `[]`, and
   `Map.empty? m` is true when `m` has no entries:
@@ -69,26 +83,6 @@
   ```
 
 ### Changed
-
-- **Each line of a `match` arm is a statement, as in a function body.**
-  Two lines under an arm now run one after the other:
-
-  ```
-  | Some n ->
-    IO.println "found %{n}"
-    n
-  ```
-
-  Before, an arm read these lines as one call, the first line applied to
-  the second. When that call did not typecheck, the error told you to use
-  brackets. When it did typecheck, the arm did something different from
-  what it showed, with no error. The same lines in a function body were
-  already two statements, so the two now agree. `handle` arms follow the
-  same rule. `wand f` writes the lines as `(IO.println "found %{n}"; n)`.
-
-  An arm that wrote one call over two lines at the same column now reads
-  them as two statements. Indent the second line further to continue the
-  call.
 
 - **A script can name the commands that its imported functions run.**
   A call runs the commands of the function it calls. So a script that
@@ -113,6 +107,26 @@
 
   This can make a file that passed before fail. `--fix` corrects it.
 
+- **Each line of a `match` arm is a statement, as in a function body.**
+  Two lines under an arm now run one after the other:
+
+  ```
+  | Some n ->
+    IO.println "found %{n}"
+    n
+  ```
+
+  Before, an arm read these lines as one call, the first line applied to
+  the second. When that call did not typecheck, the error told you to use
+  brackets. When it did typecheck, the arm did something different from
+  what it showed, with no error. The same lines in a function body were
+  already two statements, so the two now agree. `handle` arms follow the
+  same rule. `wand f` writes the lines as `(IO.println "found %{n}"; n)`.
+
+  An arm that wrote one call over two lines at the same column now reads
+  them as two statements. Indent the second line further to continue the
+  call.
+
 - **Four errors now tell you what to write.** Before, each one gave only
   the types:
 
@@ -129,22 +143,42 @@
   - A value piped into `Shell.inspect!`, which takes no input. The error
     now says to write `x |> Shell.inspect_with! $*(...)`.
 
-- **`wand t --fix` corrects two of them.** It changes a default of
-  `Map.empty` to `{}` and `List.empty` to `[]`. It changes
+  `wand t --fix` corrects two of them. It changes a default of
+  `Map.empty` to `{}` and `List.empty` to `[]`, and
   `x |> Shell.inspect! cmd` to `x |> Shell.inspect_with! cmd`. The other
-  two need a decision from you, so `--fix` does not change them.
+  two need a decision from you, so `--fix` leaves them.
 
-- An error in one stage of a `|>` pipeline now points at that stage, not
+- **An error in one stage of a `|>` pipeline points at that stage,** not
   at the start of the pipeline.
 
 ### Fixed
 
-- **`wand f` gives the same result each time for `let ... in` before an
-  empty `;`.** In `(let x = 1 in x;)`, wand read the `;` as keeping `x`
-  from the statements after it, but no statement follows. `wand f` wrote
-  `(let x = 1 in x)`, and the next `wand f` changed that to
-  `(let x = 1; x)`. Now a `;` with nothing after it changes nothing, and
-  the first pass writes `(let x = 1; x)`.
+- **`wand f` no longer breaks a function that a value shadows.** A
+  function reads each `let` of the same name below it as one more
+  equation, and only a `;` stops that. `wand f` put the two on separate
+  lines and removed the `;`:
+
+  ```
+  let f i = i; let f = 3
+  ```
+
+  The result did not parse. Now `wand f` keeps the `;`:
+
+  ```
+  let f i = i;
+  let f = 3
+  ```
+
+- **A recursive glob can be written in brackets.** `FS.glob (**.wand)` was
+  a lex error that said "a comment is `--` to the end of the line",
+  because wand read `(**` as the start of an OCaml doc comment. You had to
+  write `( **.wand)`, and `wand f` then took the space out and wrote a file
+  that did not lex. Now `(**` starts that error only when a space follows
+  it, as in `(** doc *)`, so a glob just inside a bracket is a glob:
+
+  ```
+  FS.glob (**.wand)
+  ```
 
 - **`wand f` opens a `fn`'s block on the `fn` line.** A `fn` whose body
   is a block of statements put the block's `(` on a line of its own, with
@@ -163,32 +197,12 @@
     files
   ```
 
-- **A recursive glob can be written in brackets.** `FS.glob (**.wand)` was
-  a lex error that said "a comment is `--` to the end of the line",
-  because wand read `(**` as the start of an OCaml doc comment. You had to
-  write `( **.wand)`, and `wand f` then took the space out and wrote a file
-  that did not lex. Now `(**` starts that error only when a space follows
-  it, as in `(** doc *)`, so a glob just inside a bracket is a glob:
-
-  ```
-  FS.glob (**.wand)
-  ```
-
-- **`wand f` no longer breaks a function that a value shadows.** A
-  function reads each `let` of the same name below it as one more
-  equation, and only a `;` stops that. `wand f` put the two on separate
-  lines and removed the `;`:
-
-  ```
-  let f i = i; let f = 3
-  ```
-
-  The result did not parse. Now `wand f` keeps the `;`:
-
-  ```
-  let f i = i;
-  let f = 3
-  ```
+- **`wand f` gives the same result each time for `let ... in` before an
+  empty `;`.** In `(let x = 1 in x;)`, wand read the `;` as keeping `x`
+  from the statements after it, but no statement follows. `wand f` wrote
+  `(let x = 1 in x)`, and the next `wand f` changed that to
+  `(let x = 1; x)`. Now a `;` with nothing after it changes nothing, and
+  the first pass writes `(let x = 1; x)`.
 
 ## [0.92.0] - 2026-09-28
 
