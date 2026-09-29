@@ -139,6 +139,13 @@
 
 ### Fixed
 
+- **`wand f` gives the same result each time for `let ... in` before an
+  empty `;`.** In `(let x = 1 in x;)`, wand read the `;` as keeping `x`
+  from the statements after it, but no statement follows. `wand f` wrote
+  `(let x = 1 in x)`, and the next `wand f` changed that to
+  `(let x = 1; x)`. Now a `;` with nothing after it changes nothing, and
+  the first pass writes `(let x = 1; x)`.
+
 - **`wand f` opens a `fn`'s block on the `fn` line.** A `fn` whose body
   is a block of statements put the block's `(` on a line of its own, with
   the statements two more columns in. Now the block opens on the `fn`

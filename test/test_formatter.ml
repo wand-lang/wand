@@ -253,6 +253,23 @@ let test_a_fn_block_opens_on_the_arrow_line () =
   Alcotest.(check string) "the block opens on the arrow's line" want (fmt src);
   formats_and_parses "a fn block at any margin" 30 src
 
+(* A `;` after `let ... in` keeps the name from the statements below it,
+   and the parser read one even with no statement below: `(let x = 1 in
+   x;)`. The formatter writes no empty statement back, so the next pass had
+   no `;` and read the block's binding, and wrote `;` where the first had
+   written `in`. With nothing after it, the `;` narrows nothing. Found by
+   test/fuzz. *)
+let test_an_empty_statement_after_in_settles () =
+  let name = String.make 80 'g' in
+  List.iter (fun w ->
+    formats_and_parses "in before an empty statement" w
+      (name ^ " (fn->((let x=1in x;)()))\n"))
+    [28; 92];
+  (* A statement after the `;` still keeps its `in`. *)
+  let out = fmt "let y = (let x = 1 in x; 2)\n" in
+  if not (Lint.contains out "let x = 1 in x") then
+    Alcotest.failf "the `in` before a statement was lost:\n%s" out
+
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
    wrapped shape, so it stayed on one line however narrow the margin. The
@@ -2126,6 +2143,8 @@ let () =
         test_a_nested_pipeline_keeps_its_brackets;
       Alcotest.test_case "a bare field list wraps" `Quick
         test_a_bare_field_list_wraps;
+      Alcotest.test_case "an empty statement after in settles" `Quick
+        test_an_empty_statement_after_in_settles;
       Alcotest.test_case "a fn block opens on the arrow line" `Quick
         test_a_fn_block_opens_on_the_arrow_line;
       Alcotest.test_case "a glob in brackets settles" `Quick

@@ -1772,8 +1772,16 @@ and let_ ?(block = false) s =
          not reach. At the top level a `;` ends the item, and the formatter
          does not write it back -- so reading it as a narrowing one made the
          binding a `let ... in` whose reprint parsed as something else.
-         Found by test/fuzz. *)
-      (body, style_for ~narrows:(block && peek s = Token.Semicolon))
+         Found by test/fuzz.
+
+         And only with a statement after it. `(let x = 1 in x;)` has none
+         for the name to be kept from, and the formatter does not write an
+         empty statement back -- so it too came back without the `;` and
+         was read as the block's binding on the next pass. Found by
+         test/fuzz. *)
+      let narrows =
+        block && peek s = Token.Semicolon && peek2 s <> Token.RParen in
+      (body, style_for ~narrows)
     end
     else if block && peek s = Token.Semicolon then begin
       (* The binding's body is everything after the `;`. *)
