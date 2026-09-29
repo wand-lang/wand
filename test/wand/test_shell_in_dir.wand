@@ -1,0 +1,67 @@
+uses {FS.Read, FS.Write, Shell(cat, ls, pwd, wc)}
+
+let {test} = import Test
+import FS
+import Path
+import Shell
+import Stream
+import String
+import Test
+
+-- A command in another directory: `Shell.in_dir dir c` is `c`, to run in
+-- `dir`. It runs nothing itself, so each way of running a command takes it.
+
+-- A directory with a space and a quote in its name, and a file in a
+-- directory under it.
+let in_tree! f =
+  with FS.temp_dir "wand_in_dir_" as root -> (
+    let dir = Path.join root (Path.of_string "a b'c");
+    FS.mkdir! (Path.join dir (Path.of_string "inner"));
+    FS.write_file! (Path.join dir (Path.of_string "inner/f.txt")) "hello\n";
+    f dir
+  )
+
+test "the command runs in the directory" (fn t ->
+  in_tree! (fn dir -> t.eq "inner" (Shell.inspect! (Shell.in_dir dir $*(ls)))))
+
+test "and so does one that needs a shell" (fn t ->
+  in_tree! (fn dir ->
+    t.eq "1" (String.trim (Shell.inspect! (Shell.in_dir dir $*(ls | wc -l))))))
+
+test "each way of running a command takes it" (fn t ->
+  in_tree! (fn dir ->
+    let inner = Path.join dir (Path.of_string "inner");
+    let c = Shell.in_dir inner $*(cat f.txt);
+    t.eq ("hello", "piped", 0, ["hello"]) (
+      Shell.inspect! (Shell.in_dir inner $*(cat f.txt)),
+      "piped" |> Shell.inspect_with! (Shell.in_dir dir $*(cat)),
+      (Shell.query c).code,
+      Stream.to_list (Shell.stream c)
+    )))
+
+-- As a second `cd` is: `c |> in_dir a |> in_dir b` runs in `a/b`.
+test "a relative directory is read from the one before it" (fn t ->
+  in_tree! (fn dir ->
+    t.eq
+      "hello"
+      ($*(cat f.txt) |> Shell.in_dir dir |> Shell.in_dir ./inner |> Shell.inspect!)))
+
+test "the script and its other commands stay where they are" (fn t ->
+  in_tree! (fn dir ->
+    let before = Shell.inspect! $*(pwd);
+    let _ = Shell.inspect! (Shell.in_dir dir $*(pwd));
+    t.eq before (Shell.inspect! $*(pwd))))
+
+test "a directory that is not there raises when the command runs" (fn t ->
+  match try Shell.inspect! (Shell.in_dir ./not-a-directory $*(ls)) with
+  | Ok _ -> t.ok false
+  | Error why -> t.ok (String.contains? "is not a directory" why))
+
+-- The directory rides beside the command, so a mock matches the words
+-- alone.
+test "a mock sees the plain command" (fn t ->
+  let r = ShellResult(stdout = "mocked", stderr = "", code = 0);
+  t.eq
+    "mocked"
+    (Test.with_shell_results [("ls -la", r)] (fn () ->
+      (Shell.query (Shell.in_dir ./inner $*(ls -la))).stdout)))

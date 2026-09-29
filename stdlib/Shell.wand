@@ -123,6 +123,23 @@ let inspect_with! (c: Command) (input: String) = shell_inspect_with c input
 -- Error("command exited with code 1: false") : Result String String
 let inspect_with (c: Command) (input: String) = try inspect_with! c input
 
+-- The same command, to run in the directory `dir`. It runs nothing: give
+-- the result to `run!`, `inspect!`, `query`, `stream`, `spawn` or any other
+-- function that takes a `Command`.
+--
+-- Only this command runs in `dir`. The script and its other commands stay
+-- where they are. A relative `dir` is read from the script's directory.
+-- On a command that has a directory already, a relative `dir` is read from
+-- that directory, as a second `cd` is.
+-- A `dir` that is not a directory raises when the command runs.
+--
+-- The manifest names the command's own words, not a shell, so this is the
+-- way to write `sh -c 'cd dir && cmd'`.
+--
+-- >> Shell.inspect! (Shell.in_dir /usr $*(pwd))
+-- "/usr" : String
+let in_dir (dir: Path) (c: Command) = shell_in_dir dir c
+
 -- Run a command and report how it went instead of raising: a `ShellResult`
 -- with its output, its error output and its exit code.
 --

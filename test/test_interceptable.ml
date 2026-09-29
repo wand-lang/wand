@@ -41,7 +41,7 @@ let scheme_type (s : Typechecker.scheme) =
    applications. *)
 let stand_ins =
   [ Evaluator.VString "";
-    Evaluator.VCommand ("", None);
+    Evaluator.VCommand ("", None, None);
     Evaluator.VStream { Evaluator.s_source = Evaluator.SVals []; s_stages = [] } ]
 
 (* Every list of `n` stand-ins. *)

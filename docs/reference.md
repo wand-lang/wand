@@ -1142,6 +1142,29 @@ whatever `name` says, and handing that to a shell would run it, where
 `$(echo %{name})` passes it as one argument. The quoting lives in the
 syntax, so a `Command` can only be built where its words were written.
 
+#### Running a command in another directory
+
+A command runs in the script's directory. `Shell.in_dir dir c` is the
+command `c`, to run in `dir`. It runs nothing. Give the result to any
+function that takes a `Command`:
+
+```ocaml
+Shell.run! (Shell.in_dir build $*(make test))
+json |> Shell.inspect_with! (Shell.in_dir repo $*(kubectl apply -f -))
+$*(wand widget.wand) |> Shell.in_dir copy |> Shell.run!
+```
+
+Only that command runs in `dir`. The script and its other commands stay
+where they are, because wand has no `cd`. A relative `dir` is read from the
+script's directory. On a command that has a directory already, a relative
+`dir` is read from that directory, as a second `cd` is. A `dir` that is not
+a directory raises when the command runs.
+
+This is the way to write `sh -c 'cd dir && cmd'`. The manifest names the
+command's own words, such as `Shell(make)`, and not `sh`, so `wand t`
+checks each word. `--dry-run` shows the directory: `would run: make test
+(in build)`. A mock sees only the command's words.
+
 **Building one performs `Shell`.** A `Command` is where the words are, so it
 is where the manifest answers for them: a file that writes `$*(git ...)` and
 never runs it still declares `Shell` — narrowed to `Shell(git)` — and
@@ -6290,6 +6313,7 @@ inspect! : Command -> String ! {Raise, Shell}
 inspect  : Command -> Result String String ! {Shell}
 inspect_with! : Command -> String -> String ! {Raise, Shell}
 inspect_with  : Command -> String -> Result String String ! {Shell}
+in_dir  : Path -> Command -> Command
 query   : Command -> ShellResult ! {Shell}
 stream  : Command -> Stream {Raise, Shell | ..} String
 stream_err    : Command -> Stream {Raise, Shell | ..} String
@@ -6318,6 +6342,9 @@ listing or a status, because a rehearsal runs them for real. See
 `inspect_with` also write text to the command's stdin, in the way that
 `input |> $(cmd)` writes it. For example, a server-side dry run:
 `json |> Shell.inspect_with! $*(kubectl apply --dry-run=server -f -)`.
+
+`in_dir` gives a command a directory to run in. See
+[Running a command in another directory](#running-a-command-in-another-directory).
 
 `stream` reads a command's output as it arrives. See
 [Streaming a command](#streaming-a-command). `stream_err` reads its stderr

@@ -241,6 +241,23 @@ let inspect_call (f : Ast.expr) =
      | _ -> None)
   | _ -> None
 
+(* The command under any `Shell.in_dir dir` around it: the directory
+   changes where the command runs, not what it runs, so its words are read
+   the same way. *)
+let rec command_under (e : Ast.expr) =
+  match strip_located e with
+  | Ast.App (f, c) ->
+    (match strip_located f with
+     | Ast.App (g, _) ->
+       (match strip_located g with
+        | Ast.Field (m, "in_dir") ->
+          (match strip_located m with
+           | Ast.Var "Shell" | Ast.Constr "Shell" -> command_under c
+           | _ -> e)
+        | _ -> e)
+     | _ -> e)
+  | _ -> e
+
 let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
   let acc = ref [] in
   let here = ref start_loc in
@@ -349,7 +366,7 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
        only the run decides is said to be unchecked. *)
     | Ast.App (f, arg) when inspect_call f <> None ->
       let fn = Option.get (inspect_call f) in
-      (match strip_located arg with
+      (match strip_located (command_under arg) with
        | Ast.MkCommand (inner, _) ->
          let (lead, dynamic) =
            match strip_located inner with

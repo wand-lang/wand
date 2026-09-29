@@ -324,8 +324,10 @@ type value =
      named it. Nothing is running -- like a Resource and a Stream this
      describes, which is what lets one be named, passed and run twice. The
      bound travels with the value rather than with the call site, because it
-     is the site that wrote the words that a manifest answers for. *)
-  | VCommand       of string * string list option
+     is the site that wrote the words that a manifest answers for. The
+     third part is the directory it runs in, from `Shell.in_dir`; None is
+     the script's own. *)
+  | VCommand       of string * string list option * string option
   (* The answer a `FS!stream_lines`-family effect resumes with: the default
      handler wraps the real channel; a mock answers with a plain list and
      never sees this constructor. Runtime-internal -- it goes straight back
@@ -432,9 +434,9 @@ and stream_source =
      the command. The stream is still a description: nothing is spawned
      until a terminal operation runs it, and folding twice runs the command
      twice -- which re-reading a file does too, and costs more here. *)
-  | SCommand of string * string list option
+  | SCommand of string * string list option * string option
   (* The same, reading the command's stderr; its stdout is wand's. *)
-  | SCommandErr of string * string list option
+  | SCommandErr of string * string list option * string option
   (* Several files read as one. Still a single puller: it moves to the next
      file when one runs out, so the driver's shape does not change. This is
      the concatenation people actually have -- `FS.glob *.log` read as one
@@ -824,7 +826,9 @@ let rec render ~quote v =
   (* Shown as it would be written. The resolved command line is the useful
      half -- it is what a log or a plan wants -- and the `$*(...)` around it
      says this is a command rather than the text of one. *)
-  | VCommand (cmd, _) -> "$*(" ^ cmd ^ ")"
+  | VCommand (cmd, _, None) -> "$*(" ^ cmd ^ ")"
+  | VCommand (cmd, _, Some dir) ->
+    "Shell.in_dir " ^ dir ^ " $*(" ^ cmd ^ ")"
   | VJson j     -> Yojson.Basic.to_string j
   | VYaml y     -> Yojson.Basic.to_string y
   (* A TOML value shows the way the rest of the language shows the same
@@ -1029,6 +1033,12 @@ let ambient_shell_allow : string list option Domain.DLS.key =
 let ambient_shell_read : bool Domain.DLS.key =
   Domain.DLS.new_key (fun () -> false)
 
+(* The directory the command being run starts in, from `Shell.in_dir`. It
+   rides beside the perform, as the bound does, so a mock still matches the
+   plain command string. None is the script's own directory. *)
+let ambient_shell_dir : string option Domain.DLS.key =
+  Domain.DLS.new_key (fun () -> None)
+
 (* The same, for the request being sent: the `Net(...)` bound of the file
    that built it, carried out of band so the payload a handler matches on
    stays the request itself. The transport reads it to check each redirect,
@@ -1101,11 +1111,15 @@ let drop_prefix prefix s =
   let n = String.length prefix + 2 in   (* the prefix, then ": " *)
   if String.length s > n then String.sub s n (String.length s - n) else s
 
-let perform_shell name allow payload =
+let perform_shell ?dir name allow payload =
   let saved = Domain.DLS.get ambient_shell_allow in
+  let saved_dir = Domain.DLS.get ambient_shell_dir in
   Domain.DLS.set ambient_shell_allow allow;
+  Domain.DLS.set ambient_shell_dir dir;
   Fun.protect
-    ~finally:(fun () -> Domain.DLS.set ambient_shell_allow saved)
+    ~finally:(fun () ->
+      Domain.DLS.set ambient_shell_allow saved;
+      Domain.DLS.set ambient_shell_dir saved_dir)
     (fun () -> perform_wand (name, payload))
 
 (* Raised into a handled body that a handler case answered without resuming,
@@ -1400,6 +1414,7 @@ type fiber_state = {
   f_on_pool : bool;
   f_shell_allow : string list option;
   f_shell_read : bool;
+  f_shell_dir : string option;
   f_net_allow : string list option;
   f_file_net : string list option;
   f_file_listen : string list option;
@@ -1414,6 +1429,7 @@ let save_fiber () = {
   f_on_pool = Domain.DLS.get on_pool;
   f_shell_allow = Domain.DLS.get ambient_shell_allow;
   f_shell_read = Domain.DLS.get ambient_shell_read;
+  f_shell_dir = Domain.DLS.get ambient_shell_dir;
   f_net_allow = Domain.DLS.get ambient_net_allow;
   f_file_net = Domain.DLS.get ambient_file_net;
   f_file_listen = Domain.DLS.get ambient_file_listen;
@@ -1428,6 +1444,7 @@ let restore_fiber st =
   Domain.DLS.set on_pool st.f_on_pool;
   Domain.DLS.set ambient_shell_allow st.f_shell_allow;
   Domain.DLS.set ambient_shell_read st.f_shell_read;
+  Domain.DLS.set ambient_shell_dir st.f_shell_dir;
   Domain.DLS.set ambient_net_allow st.f_net_allow;
   Domain.DLS.set ambient_file_net st.f_file_net;
   Domain.DLS.set ambient_file_listen st.f_file_listen;
@@ -1443,6 +1460,7 @@ let fresh_fiber ?cancel () = {
   f_on_pool = false;
   f_shell_allow = None;
   f_shell_read = false;
+  f_shell_dir = None;
   f_net_allow = None;
   f_file_net = Domain.DLS.get ambient_file_net;
   f_file_listen = Domain.DLS.get ambient_file_listen;
@@ -2517,7 +2535,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      the same command and run it -- they are `Shell.run!` and `Shell.query`
      over one, spelled short. *)
   | MkCommand (e, allow) ->
-    VCommand (command_line env e allow "$*(…)", allow)
+    VCommand (command_line env e allow "$*(…)", allow, None)
   | RunCmd (e, allow) ->
     let cmd = command_line env e allow "$(…)" in
     perform_shell "Shell!run" allow (VString cmd)
@@ -4651,14 +4669,14 @@ let rec stream_provider (src : stream_source)
        match !current with
        | Some (_, close) -> current := None; close ~early
        | None -> ())
-  | SCommandErr (cmd, allow) ->
-    (match perform_shell "Shell!stream_err" allow (VString cmd) with
+  | SCommandErr (cmd, allow, dir) ->
+    (match perform_shell ?dir "Shell!stream_err" allow (VString cmd) with
      | VProcSource (pull, finish) -> (pull, fun ~early -> finish early)
      | VList vs -> of_vals vs
      | _ -> raise (EvalError
          "Shell.stream_err: the handler must answer with a list of lines"))
-  | SCommand (cmd, allow) ->
-    (match perform_shell "Shell!stream" allow (VString cmd) with
+  | SCommand (cmd, allow, dir) ->
+    (match perform_shell ?dir "Shell!stream" allow (VString cmd) with
      | VProcSource (pull, finish) -> (pull, fun ~early -> finish early)
      | VList vs -> of_vals vs
      | _ -> raise (EvalError
@@ -4951,11 +4969,12 @@ let stream_builtins : env = [
       VStream { s_source = SFiles (List.map path ps); s_stages = [] }
     | _ -> raise (EvalError "stream_lines_all: expected a list of Paths")));
   ("shell_stream_err", VBuiltin (function
-    | VCommand (cmd, allow) ->
-      VStream { s_source = SCommandErr (cmd, allow); s_stages = [] }
+    | VCommand (cmd, allow, dir) ->
+      VStream { s_source = SCommandErr (cmd, allow, dir); s_stages = [] }
     | _ -> raise (EvalError "Shell.stream_err: expected a Command")));
   ("shell_spawn", VBuiltin (function
-    | VCommand (cmd, allow) -> perform_shell "Shell!spawn" allow (VString cmd)
+    | VCommand (cmd, allow, dir) ->
+      perform_shell ?dir "Shell!spawn" allow (VString cmd)
     | _ -> raise (EvalError "Shell.spawn: expected a Command")));
   ("shell_stop", VBuiltin (fun p -> perform_wand ("Shell!stop", p)));
   ("shell_close", VBuiltin (fun p -> perform_wand ("Shell!close", p)));
@@ -4969,8 +4988,8 @@ let stream_builtins : env = [
   ("shell_write", VBuiltin (fun p -> VBuiltin (fun t ->
     perform_wand ("Shell!write", VTuple [p; t]))));
   ("shell_stream", VBuiltin (function
-    | VCommand (cmd, allow) ->
-      VStream { s_source = SCommand (cmd, allow); s_stages = [] }
+    | VCommand (cmd, allow, dir) ->
+      VStream { s_source = SCommand (cmd, allow, dir); s_stages = [] }
     | _ -> raise (EvalError "Shell.stream: expected a Command")));
   ("stream_of_list", VBuiltin (function
     | VList vs -> VStream { s_source = SVals vs; s_stages = [] }
@@ -6368,7 +6387,8 @@ let stdlib_eval_env : env = [
      A command built in a `Shell(git)` file stays a git command wherever it
      is passed. *)
   ("shell_run", VBuiltin (function
-    | VCommand (cmd, allow) -> perform_shell "Shell!run" allow (VString cmd)
+    | VCommand (cmd, allow, dir) ->
+      perform_shell ?dir "Shell!run" allow (VString cmd)
     | _ -> raise (EvalError "shell_run: expected a Command")));
   ("net_http", VBuiltin (fun request ->
     (* The bound rides beside the perform rather than inside the payload, so
@@ -6394,16 +6414,16 @@ let stdlib_eval_env : env = [
           perform_wand ("Net!download", VTuple [url; dest])))));
   (* `$(cmd)`, over a command the script says only reads: `Shell.inspect!`. *)
   ("shell_inspect", VBuiltin (function
-    | VCommand (cmd, allow) ->
+    | VCommand (cmd, allow, dir) ->
       let saved = Domain.DLS.get ambient_shell_read in
       Domain.DLS.set ambient_shell_read true;
       Fun.protect
         ~finally:(fun () -> Domain.DLS.set ambient_shell_read saved)
-        (fun () -> perform_shell "Shell!run" allow (VString cmd))
+        (fun () -> perform_shell ?dir "Shell!run" allow (VString cmd))
     | _ -> raise (EvalError "shell_inspect: expected a Command")));
   (* The same, with text for the command's stdin: `input |> $(cmd)`. *)
   ("shell_inspect_with", VBuiltin (function
-    | VCommand (cmd, allow) ->
+    | VCommand (cmd, allow, dir) ->
       VBuiltin (fun input ->
         let stdin = match input with
           | VString s -> s
@@ -6414,11 +6434,28 @@ let stdlib_eval_env : env = [
         Fun.protect
           ~finally:(fun () -> Domain.DLS.set ambient_shell_read saved)
           (fun () ->
-            perform_shell "Shell!run" allow (VTuple [VString cmd; VString stdin])))
+            perform_shell ?dir "Shell!run" allow
+              (VTuple [VString cmd; VString stdin])))
     | _ -> raise (EvalError "shell_inspect_with: expected a Command")));
   ("shell_query", VBuiltin (function
-    | VCommand (cmd, allow) -> perform_shell "Shell!capture" allow (VString cmd)
+    | VCommand (cmd, allow, dir) ->
+      perform_shell ?dir "Shell!capture" allow (VString cmd)
     | _ -> raise (EvalError "shell_query: expected a Command")));
+  (* The same command, to run in another directory. On a command that has a
+     directory already, a relative one is read from it, as a second `cd` is:
+     `c |> in_dir a |> in_dir b` runs in `a/b`. *)
+  ("shell_in_dir", VBuiltin (fun d -> VBuiltin (fun c ->
+    let dir = match d with
+      | VPath p | VString p -> p
+      | _ -> raise (EvalError "Shell.in_dir: expected a Path")
+    in
+    match c with
+    | VCommand (cmd, allow, None) -> VCommand (cmd, allow, Some dir)
+    | VCommand (cmd, allow, Some first) ->
+      VCommand (cmd, allow,
+                Some (if Filename.is_relative dir
+                      then Filename.concat first dir else dir))
+    | _ -> raise (EvalError "Shell.in_dir: expected a Command"))));
   (* Process primitives *)
   (* Env primitives *)
   ("env_read_dotenv", performing "Env!read" (function

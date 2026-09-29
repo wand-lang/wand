@@ -5152,6 +5152,8 @@ let stdlib_type_env : env = [
   ("shell_inspect_with", generalize []
      (TFun (TCommand, effs [Effect_set.Shell; Effect_set.Raise] TString TString, Effect_set.pure)));
   ("shell_query", generalize [] (effs [Effect_set.Shell] (TCommand) (TName "ShellResult")));
+  (* Builds a command and runs nothing, so it performs nothing. *)
+  ("shell_in_dir", generalize [] (TPath @-> TCommand @-> TCommand));
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a
      connect, TLS, a timeout -- which is the same line `$()` draws. *)

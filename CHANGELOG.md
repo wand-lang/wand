@@ -4,6 +4,26 @@
 
 ### Added
 
+- **Run a command in another directory.** `Shell.in_dir dir c` is the
+  command `c`, to run in `dir`. Give it to `Shell.run!`, `inspect!`,
+  `inspect_with!`, `query`, `stream`, `spawn` or any other function that
+  takes a `Command`:
+
+  ```
+  Shell.run! (Shell.in_dir copy $*(wand cli.wand gen apis/example.com/v1alpha1))
+  json |> Shell.inspect_with! (Shell.in_dir repo $*(kubectl apply -f -))
+  ```
+
+  Before, the only way was `$(sh -c 'cd "$1" && cmd' ...)`. That put `sh`
+  in the manifest, which allows any command, and `wand t` could not check
+  the commands inside the shell text. Now the manifest names the
+  command's own words.
+
+  Only that command runs in `dir`. The script and its other commands stay
+  where they are. A second `in_dir` with a relative directory is read from
+  the first, as a second `cd` is. A directory that is not there raises
+  when the command runs. `--dry-run` shows the directory.
+
 - **`List.empty` and `Map.empty?`.** Now each of `List` and `Map` has the
   empty value and the test for it. `List.empty` is `[]`, and
   `Map.empty? m` is true when `m` has no entries:

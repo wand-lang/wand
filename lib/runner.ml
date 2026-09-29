@@ -205,6 +205,28 @@ let create_process_for cmd stdin stdout stderr =
     Unix.create_process "/bin/sh" [| "/bin/sh"; "-c"; cmd |]
       stdin stdout stderr
   in
+  match Domain.DLS.get Evaluator.ambient_shell_dir with
+  | Some dir ->
+    (* `Shell.in_dir`. `create_process` has no working directory to give,
+       so a shell makes the `cd` and then becomes the command. This shell is
+       wand's own and not the script's: the command's words were checked
+       before it got here, and the manifest does not need `sh`. The
+       directory and the command arrive as arguments, never as text of the
+       script, so nothing in either is read as shell. *)
+    if not (Sys.file_exists dir && Sys.is_directory dir) then
+      raise (Evaluator.EvalError (Printf.sprintf
+        "Shell.in_dir: %s is not a directory" dir));
+    let argv = match Shell_scan.direct_words cmd with
+      | Some (_ :: _ as ws) ->
+        Array.of_list
+          (["/bin/sh"; "-c"; "cd -- \"$1\" && shift && exec \"$@\""; "wand"; dir]
+           @ ws)
+      | _ ->
+        [| "/bin/sh"; "-c"; "cd -- \"$1\" && exec /bin/sh -c \"$2\""; "wand";
+           dir; cmd |]
+    in
+    Unix.create_process "/bin/sh" argv stdin stdout stderr
+  | None ->
   match Shell_scan.direct_words cmd with
   | Some (w0 :: _ as ws) ->
     (try Unix.create_process w0 (Array.of_list ws) stdin stdout stderr
@@ -722,12 +744,19 @@ let describe_operation name (v : value) =
     | VTuple [a; b] -> text a ^ " -> " ^ text b
     | other -> text other
   in
+  (* A command from `Shell.in_dir` says where it runs: the same words in
+     another directory can be a different change. *)
+  let command v =
+    match Domain.DLS.get Evaluator.ambient_shell_dir with
+    | Some dir -> first v ^ " (in " ^ dir ^ ")"
+    | None -> first v
+  in
   match name with
   | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code"->
-    Some ("run", first v)
-  | "Shell!stream" -> Some ("read the output of", first v)
-  | "Shell!stream_err" -> Some ("read the errors of", first v)
-  | "Shell!spawn" -> Some ("start", first v)
+    Some ("run", command v)
+  | "Shell!stream" -> Some ("read the output of", command v)
+  | "Shell!stream_err" -> Some ("read the errors of", command v)
+  | "Shell!spawn" -> Some ("start", command v)
   | "FS!write_file"   -> Some ("write", with_size v)
   | "FS!write_atomic" -> Some ("write atomically", with_size v)
   | "FS!append"    -> Some ("append to", with_size v)
