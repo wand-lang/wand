@@ -706,12 +706,22 @@ let test_constructors_qualified_by_type () =
    `match` arm holds one. The message named two types; it quotes the lines
    now, says what was called with what, and writes the fix. *)
 let test_lines_read_as_one_expression () =
-  err_contains "two statements in a match arm"
-    "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
-    "lines 4 to 5 are read as one expression, so line 4 is called with line 5 \
-     as its argument:\n  4 | IO.println \"a\"\n  5 | IO.println \"b\"";
+  (* Lines level with each other under an arm are statements, as they are
+     under a definition. They were one call, the first line applied to the
+     second, and when that typechecked nothing said so. *)
+  ok "two statements in a match arm run one after the other"
+    "match Some 1 with\n| Some n ->\n  n + 1\n  n * 10\n| None -> 0"
+    "10";
+  (* Inside brackets a newline means nothing, so two lines there are still
+     one call. The excerpt and the fix hold the lines' own text, not the
+     `let f x = (` beside them. *)
+  err_contains "two lines inside brackets"
+    "import IO\nlet f x = (\n  IO.println \"a\"\n  IO.println \"b\"\n)"
+    "lines 3 to 4 are read as one expression, so line 3 is called with line 4 \
+     as its argument:\n  3 | IO.println \"a\"\n  4 | IO.println \"b\"";
+  (* A body on the `->` line runs on over the lines under it. *)
   err_contains "and it writes the fix with the lines themselves"
-    "import IO\nmatch Some 1 with\n| Some n ->\n  IO.println \"a\"\n  IO.println \"b\"\n| None -> IO.println \"c\""
+    "import IO\nmatch Some 1 with\n| Some n -> IO.println \"a\"\n    IO.println \"b\"\n| None -> ()"
     "put them in brackets with ';' between them:\n  ( IO.println \"a\"; IO.println \"b\" )";
   ok "a call written over several lines is still a call"
     "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"

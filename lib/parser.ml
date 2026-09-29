@@ -1915,7 +1915,7 @@ and match_ s =
         end else None
       in
       expect s Token.Arrow;
-      let body = locate s (fun () -> expr_ 0 s) in
+      let body = locate s (fun () -> statements_ s) in
       cases := !cases @ [(p, guard, body)]
     end else
       continue_ := false
@@ -1968,6 +1968,18 @@ and parse_contract_body s =
      a definition ran together as an application while the same two under a
      binding sequenced. The definition's own column is restored on the way
      out, so the item below it still starts something new. *)
+  let body = statements_ s in
+  if !reqs = [] && !ens = [] then body
+  else Ast.Contract (!reqs, !ens, body)
+
+(* The body of a definition, a `fn`, or a `match` or `handle` arm: one
+   statement, or -- where it begins a line of its own -- each line level
+   with the first, run one after the other.
+
+   An arm read one expression, so the same two lines under an arm were one
+   call, the first line applied to the second, where under a definition they
+   ran one after the other. When the call typechecked nothing said so. *)
+and statements_ s =
   let outer = s.stmt_col in
   let outer_depth = s.stmt_depth in
   (* Only where the body begins a line of its own. Written on the `=` or
@@ -1981,19 +1993,15 @@ and parse_contract_body s =
     s.stmt_col <- peek_col s;
     s.stmt_depth <- s.paren_depth
   end;
-  let body =
-    Fun.protect
-      ~finally:(fun () ->
-        if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
-      (fun () ->
-         let e = ref (locate s (fun () -> expr_ 0 s)) in
-         while anchored && is_expr_start (peek s) && peek_col s >= s.stmt_col do
-           e := Ast.Seq (!e, locate s (fun () -> expr_ 0 s))
-         done;
-         !e)
-  in
-  if !reqs = [] && !ens = [] then body
-  else Ast.Contract (!reqs, !ens, body)
+  Fun.protect
+    ~finally:(fun () ->
+      if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
+    (fun () ->
+       let e = ref (locate s (fun () -> expr_ 0 s)) in
+       while anchored && is_expr_start (peek s) && peek_col s >= s.stmt_col do
+         e := Ast.Seq (!e, locate s (fun () -> expr_ 0 s))
+       done;
+       !e)
 
 and fn_ s =
   (* fn already consumed *)
@@ -2037,7 +2045,7 @@ and parse_handle_ s =
           ignore (advance s);
           let p = pat_atom_ s in
           expect s Token.Arrow;
-          let b = locate s (fun () -> expr_ 0 s) in
+          let b = locate s (fun () -> statements_ s) in
           Ast.ReturnCase (p, b)
         (* `FS!read_file` reaches here as the Upper token "FS!" followed by an
            identifier, since `!` is a suffix character. Joining them gives the
@@ -2052,14 +2060,14 @@ and parse_handle_ s =
           let arg_pat = pat_atom_ s in
           let cont_name = expect_cont_name s in
           expect s Token.Arrow;
-          let b = locate s (fun () -> expr_ 0 s) in
+          let b = locate s (fun () -> statements_ s) in
           Ast.EffectCase (op_name, arg_pat, cont_name, b)
         | Token.Ident op_name ->
           ignore (advance s);
           let arg_pat = pat_atom_ s in
           let cont_name = expect_ident s in
           expect s Token.Arrow;
-          let b = locate s (fun () -> expr_ 0 s) in
+          let b = locate s (fun () -> statements_ s) in
           Ast.EffectCase (op_name, arg_pat, cont_name, b)
         | t ->
           fail_at (peek_loc s) (Format.asprintf "unexpected token in handler case: %a"

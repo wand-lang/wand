@@ -2728,9 +2728,11 @@ let rec unwrap_ctor_type t =
     (arg :: args, result)
   | _ -> ([], t)
 
-(* Two lines meant as two statements, read as one expression. A `match` arm
-   holds one expression, so `IO.println "a"` on one line and
-   `IO.println "b"` on the next apply the first line's Unit to the second. The message was "expected
+(* Two lines meant as two statements, read as one expression. Lines level
+   with each other in a body are statements, but inside brackets a newline
+   means nothing, and a body written on the `->` line runs on over the lines
+   under it -- so `IO.println "a"` on one line and `IO.println "b"` on the
+   next apply the first line's Unit to the second. The message was "expected
    Unit, got ('a -> Unit ! {IO}) -> 'b", which names two types and not the
    brackets that were missing. *)
 let sequence_read_as_call tf (_f : expr) (_x : expr) =
@@ -2744,17 +2746,39 @@ let sequence_read_as_call tf (_f : expr) (_x : expr) =
      when the source is at hand, and named by number when it is not. *)
   match !cur_loc with
   | Some l when not_a_function && l.Token.end_line > l.Token.line ->
-    let first = l.Token.line and last = l.Token.end_line in
-    let numbers = List.init (last - first + 1) (fun i -> first + i) in
+    let numbers =
+      List.init (l.Token.end_line - l.Token.line + 1) (fun i -> l.Token.line + i) in
+    (* The expression's own text on each line: from where it starts on the
+       first, to where it ends on the last. A whole line would bring what
+       stands beside the expression -- the `| Some n ->` of its arm, the
+       `let f x = (` of its definition -- into the excerpt and into the fix,
+       which then did not parse. A line that holds only a bracket around the
+       lines is left out. *)
     let texts =
-      List.map (fun n -> Lexer.source_line l.Token.file n) numbers in
+      List.map (fun n ->
+        Option.map (fun line ->
+          let len = String.length line in
+          let stop =
+            if n = l.Token.end_line then min len (max 0 (l.Token.end_col - 1)) else len in
+          let start = if n = l.Token.line then min stop (max 0 (l.Token.col - 1)) else 0 in
+          String.trim (String.sub line start (stop - start)))
+          (Lexer.source_line l.Token.file n)) numbers
+    in
+    let kept =
+      List.filter (fun (_, t) ->
+        match t with Some ("" | "(" | ")") -> false | _ -> true)
+        (List.combine numbers texts)
+    in
+    let (numbers, texts) =
+      if List.length kept >= 2 then List.split kept else (numbers, texts) in
+    let first = List.hd numbers and last = List.nth numbers (List.length numbers - 1) in
     let rest =
       if last = first + 1 then Printf.sprintf "line %d as its argument" last
       else Printf.sprintf "lines %d to %d as its arguments" (first + 1) last
     in
     let msg =
       if List.for_all Option.is_some texts then
-        let texts = List.map (fun t -> String.trim (Option.get t)) texts in
+        let texts = List.map Option.get texts in
         let excerpt =
           List.map2 (fun n t -> Printf.sprintf "  %d | %s" n t) numbers texts in
         Printf.sprintf

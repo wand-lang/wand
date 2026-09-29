@@ -678,11 +678,14 @@ let ctor1_findings ?source () =
         text; fix = None })
     !Typechecker.relaxed_ctors
 
-let rec check ?source (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
+(* `expression` is an answer asked for -- `wand t --expr`, the REPL -- rather
+   than a file: its last value is what was asked, a function or not. *)
+let rec check ?source ?(expression = false) (prog : Ast.program)
+    (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =
-  ctor1_findings ?source () @ check_items prog item_locs own_env
+  ctor1_findings ?source () @ check_items ?source ~expression prog item_locs own_env
 
-and check_items (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
+and check_items ?source ~expression (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =
   let locs = Array.of_list item_locs in
   let no_loc = Token.point 0 0 0 in
@@ -852,6 +855,33 @@ and check_items (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
                 (Lint_rules.drop1 ~typ:(Typechecker.string_of_typ t))
             | _ -> ())
          | None -> ());
+      (* A function as a statement did nothing, the last one included: a
+         script that ends with `main!` and not `main! ()` runs nothing and
+         prints `<fn>`. Where it is that -- a name alone on its line, whose
+         function takes Unit -- the fix is the `()`. *)
+      (match List.assoc_opt i !Typechecker.expr_item_types with
+       | Some _ when expression && i = List.length prog.Ast.items - 1 -> ()
+       | Some t ->
+         (match Typechecker.repr t with
+          | Typechecker.TFun (arg, _, _) ->
+            let name_alone =
+              match Ast.strip_located body, source with
+              | Ast.Var n, Some src ->
+                (match List.nth_opt (String.split_on_char '\n' src)
+                         (loc.Token.line - 1) with
+                 | Some line -> String.trim line = n
+                 | None -> false)
+              | _ -> false
+            in
+            let fix =
+              match Typechecker.repr arg with
+              | Typechecker.TUnit when name_alone -> Some (AppendToLine " ()")
+              | _ -> None
+            in
+            add ?fix Lint_rules.V_DROP3 loc
+              (Lint_rules.drop3 ~typ:(Typechecker.string_of_typ t))
+          | _ -> ())
+       | None -> ());
       findings := List.rev_append (walk_expr ~spine:true loc body) !findings
     | Ast.TLLetPat (pat, body) ->
       (* A top-level `let _ = ...` is an item, so the walk over expressions
@@ -893,6 +923,9 @@ and check_items (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
        from. What the rule is about is the short name. *)
     | Typechecker.TName n when Typechecker.short_type_name n = "TestOutcome" ->
       add Lint_rules.V_DROP2 loc Lint_rules.drop2
+    | Typechecker.TFun _ ->
+      add Lint_rules.V_DROP3 loc
+        (Lint_rules.drop3 ~typ:(Typechecker.string_of_typ t))
     | _ -> ()) !Typechecker.seq_discard_types;
   (* A manifest that permits more than the file uses. Checked from what
      inference concluded, so the rule cannot disagree with the type error

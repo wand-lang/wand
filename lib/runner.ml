@@ -4429,7 +4429,7 @@ let lint_session (sess : session) (src : string) : (Lint.finding list, string) r
             ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (_, own_type_env, _, _) ->
-      Ok (Lint.check ~source:src prog item_locs own_type_env)
+      Ok (Lint.check ~source:src ~expression:true prog item_locs own_type_env)
   with
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _

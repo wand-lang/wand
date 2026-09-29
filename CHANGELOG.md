@@ -4,6 +4,20 @@
 
 ### Added
 
+- **A warning for a function that nothing calls (`V-DROP3`).** A call
+  that is short of an argument makes a function, not an error. As a
+  statement, that function does nothing, and before, nothing said so:
+
+  ```
+  let count! n =
+    log! "found"      -- log! takes a label and an Int; this line does nothing
+    n
+  ```
+
+  The same rule finds a script that ends with `main!` and not `main! ()`,
+  which runs nothing. `wand t --fix` adds the `()`. `wand t --expr` and the
+  REPL do not report the expression you ask about.
+
 - **A `Wand` module: `wand f` and `wand t` as functions.** A program that
   writes wand can format its output as `wand f` does, and a program that
   checks wand files gets the answer as values, not as JSON text:
@@ -55,6 +69,26 @@
   ```
 
 ### Changed
+
+- **Each line of a `match` arm is a statement, as in a function body.**
+  Two lines under an arm now run one after the other:
+
+  ```
+  | Some n ->
+    IO.println "found %{n}"
+    n
+  ```
+
+  Before, an arm read these lines as one call, the first line applied to
+  the second. When that call did not typecheck, the error told you to use
+  brackets. When it did typecheck, the arm did something different from
+  what it showed, with no error. The same lines in a function body were
+  already two statements, so the two now agree. `handle` arms follow the
+  same rule. `wand f` writes the lines as `(IO.println "found %{n}"; n)`.
+
+  An arm that wrote one call over two lines at the same column now reads
+  them as two statements. Indent the second line further to continue the
+  call.
 
 - **A script can name the commands that its imported functions run.**
   A call runs the commands of the function it calls. So a script that

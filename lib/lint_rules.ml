@@ -21,6 +21,7 @@ type id =
   | V_USES2    (* the file reaches outside itself and does not say so *)
   | V_DROP1    (* a Result is thrown away, so nobody reads the failure *)
   | V_DROP2    (* an assertion's outcome is thrown away, so the test cannot fail *)
+  | V_DROP3    (* a function is thrown away, so the call it needed never happened *)
   | V_SHELL2   (* a command literal runs on to a second line without a `\` *)
   | V_SHELL1   (* Shell is narrowed, but this command word is only known at run time *)
   | V_SHELL3   (* Shell.inspect runs a command known to change things *)
@@ -103,6 +104,12 @@ let all = [
      lost is the whole verdict, not the failure inside a value. *)
   { id = V_DROP2;  code = "V-DROP2";
     summary = "a statement discards an assertion, so the test cannot fail";
+    kind = Violation };
+  (* A missing argument makes a function, not an error: `log! "found"` where
+     `log!` takes two is a value waiting for the second, and as a statement
+     nothing gives it one. It does nothing, and nothing said so. *)
+  { id = V_DROP3;  code = "V-DROP3";
+    summary = "a statement's value is a function nothing calls, so it does nothing";
     kind = Violation };
   { id = V_IMP2;   code = "V-IMP2";
     summary = "an import binds nothing the file uses";
@@ -249,6 +256,12 @@ let drop1 ~typ =
     "this statement's value is a %s and nothing reads it, so a failure here \
      is lost; match it, call the `!` sibling, or bind it to `_` to say the \
      failure does not matter"
+    typ
+
+let drop3 ~typ =
+  Printf.sprintf
+    "this statement's value is a function, %s, so nothing calls it and it \
+     does nothing; give it the arguments it is missing"
     typ
 
 let drop2 =

@@ -780,6 +780,23 @@ writes one of them: the `;` of the block the binding is in, and `in` where
 there is no block. So the newline is a way to write a binding, not a third
 form to read.
 
+A body that starts on a line of its own holds one statement for each line.
+This is true for the body of a definition, of a `fn`, and of a `match` or
+`handle` arm. The lines run one after the other, and the body's value is
+the value of the last one:
+
+```ocaml
+match found with
+| Some n ->
+  IO.println "found %{n}"
+  n
+| None -> 0
+```
+
+`wand f` writes these lines as one bracketed sequence,
+`(IO.println "found %{n}"; n)`. A body that starts on the `=` or `->` line is
+one statement, and the lines under it continue that statement.
+
 Inside a bracket that a statement opened, a newline is formatting again and
 an application continues across it. That is what lets an argument list run
 down the page:
@@ -7554,6 +7571,7 @@ punish the safer choice.
 | `V-NAME1` | a signature exposes a parameter whose name ends in `_` |
 | `V-DROP1` | a statement's value is a `Result` nothing reads, so a failure is lost |
 | `V-DROP2` | a statement's value is a `TestOutcome` nothing reads, so the test cannot fail |
+| `V-DROP3` | a statement's value is a function nothing calls, so it does nothing |
 | `V-IMP2` | an import binds nothing the file mentions, so it does nothing — drop the line |
 | `V-SHADOW1` | a top-level name is bound twice in one file, so which value the name means depends on the line it is read from — rename one of them |
 | `V-CLOCK1` | a length of time is measured by subtracting two readings of `Clock.now`, which a clock step spoils — wrap the work in `Clock.timed` |
@@ -7635,6 +7653,22 @@ group "parses" (fn () -> let doc = parse! source in [
 `wand s` refuses a file that this rule fires on. It does not print a verdict
 that it does not have. A run that discards its assertions cannot answer the
 question you asked.
+
+`V-DROP3` is a statement whose value is a function. A missing argument makes
+a function, not an error, so a call that is short of one argument does
+nothing:
+
+```ocaml
+let log! (label: String) (n: Int) = (IO.println "%{label}: %{n}"; n)
+
+let count! n =
+  log! "found"      -- V-DROP3: log! waits for its Int, and nothing gives it one
+  n
+```
+
+Give the call the arguments it is missing. The same rule catches a script
+that ends with `main!` and not `main! ()`, which runs nothing. There,
+`wand t --fix` adds the `()`.
 
 ```sh
 wand t --strict script.wand       # violations become errors (exit 1)

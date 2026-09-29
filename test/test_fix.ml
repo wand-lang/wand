@@ -191,6 +191,15 @@ let test_piped_inspect_takes_input () =
     "uses {Shell(cat)}\n\nlet S = import Shell\n\nlet main! () = \"x\" |> S.inspect_with! $*(cat)\n"
     fixed
 
+(* A script that ends with `main!` and not `main! ()` runs nothing. The fix
+   is the `()`, where the name is alone on its line and takes Unit. *)
+let test_bare_main_is_called () =
+  let (fixed, applied) =
+    fix "uses {IO}\n\nimport IO\n\nlet main! () = IO.println \"hi\"\n\nmain!\n" in
+  Alcotest.(check string) "the call is written"
+    "uses {IO}\n\nimport IO\n\nlet main! () = IO.println \"hi\"\n\nmain! ()\n" fixed;
+  Alcotest.(check bool) "by V-DROP3" true (List.mem "V-DROP3" (codes applied))
+
 (* A function from another module runs its own commands, so a script's
    `Shell(...)` list has to hold the words of what it calls -- and only
    those: a function it does not call adds nothing (issue #42). *)
@@ -306,6 +315,9 @@ let () =
       Alcotest.test_case "an empty default" `Quick
         test_empty_default_becomes_a_literal;
       Alcotest.test_case "a piped inspect!" `Quick test_piped_inspect_takes_input;
+    ];
+    "a function nothing calls", [
+      Alcotest.test_case "a bare main! is called" `Quick test_bare_main_is_called;
     ];
     "the words of what a file calls", [
       Alcotest.test_case "count toward its manifest" `Quick test_called_words_count;

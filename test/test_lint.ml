@@ -191,7 +191,7 @@ let test_uses1 () =
   fires "manifest permits an unused effect"
     "uses {Shell, FS.Write}\nlet x = 1\nx" "A-USES1";
   silent "manifest matching what the file does"
-    "uses {Shell}\nlet publish! () = $(rsync -a . host:/srv)\npublish!";
+    "uses {Shell}\nlet publish! () = $(rsync -a . host:/srv)\npublish! ()";
   silent "no manifest at all" "let x = 1\nx";
   (* `uses {}` is not advice: a file that reaches outside itself for nothing
      has nothing to declare, so the line should go rather than shrink. *)
@@ -248,6 +248,34 @@ let test_drop1 () =
    another is thrown away and the test reports a pass however it went. The
    framework cannot notice -- the value is gone before it is asked for -- so
    the rule is the only thing between a green run and a lie. *)
+(* A missing argument makes a function, not an error, so a call short of one
+   does nothing. The same two lines, in a body and in an arm, where the arm
+   used to read them as one call. *)
+let test_drop3 () =
+  let log = "import IO\nlet log! (label: String) (n: Int) = (IO.println \"%{label}: %{n}\"; n)\n" in
+  fires "a call short of an argument, in a body"
+    (log ^ "let count! n =\n  log! \"found\"\n  n\ncount! 1")
+    "V-DROP3";
+  fires "and in a match arm"
+    (log ^ "let count! x =\n  match x with\n  | Some n ->\n    log! \"found\"\n    n\n  | None -> 0\ncount! None")
+    "V-DROP3";
+  (* A function handed to another, or bound to a name, is not a statement. *)
+  silent "a function passed on"
+    "import List\nlet inc x = x + 1\nList.map inc [1]";
+  silent "a function bound to a name"
+    "let inc x = x + 1\nlet f = inc\nf 1";
+  (* A file's last statement is checked too: a script that ends with
+     `main!` runs nothing. An expression asked about is an answer, so
+     `wand t --expr List.map` says nothing. *)
+  let file_codes src =
+    match Runner.typecheck_source ~path:"drop3_test.wand" src with
+    | Ok sc -> List.map (fun (f : Lint.finding) -> Lint_rules.code f.Lint.rule) sc.Runner.sc_findings
+    | Error d -> Alcotest.failf "check failed: %s" (Diag.legacy d)
+  in
+  if not (List.mem "V-DROP3" (file_codes "import IO\nlet main () = IO.println \"hi\"\nmain\n")) then
+    Alcotest.fail "a file that ends with a bare main is not reported";
+  silent "an expression asked about" "import List\nList.map"
+
 let test_drop2 () =
   fires "an assertion discarded by `;`"
     "let {test} = import Test\ntest \"t\" (fn t -> (t.eq 1 2; t.eq 3 3))"
@@ -308,10 +336,10 @@ let test_uses1_shell_binaries () =
 
 let test_uses2 () =
   fires "effects and no manifest"
-    "let publish! () = $(rsync -a . host:/srv)\npublish!" "V-USES2";
+    "let publish! () = $(rsync -a . host:/srv)\npublish! ()" "V-USES2";
   (* Saying so is the whole point, so having said it ends the matter. *)
   silent "the same file, declared"
-    "uses {Shell}\nlet publish! () = $(rsync -a . host:/srv)\npublish!";
+    "uses {Shell}\nlet publish! () = $(rsync -a . host:/srv)\npublish! ()";
   silent "a file that reaches outside nothing" "let x = 1\nx";
   (* Raise is not a capability and never appears in a manifest, so a file
      that only raises has nothing it could declare. *)
@@ -321,7 +349,7 @@ let test_uses2 () =
      checked against, which is the thing the manifest exists to stop. A repo
      running --strict can insist on it, so this is a violation and not the
      advisory it used to be. *)
-  let undeclared = findings "let publish! () = $(rsync -a . host:/srv)\npublish!" in
+  let undeclared = findings "let publish! () = $(rsync -a . host:/srv)\npublish! ()" in
   Alcotest.(check bool) "fails --strict" true
     (List.exists Lint.fails_strict undeclared)
 
@@ -784,6 +812,7 @@ let () =
       Alcotest.test_case "V-NAME1"  `Quick test_name1;
       Alcotest.test_case "V-DROP1"  `Quick test_drop1;
       Alcotest.test_case "V-DROP2"  `Quick test_drop2;
+      Alcotest.test_case "V-DROP3"  `Quick test_drop3;
       Alcotest.test_case "V-IMP2"   `Quick test_imp2;
       Alcotest.test_case "V-CLOCK1" `Quick test_clock1;
       Alcotest.test_case "A-SHELL1" `Quick test_shell1;

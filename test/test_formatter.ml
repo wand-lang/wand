@@ -194,6 +194,21 @@ let test_a_shadowed_function_keeps_its_semicolon () =
   if Lint.contains out ";" then
     Alcotest.failf "a `;` was kept where nothing needs it:\n%s" out
 
+(* Lines level with each other under an arm are statements, as under a
+   definition, and `wand f` writes them as one bracketed sequence. What it
+   writes has to read back as the same statements, in a `match` arm and in a
+   `handle` arm, at any margin. *)
+let test_arm_statements_settle () =
+  List.iter (fun w ->
+    formats_and_parses "match arm statements" w
+      "import IO\nlet f x =\n  match x with\n  | Some n ->\n    IO.println \"a\"\n    IO.println \"b\"\n  | None -> ()\n";
+    formats_and_parses "handle arm statements" w
+      "import IO\nlet f () =\n  handle IO.println \"x\" with\n  | IO!println s k ->\n    IO.println \"a\"\n    k ()\n")
+    [20; 40; 92];
+  let out = fmt "import IO\nlet f x =\n  match x with\n  | Some n ->\n    IO.println \"a\"\n    IO.println \"b\"\n  | None -> ()\n" in
+  if not (Lint.contains out "(IO.println \"a\"; IO.println \"b\")") then
+    Alcotest.failf "the two statements were not written as a sequence:\n%s" out
+
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
    wrapped shape, so it stayed on one line however narrow the margin. The
@@ -2067,6 +2082,8 @@ let () =
         test_a_nested_pipeline_keeps_its_brackets;
       Alcotest.test_case "a bare field list wraps" `Quick
         test_a_bare_field_list_wraps;
+      Alcotest.test_case "statements under an arm settle" `Quick
+        test_arm_statements_settle;
       Alcotest.test_case "a shadowed function keeps its ;" `Quick
         test_a_shadowed_function_keeps_its_semicolon;
       Alcotest.test_case "parameterless fn spacing" `Quick
