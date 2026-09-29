@@ -203,13 +203,52 @@ let marker_line name = Printf.sprintf "%s: %s, written by `wand p`" marker name
 
 let starts_with p l = String.length l >= String.length p && String.sub l 0 (String.length p) = p
 
+(* The line the record closes on, counted from 0: where the `{` it opens
+   with is closed again. Strings and `--` comments are stepped over, so a
+   brace in either does not count. None when it never closes, which the
+   record's own parser then reports. *)
+let record_end lines =
+  let depth = ref 0 and opened = ref false and found = ref None in
+  List.iteri (fun i line ->
+    if !found = None then begin
+      let n = String.length line in
+      let j = ref 0 and in_string = ref false in
+      while !j < n && !found = None do
+        let c = line.[!j] in
+        if !in_string then begin
+          if c = '\\' then incr j
+          else if c = '"' then in_string := false
+        end
+        else if c = '"' then in_string := true
+        else if c = '-' && !j + 1 < n && line.[!j + 1] = '-' then j := n
+        else if c = '{' then (incr depth; opened := true)
+        else if c = '}' then begin
+          decr depth;
+          if !opened && !depth = 0 then found := Some i
+        end;
+        incr j
+      done
+    end) lines;
+  !found
+
+(* A line of the sum section: a URL, a version and a hash. *)
+let is_sum_line line =
+  match String.split_on_char ' ' (String.trim line) with
+  | [_; _; h] -> String.length h > 7 && String.sub h 0 7 = "sha256:"
+  | _ -> false
+
+let is_blank_or_comment line =
+  let t = String.trim line in
+  t = "" || starts_with "--" t
+
 let split_sections ~file text =
   let lines = String.split_on_char '\n' text in
+  let closes = record_end lines in
   let record = ref [] and iface = ref None and sum = ref None in
   let current = ref `Record in
   List.iteri (fun i line ->
+    let at = Some (Token.point ~file (i + 1) 1 0) in
     if starts_with marker line then begin
-      let at = Some (Token.point ~file (i + 1) 1 0) in
       let name =
         if line = marker_line "interface" then `Interface
         else if line = marker_line "sum" then `Sum
@@ -221,11 +260,23 @@ let split_sections ~file text =
       (match name, !current with
        | `Interface, `Record -> iface := Some []
        | `Sum, (`Record | `Interface) when !sum = None -> sum := Some []
-       | _ -> fail at "wand.pkg holds the record, then the interface section, then the sum section, each once");
+       | _ -> fail at "wand.pkg holds the record, then the interface section, then the \
+                       sum section, each once; run `wand p tidy` to write them again");
       current := name
     end else
       match !current with
-      | `Record -> record := line :: !record
+      | `Record ->
+        (* Past the record's `}` and before any section, a line is in
+           neither. Read as more of the record, an interface line whose
+           marker had gone was reported as a mistake in the record's own
+           syntax -- `cons is '::'` -- which named nothing that was wrong. *)
+        (match closes with
+         | Some e when i > e && not (is_blank_or_comment line) ->
+           fail at "wand.pkg has text after the record that is not in a section. \
+                    A section opens with a `-- DO NOT EDIT: ...` line that wand p \
+                    writes; run `wand p tidy` to write the sections again"
+         | _ -> ());
+        record := line :: !record
       | `Interface -> iface := Option.map (fun l -> line :: l) !iface
       | `Sum -> sum := Option.map (fun l -> line :: l) !sum) lines;
   let trim l =
@@ -243,10 +294,59 @@ let join_sections { record; iface; sum } =
   in
   String.trim record ^ "\n" ^ section "interface" iface ^ section "sum" sum
 
+(* Set while `wand p tidy` or `wand p interface` runs. Both write the
+   sections, so neither needs the ones on disk to be well formed: a section
+   that cannot be read is written again. Before this, a marker line typed
+   wrong stopped every command, `wand p tidy` among them, and the error
+   said to run `wand p tidy`. *)
+let repairing = ref false
+
+(* What `repairing` read and could not keep, for the command to say so. *)
+let dropped : string list ref = ref []
+
+(* The sections, read the way `wand p tidy` needs them: the record up to its
+   `}`, every well-formed sum line after it wherever it stands -- so a hash
+   already recorded is still checked, not recorded afresh -- and the
+   interface lines under a correct interface marker. Anything else after
+   the record is dropped, and named in `dropped`. *)
+let salvage_sections lines =
+  match record_end lines with
+  | None -> None
+  | Some e ->
+    let record = List.filteri (fun i _ -> i <= e) lines in
+    let rest = List.filteri (fun i _ -> i > e) lines in
+    let iface = ref None and sum = ref [] in
+    let in_iface = ref false in
+    List.iter (fun line ->
+      if starts_with marker line then begin
+        in_iface := line = marker_line "interface" && !iface = None;
+        if !in_iface then iface := Some []
+        else if line <> marker_line "sum" then dropped := line :: !dropped
+      end
+      else if is_sum_line line then sum := line :: !sum
+      else if !in_iface then iface := Option.map (fun l -> line :: l) !iface
+      else if not (is_blank_or_comment line) then dropped := line :: !dropped)
+      rest;
+    let trim l =
+      let rec drop = function "" :: rest -> drop rest | l -> l in
+      List.rev (drop (List.rev (drop l)))
+    in
+    dropped := List.rev !dropped;
+    Some { record = String.concat "\n" record;
+           iface = Option.map (fun l -> trim (List.rev l)) !iface;
+           sum = (match List.rev !sum with [] -> None | l -> Some l) }
+
 let read_sections root =
   let file = Filename.concat root file_name in
   match In_channel.with_open_text file In_channel.input_all with
-  | text -> split_sections ~file text
+  | text ->
+    (match split_sections ~file text with
+     | s -> s
+     | exception (Error _ as e) when !repairing ->
+       dropped := [];
+       (match salvage_sections (String.split_on_char '\n' text) with
+        | Some s -> s
+        | None -> raise e))
   | exception Sys_error msg -> fail None ("cannot read " ^ file ^ ": " ^ msg)
 
 let write_sections root sections =
@@ -489,8 +589,9 @@ let verify pkg r =
       "%s %s does not match the sum section of wand.pkg, which has %s, and the copy in %s \
        hashes to %s. The module changed after it was recorded, or the cache \
        was changed. Remove %s to fetch it again, and change the sum section only if \
-       you trust the new code"
-      r.path r.version want (cache_dir r) h (cache_dir r)))
+       you trust the new code. If the sum section was changed by hand, restore it \
+       from version control, or remove its line for %s %s and run `wand p tidy`"
+      r.path r.version want (cache_dir r) h (cache_dir r) r.path r.version))
   | None ->
     raise (Unresolved (Printf.sprintf
       "the sum section of wand.pkg has no line for %s %s. Run `wand p tidy`" r.path r.version))

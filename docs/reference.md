@@ -3949,6 +3949,19 @@ to the next major: `0.85.0` accepts 0.85.0 up to, not including, 1.0.0, and
 `1.2.0` accepts 1.2.0 up to 2.0.0. A run or a check of a file in the package
 refuses a wand outside that range, and the error names the field to change.
 
+Do not edit the two sections. If a section cannot be read, every command
+stops, and `wand p tidy` writes the sections again. This is true for a
+marker line typed wrong, for sections in the wrong order, and for text
+after the record that is in no section. `tidy` keeps each sum line that it
+can read, so a hash already recorded is still checked. It drops the other
+lines and names them. Then run `wand p interface` to write the interface
+section from the code.
+
+A sum line with a wrong hash is different. wand cannot know whether the
+line or the module changed, so every command stops, `tidy` too. If the
+line was changed by hand, restore it from version control, or remove the
+line and run `wand p tidy`.
+
 ### Importing a module by URL
 
 ```ocaml

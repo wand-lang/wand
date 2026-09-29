@@ -34,6 +34,65 @@ let parse_error label needle src =
       Alcotest.failf "%s: expected %S in: %s" label needle msg
   | _ -> Alcotest.failf "%s: expected an error" label
 
+(* The sections are what `wand p` writes, so a person who breaks one can
+   always have them written again. *)
+let record = "{ package = https://x.dev/a\n, wand    = 0.93.0\n}\n"
+let iface_marker = "-- DO NOT EDIT: interface, written by `wand p`"
+let sum_marker = "-- DO NOT EDIT: sum, written by `wand p`"
+let a_sum = "https://x.dev/b 1.0.0 sha256:7fad9f3e89a24df16d0956882e356db96304aae3bf686e75e8dbd5bf63700afe"
+
+let sections_of text =
+  let dir = fresh_dir () in
+  write (Filename.concat dir "wand.pkg") text;
+  Package.read_sections dir
+
+let repaired text =
+  Package.repairing := true;
+  Fun.protect ~finally:(fun () -> Package.repairing := false)
+    (fun () -> sections_of text)
+
+(* Text between the record and the first section is in neither. Read as
+   more of the record, an interface line was reported as `cons is '::'`. *)
+let test_text_after_the_record () =
+  (match sections_of (record ^ "\nlib.double : Int -> Int\n\n" ^ sum_marker ^ "\n" ^ a_sum ^ "\n") with
+   | exception Package.Error (_, msg) ->
+     if not (contains msg "text after the record that is not in a section") then
+       Alcotest.failf "the error does not say what is wrong: %s" msg;
+     if not (contains msg "wand p tidy") then
+       Alcotest.failf "the error does not say what to run: %s" msg
+   | _ -> Alcotest.fail "text in no section was read");
+  (* A comment there is still the record's. *)
+  ignore (sections_of (record ^ "-- a note\n\n" ^ sum_marker ^ "\n" ^ a_sum ^ "\n"))
+
+(* `wand p tidy` and `wand p interface` read a broken file as far as it
+   goes: the record, every sum line wherever it stands, and the interface
+   under its marker. What else stands after the record is dropped. Before,
+   they stopped on the same error as everything else -- which told the
+   reader to run `wand p tidy`. *)
+let test_a_broken_file_is_read_to_repair () =
+  let s = repaired (record ^ "\n" ^ iface_marker ^ "\nlib.double : Int -> Int\n\n\
+                    -- DO NOT EDIT: sums, written by `wand p`\n" ^ a_sum ^ "\n") in
+  Alcotest.(check (option (list string))) "a mistyped marker keeps its sum line"
+    (Some [a_sum]) s.Package.sum;
+  Alcotest.(check (option (list string))) "and the interface"
+    (Some ["lib.double : Int -> Int"]) s.Package.iface;
+  Alcotest.(check (list string)) "and drops the marker"
+    ["-- DO NOT EDIT: sums, written by `wand p`"] !Package.dropped;
+  let s = repaired (record ^ "\n" ^ sum_marker ^ "\n" ^ a_sum ^ "\n\n" ^ iface_marker ^ "\nversion 0.2.0\n") in
+  Alcotest.(check (option (list string))) "sections in the wrong order keep both"
+    (Some ["version 0.2.0"]) s.Package.iface;
+  Alcotest.(check (option (list string))) "the sum too" (Some [a_sum]) s.Package.sum;
+  let s = repaired (record ^ "\nlib.double : Int -> Int\n" ^ a_sum ^ "\n") in
+  Alcotest.(check (option (list string))) "with no markers the sum line is kept"
+    (Some [a_sum]) s.Package.sum;
+  Alcotest.(check (option (list string))) "and no interface is made up" None s.Package.iface;
+  Alcotest.(check (list string)) "the interface line is dropped"
+    ["lib.double : Int -> Int"] !Package.dropped;
+  (* Only these two commands read this way. *)
+  (match sections_of (record ^ "\nlib.double : Int -> Int\n") with
+   | exception Package.Error _ -> ()
+   | _ -> Alcotest.fail "a build read a broken wand.pkg")
+
 let test_reads_the_file () =
   let (url, wand, _, require) = parse {|{ package = https://github.com/mjstahl/json
 , wand    = 0.4.0
@@ -270,6 +329,9 @@ let test_fetch_and_sum () =
     Hashtbl.reset Package.hashes;
     write_sum app "https://x.dev/me/json 1.4.0 sha256:00\n";
     error_says "a mismatch" "does not match the sum section" (run_in app "main.wand" main);
+    (* The other cause: the sum section, changed by hand. *)
+    error_says "and the other cause of one" "restore it from version control"
+      (run_in app "main.wand" main);
     write (Filename.concat app "wand.pkg") (app_mod "1.5.0");
     error_says "no such tag" "git clone of the tag v1.5.0 failed" (run_in app "main.wand" main))
 
@@ -620,6 +682,9 @@ let () =
       Alcotest.test_case "refuses what is not data" `Quick test_refuses_what_is_not_data;
       Alcotest.test_case "the wand range"      `Quick test_the_wand_range;
       Alcotest.test_case "found above the file" `Quick test_found_above_the_file;
+      Alcotest.test_case "text after the record" `Quick test_text_after_the_record;
+      Alcotest.test_case "a broken file is read to repair" `Quick
+        test_a_broken_file_is_read_to_repair;
     ];
     "imports", [
       Alcotest.test_case "by URL"              `Quick test_url_imports;

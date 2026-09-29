@@ -236,7 +236,26 @@ let rewrite (pkg : Package.t) require =
   let pkg = { pkg with require } in
   settle pkg
 
-let tidy ~dir =
+(* Run `f` reading wand.pkg the way a command that writes its sections may:
+   a section that cannot be read is written again, and what could not be
+   kept is said. *)
+let repairing f =
+  Package.repairing := true;
+  Package.dropped := [];
+  Fun.protect ~finally:(fun () -> Package.repairing := false) (fun () ->
+    let result = f () in
+    (match !Package.dropped with
+     | [] -> ()
+     | lines ->
+       prerr_endline
+         "wand.pkg had lines that are in no section, and they were dropped:";
+       List.iter (fun l -> prerr_endline ("  " ^ l)) lines;
+       prerr_endline
+         "The sections were written again. If the package has an interface \
+          section, run `wand p interface` to write it from the code.");
+    result)
+
+let tidy ~dir = repairing @@ fun () ->
   let pkg = package_here dir in
   let imports = List.concat_map imports_of_file (wand_files pkg.root "") in
   let say = ref [] in
@@ -508,6 +527,7 @@ let release ~dir asked =
   Printf.printf "tagged v%s. Push it: git push origin HEAD v%s\n" version version
 
 let interface ~dir ~check =
+  (if check then (fun f -> f ()) else repairing) @@ fun () ->
   let pkg = package_here dir in
   let lines = current_interface pkg in
   let sections = Package.read_sections pkg.root in
