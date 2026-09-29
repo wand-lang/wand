@@ -4843,6 +4843,20 @@ exception Each_par_stopped
 let drains_running = Atomic.make 0
 let stop_children_hook : (unit -> unit) ref = ref (fun () -> ())
 
+(* `Wand.check` and `Wand.check_file!`. A check needs the loader and the
+   linter, which are above this module, so the runner sets these. *)
+let wand_check_hook : (string -> value) ref =
+  ref (fun _ -> raise (EvalError "Wand.check is not available here"))
+let wand_check_file_hook : (string -> string -> value) ref =
+  ref (fun _ _ -> raise (EvalError "Wand.check_file! is not available here"))
+
+(* The formatter and the checker keep state of their own between the calls
+   they make, which was safe while each ran once, before a program started.
+   A program can now call them, from several `Par` workers at once, so one
+   runs at a time. *)
+let wand_tools_lock = Mutex.create ()
+let with_wand_tools f = Mutex.protect wand_tools_lock f
+
 (* Read [desc] and run [f] on each item as a fiber, at most [limit] at a
    time; at the limit it stops reading until one ends. The first item that
    raises stops the rest and the read, and is raised. *)
@@ -6444,6 +6458,29 @@ let stdlib_eval_env : env = [
   (* The same command, to run in another directory. On a command that has a
      directory already, a relative one is read from it, as a second `cd` is:
      `c |> in_dir a |> in_dir b` runs in `a/b`. *)
+  ("wand_format", VBuiltin (function
+    | VString src ->
+      (match with_wand_tools (fun () -> Formatter.format_source src) with
+       | out -> VString out
+       | exception Lexer.LexError (l, msg) ->
+         raise (EvalError (Printf.sprintf "%d:%d: %s" l.Token.line l.Token.col msg))
+       | exception Parser.ParseError (Some l, msg) ->
+         raise (EvalError (Printf.sprintf "%d:%d: %s" l.Token.line l.Token.col msg))
+       | exception Parser.ParseError (None, msg) -> raise (EvalError msg))
+    | _ -> raise (EvalError "Wand.format: expected a String")));
+  ("wand_check", VBuiltin (function
+    | VString src -> with_wand_tools (fun () -> !wand_check_hook src)
+    | _ -> raise (EvalError "Wand.check: expected a String")));
+  (* The file is read as `FS.read_file!` reads one, through the effect, so a
+     trace shows the read and a handler can answer it. What it imports is
+     read by the loader, as a script's imports are. *)
+  ("wand_check_file", VBuiltin (function
+    | (VPath p | VString p) as path ->
+      (match perform_wand ("FS!read_file", path) with
+       | VString src -> with_wand_tools (fun () -> !wand_check_file_hook p src)
+       | _ -> raise (EvalError "Wand.check_file!: the read gave no text"))
+    | _ -> raise (EvalError "Wand.check_file!: expected a Path")));
+  ("wand_version", VVersion Version.value);
   ("shell_in_dir", VBuiltin (fun d -> VBuiltin (fun c ->
     let dir = match d with
       | VPath p | VString p -> p

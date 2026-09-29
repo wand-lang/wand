@@ -1256,7 +1256,8 @@ and atom_base_ s =
     Ast.Qualified (name, constr_atom_ s)
   | Token.Upper name  -> constr_body_ s name
   | Token.EnvVar name -> EnvVar name
-  | Token.Hole        -> Hole
+  (* Located on its own, so a hole can say where it is. *)
+  | Token.Hole        -> Located (loc, Hole)
   | Token.Minus      -> UnOp ("-", expr_ 65 s)
   | Token.Bang       -> UnOp ("!", expr_ 65 s)
   | Token.LParen     ->

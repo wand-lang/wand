@@ -1,0 +1,72 @@
+uses {FS.Read, FS.Write}
+
+let {test} = import Test
+import FS
+import List
+import Option
+import Par
+import Path
+import Result
+import String
+import Wand
+
+-- `wand f` and `wand t` as functions.
+
+-- A file of wand, written badly: what a generator might produce.
+let messy = "type Pod(name:String,restarts:Int)\nlet  f x=x+1\n"
+
+test "format writes what wand f writes, and that is a fixed point" (fn t ->
+  let once = Wand.format! messy;
+  t.eq (once, Ok once) (Wand.format! once, Wand.format once))
+
+test "format gives an Error for source that does not parse" (fn t ->
+  t.ok (Result.error? (Wand.format "let x =")))
+
+test "check gives the type of an expression" (fn t ->
+  t.eq (Some "Int") (Wand.check "1 + 2").type)
+
+test "check gives each hole and its type" (fn t ->
+  t.eq
+    [Wand.Hole(line = 2, col = 16, type = "Int -> Int -> Int ! 'e")]
+    (Wand.check "import List\nList.fold_left ? 0 [1, 2, 3]").holes)
+
+test "check gives errors and warnings as diagnostics" (fn t ->
+  let codes src = List.map (fn (d: Wand.Diagnostic) -> d.code) (Wand.check src).diagnostics;
+  t.eq (["E-TYPE"], ["V-BANG2"], None) (
+    codes `1 + "a"`,
+    codes "let f! x = x\nf! 1",
+    (Wand.check `1 + "a"`).type
+  ))
+
+-- A string has no directory for `./x` to be read from, and a read would be
+-- `FS.Read` in a function that has none.
+test "check reads no file, so an import of one is a diagnostic" (fn t ->
+  let found = (Wand.check "import ./other\n1").diagnostics;
+  t.eq ["E-IMPORT"] (List.map (fn (d: Wand.Diagnostic) -> d.code) found))
+
+test "check_file checks a file with what it imports" (fn t ->
+  with FS.temp_dir "wand_check_" as dir -> (
+    FS.write_file! (Path.join dir ./lib.wand) "let double x = x * 2\n";
+    FS.write_file! (Path.join dir ./good.wand) "import ./lib\nlib.double 2\n";
+    FS.write_file! (Path.join dir ./bad.wand) "import ./lib\nlib.double \"a\"\n";
+    let good = Wand.check_file! (Path.join dir ./good.wand);
+    let bad = Wand.check_file! (Path.join dir ./bad.wand);
+    t.eq (Some "Int", [], None, ["E-TYPE"]) (
+      good.type,
+      good.diagnostics,
+      bad.type,
+      List.map (fn (d: Wand.Diagnostic) -> d.code) bad.diagnostics
+    )
+  ))
+
+test "check_file gives an Error for a file it cannot read" (fn t ->
+  t.ok (Result.error? (Wand.check_file ./no-such-file.wand)))
+
+-- The checker keeps state between the calls it makes, so one check runs at
+-- a time. Many at once each get their own answer.
+test "checks from several workers do not mix" (fn t ->
+  let srcs = List.map (fn n -> "%{n} + %{n}") (List.range 1 40);
+  let types = Par.map 8 (fn s -> Option.default "" (Wand.check s).type) srcs;
+  t.eq (List.map (fn _ -> Ok "Int") srcs) types)
+
+test "the version is this wand's" (fn t -> t.ok (Wand.version >= 0.92.0))

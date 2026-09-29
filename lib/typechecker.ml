@@ -12,7 +12,7 @@ let stdlib_module_names =
     "Proc"; "Decode"; "Shell"; "Test"; "Args"; "Clock"; "Size"; "Port";
     "DateTime"; "Result"; "URL"; "Version"; "Glob"; "IPv4"; "CIDR";
     "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML"; "Shared";
-    "Net" ]
+    "Net"; "Wand" ]
 
 (* A module that was one and is not. The name is not unknown to anyone
    holding a script from an earlier release, so the error says what to write
@@ -127,6 +127,8 @@ let effs es a b = TFun (a, b, Effect_set.of_list es)
 
 let next_id = ref 0
 let holes : typ list ref = ref []
+(* Where each hole is, in the order of `holes`. *)
+let hole_locs : Token.loc option list ref = ref []
 
 (* The type of every expression discarded by a `(e1; e2)` sequence, with the
    location of the discarded expression. The lint that catches a thrown-away
@@ -3348,6 +3350,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Hole ->
     let t = fresh () in
     holes := t :: !holes;
+    hole_locs := !cur_loc :: !hole_locs;
     t
   | UnOp ("-", e) ->
     let n = fresh_num () in
@@ -4682,6 +4685,15 @@ let infer_expr (e : expr) : (typ, string) result =
     Error (Printf.sprintf "%d:%d: %s" loc.Token.line loc.Token.col msg)
 
 (* All primitives — used when typechecking stdlib modules *)
+(* What `wand_check` answers: each diagnostic as (severity, code, file,
+   line, col, message), each hole as (line, col, type), and the type of the
+   source when it checks. *)
+let wand_checked =
+  TTuple [
+    TList (TTuple [TString; TString; TString; TInt; TInt; TString]);
+    TList (TTuple [TInt; TInt; TString]);
+    TApp (TName "Option", TString) ]
+
 let stdlib_type_env : env = [
   ("io_print",   let a = fresh () in generalize [] (effs [Effect_set.IO] (a) (TUnit)));
   ("io_println", let a = fresh () in generalize [] (effs [Effect_set.IO] (a) (TUnit)));
@@ -5154,6 +5166,13 @@ let stdlib_type_env : env = [
   ("shell_query", generalize [] (effs [Effect_set.Shell] (TCommand) (TName "ShellResult")));
   (* Builds a command and runs nothing, so it performs nothing. *)
   ("shell_in_dir", generalize [] (TPath @-> TCommand @-> TCommand));
+  (* The `Wand` module: `wand f` and `wand t` as functions. A check answers
+     in tuples, and `Wand.wand` makes its records of them. *)
+  ("wand_format", generalize [] (effs [Effect_set.Raise] TString TString));
+  ("wand_check", generalize [] (TString @-> wand_checked));
+  ("wand_check_file", generalize []
+     (effs [Effect_set.FsRead; Effect_set.Raise] TPath wand_checked));
+  ("wand_version", generalize [] TVersion);
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a
      connect, TLS, a timeout -- which is the same line `$()` draws. *)
@@ -6008,6 +6027,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   ctor_env_memo := None;
   visible_set := None;
   holes := [];
+  hole_locs := [];
   relaxed_ctors := [];
   let prog = settle_aliases ~init_tenv prog in
   (* Read before the items are walked, so an implementation can precede the

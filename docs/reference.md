@@ -39,7 +39,7 @@ For what wand is and why, see the [README](../README.md).
 - [Packages](#packages)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
-  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result)
+  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result) · [Wand](#wand)
 - [Testing](#testing)
 - [Comments](#comments)
 - [Style for scripts](#style-for-scripts)
@@ -6835,6 +6835,59 @@ write the `!` half of its own pair:
 let port_of s = if s == "" then Error "no port given" else String.to_int s
 let port_of! s = Result.get! (port_of s)
 ```
+
+### `Wand`
+
+```ocaml
+format      : String -> Result String String
+format!     : String -> String ! {Raise}
+check       : String -> Checked
+check_file  : Path -> Result String Checked ! {FS.Read}
+check_file! : Path -> Checked ! {FS.Read, Raise}
+version     : Version
+```
+
+The language's own tools, as functions. `format` is `wand f` and `check` is
+`wand t`, for a program that writes wand or checks it.
+
+`format` formats source as `wand f` does. A generator formats what it
+writes, so its output is what `wand f` writes, and `wand f` leaves the file
+as it is. `format!` raises, and `format` gives an `Error`, when the source
+does not parse.
+
+`check` checks source as `wand t` does, and gives the answer as values:
+
+```ocaml
+type Diagnostic(severity: String, code: String, file: String, line: Int, col: Int, message: String)
+type Hole(line: Int, col: Int, type: String)
+type Checked(diagnostics: List Diagnostic, holes: List Hole, type: Option String)
+```
+
+`diagnostics` holds the errors and the lint warnings, with the fields that
+`wand t --json` writes. `holes` holds each `?` and the type that belongs
+there. `type` is the type of the source, of its last expression or `Unit`,
+and `None` when the source has an error:
+
+```ocaml
+(Wand.check "import List\nList.fold_left ? 0 [1, 2, 3]").holes
+-- [Hole(2, 16, "Int -> Int -> Int ! 'e")]
+```
+
+The source is read as a file is, so it imports what it uses. `check` reads
+no files, so it can import the standard library and nothing else. An import
+of a file is an `E-IMPORT` diagnostic. `check` cannot fail: a source with
+errors is an answer, not a failure, so there is no `check!`.
+
+`check_file!` is `wand t` for one file, with what the file imports. It reads
+the file as `FS.read_file!` does, so a trace shows the read. A file that
+cannot be read raises, and `check_file` gives an `Error`. To check a
+directory, list its files, for example with `FS.glob`, and check each one.
+
+These functions read source and give an answer. None of them runs the
+source. A `String` does not become a running program, as it does not become
+a `Command`, so a manifest still says everything a script can do.
+
+`version` is the version of the wand that runs the script.
 
 ---
 

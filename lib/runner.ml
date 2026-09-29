@@ -4147,6 +4147,7 @@ let is_stdlib_file full =
 type source_check = {
   sc_type     : string;                  (* the file's final type *)
   sc_holes    : string list;             (* hole types, in order *)
+  sc_hole_locs : Token.loc option list;  (* where each hole is, in order *)
   sc_findings : Lint.finding list;
   sc_env      : Typechecker.env;         (* the file's own names *)
   sc_scope    : Typechecker.env;         (* everything in scope: own, imports, base *)
@@ -4216,10 +4217,11 @@ let ctor_spellings (imp : import_env) (scope : Typechecker.env) =
    `path` says where the text lives, which decides how its imports resolve
    and whether it is checked as a stdlib module. A failure comes back as a
    structured diagnostic; `Diag.legacy` recovers the old error string. *)
-let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
+let typecheck_source ?(set_main = true) ~path (src : string)
+    : (source_check, Diag.t) result =
   let full = entry_path path in
   try
-    Package.set_main_file full;
+    if set_main then Package.set_main_file full;
     let tokens   = Lexer.tokenize src in
     let (prog, item_locs) = Parser.parse_program_with_locs tokens in
     let base_dir = Filename.dirname full in
@@ -4265,6 +4267,7 @@ let typecheck_source ~path (src : string) : (source_check, Diag.t) result =
       in
       Ok { sc_type     = Typechecker.string_of_typ last_t;
            sc_holes    = List.map Typechecker.string_of_typ holes;
+           sc_hole_locs = List.rev !Typechecker.hole_locs;
            sc_findings = Lint.check ~source:src prog item_locs own_type_env;
            sc_env      = own_type_env;
            sc_scope    = full_type_env;
@@ -4294,6 +4297,90 @@ let typecheck_file path : (source_check, Diag.t) result =
     typecheck_source ~path src
   with Sys_error msg ->
     Error (Diag.error ~code:"E-FAIL" ("cannot open file: " ^ msg))
+
+(* ── The Wand module ─────────────────────────────────────────────────────── *)
+
+(* A check as `Wand.wand` receives it: (diagnostics, holes, type). `file`
+   names a diagnostic whose position carries no file of its own. *)
+let checked_value ~file (r : (source_check, Diag.t) result) : Evaluator.value =
+  let open Evaluator in
+  let diag (d : Diag.t) =
+    let severity =
+      match d.Diag.severity with Diag.Error -> "error" | Diag.Warning -> "warning" in
+    let (f, line, col) = match d.Diag.loc with
+      | Some l -> ((if l.Token.file <> "" then l.Token.file else file),
+                   l.Token.line, l.Token.col)
+      | None -> (file, 1, 1)
+    in
+    VTuple [VString severity; VString d.Diag.code; VString f; VInt line; VInt col;
+            VString d.Diag.message]
+  in
+  let none = VConstr (Ctor.Builtin "None", []) in
+  match r with
+  | Error d -> VTuple [VList (List.map diag (Diag.all d)); VList []; none]
+  | Ok sc ->
+    let holes =
+      List.mapi (fun i t ->
+        let (line, col) =
+          match List.nth_opt sc.sc_hole_locs i with
+          | Some (Some l) -> (l.Token.line, l.Token.col)
+          | _ -> (1, 1)
+        in
+        VTuple [VInt line; VInt col; VString t]) sc.sc_holes
+    in
+    VTuple [
+      VList (List.map (fun f -> diag (Lint.to_diag ~strict:false f)) sc.sc_findings);
+      VList holes;
+      VConstr (Ctor.Builtin "Some", [VString sc.sc_type]) ]
+
+(* `Wand.check`: the text alone. It reads no file, so an import of one is a
+   diagnostic rather than a read -- the text has no directory for `./x` to
+   be relative to, and reading it would be `FS.Read` in a pure function. The
+   standard library is in the binary, so an import of it is read from
+   there. Nor is the package around the working directory read: the text
+   belongs to no package. *)
+let check_text (src : string) : Evaluator.value =
+  let file_imports =
+    match Parser.parse_program_with_locs (Lexer.tokenize src) with
+    | (prog, locs) ->
+      List.concat (List.mapi (fun i (item : Ast.top_item) ->
+        let kind = match item with
+          | Ast.TLImport k -> Some k
+          | Ast.TLLet (_, [], b) | Ast.TLLetPat (_, b) -> import_kind_of b
+          | _ -> None
+        in
+        match kind with
+        | Some (Ast.StdlibModule _) | None -> []
+        | Some _ ->
+          let loc = Option.map fst (List.nth_opt locs i) in
+          [Diag.error ~code:"E-IMPORT" ?loc
+             "Wand.check reads no files, so it cannot import one. Check the \
+              file with Wand.check_file!, which reads what it imports"])
+        prog.Ast.items)
+    (* A source that does not parse is the check's to report. *)
+    | exception _ -> []
+  in
+  match file_imports with
+  | d :: rest ->
+    checked_value ~file:"" (Error { d with Diag.others = rest })
+  | [] ->
+    let saved = !Package.main in
+    Fun.protect ~finally:(fun () -> Package.main := saved) (fun () ->
+      checked_value ~file:""
+        (typecheck_source ~set_main:false ~path:"wand-check.wand" src))
+
+(* `Wand.check_file!`: `wand t path`, over the text the evaluator read for
+   it. Everything the check finds in the file is the answer. The package of
+   the file is read, as `wand t` reads it, and the running program's is put
+   back. *)
+let check_file_value (path : string) (src : string) : Evaluator.value =
+  let saved = !Package.main in
+  Fun.protect ~finally:(fun () -> Package.main := saved) (fun () ->
+    checked_value ~file:path (typecheck_source ~path src))
+
+let () =
+  Evaluator.wand_check_hook := check_text;
+  Evaluator.wand_check_file_hook := check_file_value
 
 (* Lint a stdlib module's own source. Module bodies are inferred against the
    raw builtins rather than the user-visible globals, so they need the same

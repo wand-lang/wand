@@ -4,6 +4,27 @@
 
 ### Added
 
+- **A `Wand` module: `wand f` and `wand t` as functions.** A program that
+  writes wand can format its output as `wand f` does, and a program that
+  checks wand files gets the answer as values, not as JSON text:
+
+  ```
+  FS.write_file! path (Wand.format! text)
+  (Wand.check_file! ./deploy.wand).diagnostics
+  (Wand.check "import List\nList.fold_left ? 0 [1, 2, 3]").holes
+  ```
+
+  `format` and `format!` format source. The result is what `wand f`
+  writes, so a code generator no longer has to copy its layout rules.
+  `check` checks source text, which can be one expression or a whole
+  program. It gives the errors and lint warnings, each `?` and its type,
+  and the type of the source. `check_file` and `check_file!` check a file
+  with what it imports, as `wand t` does. `version` is the version of the
+  wand that runs the script.
+
+  `check` reads no files, so it can import the standard library and
+  nothing else. None of these functions runs the source it is given.
+
 - **Run a command in another directory.** `Shell.in_dir dir c` is the
   command `c`, to run in `dir`. Give it to `Shell.run!`, `inspect!`,
   `inspect_with!`, `query`, `stream`, `spawn` or any other function that
