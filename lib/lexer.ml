@@ -1005,14 +1005,19 @@ let next_token s =
        a pattern, and a narrowed label puts its paren directly before one.
 
        What follows the star tells them apart. A block comment opens with a
-       star and a space, and a doc comment with a second star; a manifest
-       pattern does neither, since a word beginning with two stars says no
-       more than one. The cost is that an opener written with no space after
-       the star loses the hint, which is not how anyone writes one. *)
+       star and a space, and a doc comment with two stars and a space. A glob
+       just inside a paren does neither: `*.iso` or `**.wand` there is a
+       bracket around a pattern, and `**` is not `*` -- it reaches every
+       depth. Refusing a paren and two stars made `**.wand` in brackets
+       impossible to write, and `wand f`, which takes out the space that
+       had to go before it, wrote a file that no longer lexed. Found by
+       test/fuzz. The cost is that an opener written with no
+       space after its stars loses the hint, which is not how anyone writes
+       one. *)
     | '('  when peek s = '*'
-                && (let c = peek2 s in
-                    is_at_end s
-                    || c = ' ' || c = '\t' || c = '\n' || c = '\r' || c = '*') ->
+                && (let space c =
+                      c = ' ' || c = '\t' || c = '\n' || c = '\r' || c = '\000' in
+                    space (peek2 s) || (peek2 s = '*' && space (peek3 s))) ->
       raise (Fail "a comment is '-- ...' to the end of the line; write \
                        each line of this one with '--'")
     | '('  -> ret LParen

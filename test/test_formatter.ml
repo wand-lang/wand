@@ -209,6 +209,19 @@ let test_arm_statements_settle () =
   if not (Lint.contains out "(IO.println \"a\"; IO.println \"b\")") then
     Alcotest.failf "the two statements were not written as a sequence:\n%s" out
 
+(* `wand f` takes the space out of `( **.wand)`. A paren and two stars read
+   as the opener of an OCaml doc comment, so the file it wrote no longer
+   lexed. They read as one only before a space now. Found by test/fuzz. *)
+let test_a_glob_in_brackets_settles () =
+  (* Where the brackets stay, the glob is written against the paren. *)
+  formats_and_parses "a glob that keeps its brackets" 26 "$ ( **)\n";
+  let out = Formatter.with_width 26 (fun () -> fmt "$ ( **)\n") in
+  if not (Lint.contains out "(**)") then
+    Alcotest.failf "the glob was not written against its paren:\n%s" out;
+  (* And where they are not needed, they go, as before. *)
+  formats_and_parses "a glob that needs none" 92
+    "import FS\nlet xs = FS.glob ( **.wand)\n"
+
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
    wrapped shape, so it stayed on one line however narrow the margin. The
@@ -2082,6 +2095,8 @@ let () =
         test_a_nested_pipeline_keeps_its_brackets;
       Alcotest.test_case "a bare field list wraps" `Quick
         test_a_bare_field_list_wraps;
+      Alcotest.test_case "a glob in brackets settles" `Quick
+        test_a_glob_in_brackets_settles;
       Alcotest.test_case "statements under an arm settle" `Quick
         test_arm_statements_settle;
       Alcotest.test_case "a shadowed function keeps its ;" `Quick

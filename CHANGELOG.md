@@ -139,6 +139,17 @@
 
 ### Fixed
 
+- **A recursive glob can be written in brackets.** `FS.glob (**.wand)` was
+  a lex error that said "a comment is `--` to the end of the line",
+  because wand read `(**` as the start of an OCaml doc comment. You had to
+  write `( **.wand)`, and `wand f` then took the space out and wrote a file
+  that did not lex. Now `(**` starts that error only when a space follows
+  it, as in `(** doc *)`, so a glob just inside a bracket is a glob:
+
+  ```
+  FS.glob (**.wand)
+  ```
+
 - **`wand f` no longer breaks a function that a value shadows.** A
   function reads each `let` of the same name below it as one more
   equation, and only a `;` stops that. `wand f` put the two on separate

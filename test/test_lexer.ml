@@ -158,7 +158,25 @@ let test_comments () =
   refuses "block comment" "(* ignored *) 1" "'-- ...'";
   refuses "doc comment" "(** actual doc *) true" "'-- ...'";
   refuses "slash comment" "// nope\n1" "'-- ...'";
-  refuses "hash comment" "# nope\n1" "'-- ...'"
+  refuses "hash comment" "# nope\n1" "'-- ...'";
+  refuses "an empty block comment" "(* *) 1" "'-- ...'";
+  refuses "a doc comment on its own line" "(**\n doc *) 1" "'-- ...'"
+
+(* A glob in brackets is a bracket and a glob, `**` as much as `*`: `**`
+   reaches every depth, so it is a different pattern and has to be
+   writable. `wand f` takes out the space that `( **.wand)` needed, and the
+   file it wrote no longer lexed. Found by test/fuzz. *)
+let test_a_glob_in_brackets () =
+  let first_two src =
+    match Lexer.tokenize src with
+    | (a, _) :: (b, _) :: _ -> (a, b)
+    | _ -> Alcotest.failf "%S: fewer than two tokens" src
+  in
+  List.iter (fun (src, glob) ->
+    match first_two src with
+    | (Token.LParen, Token.Glob g) when g = glob -> ()
+    | _ -> Alcotest.failf "%S did not lex as a bracket and a glob" src)
+    [ ("(*.iso)", "*.iso"); ("(**.wand)", "**.wand"); ("(**)", "**") ]
 
 (* A character wand has no use for is reported as the character, and the
    message is text a caller can decode.
@@ -300,6 +318,7 @@ let () =
     ];
     "comments", [
       Alcotest.test_case "comments"      `Quick test_comments;
+      Alcotest.test_case "a glob in brackets lexes" `Quick test_a_glob_in_brackets;
       Alcotest.test_case "a pattern after a paren lexes" `Quick
         test_a_pattern_after_a_paren_lexes;
       Alcotest.test_case "line comments" `Quick test_line_comments;
