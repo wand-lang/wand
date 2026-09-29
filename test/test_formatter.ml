@@ -222,6 +222,37 @@ let test_a_glob_in_brackets_settles () =
   formats_and_parses "a glob that needs none" 92
     "import FS\nlet xs = FS.glob ( **.wand)\n"
 
+(* A `fn` argument whose body is a block that holds more than bindings: the
+   block opens on the arrow's line and closes at the `fn`'s indent, as it
+   does after `=` and `then`. Its `(` stood on a line alone, and its
+   statements two columns further in. *)
+let test_a_fn_block_opens_on_the_arrow_line () =
+  let src = String.concat "\n" [
+    "let x =";
+    "  Par.map";
+    "    8";
+    "    (fn f ->";
+    "      (";
+    "        let digest = Hash.file! Digest.Sha256 f |> Digest.hex;";
+    "        Shared.update done (fn n -> n + 1);";
+    "        (f, digest)";
+    "      ))";
+    "    files";
+    "" ] in
+  let want = String.concat "\n" [
+    "let x =";
+    "  Par.map";
+    "    8";
+    "    (fn f -> (";
+    "      let digest = Hash.file! Digest.Sha256 f |> Digest.hex;";
+    "      Shared.update done (fn n -> n + 1);";
+    "      (f, digest)";
+    "    ))";
+    "    files";
+    "" ] in
+  Alcotest.(check string) "the block opens on the arrow's line" want (fmt src);
+  formats_and_parses "a fn block at any margin" 30 src
+
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
    wrapped shape, so it stayed on one line however narrow the margin. The
@@ -2095,6 +2126,8 @@ let () =
         test_a_nested_pipeline_keeps_its_brackets;
       Alcotest.test_case "a bare field list wraps" `Quick
         test_a_bare_field_list_wraps;
+      Alcotest.test_case "a fn block opens on the arrow line" `Quick
+        test_a_fn_block_opens_on_the_arrow_line;
       Alcotest.test_case "a glob in brackets settles" `Quick
         test_a_glob_in_brackets_settles;
       Alcotest.test_case "statements under an arm settle" `Quick

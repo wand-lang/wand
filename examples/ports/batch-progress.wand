@@ -28,12 +28,11 @@ let sums_line (path, digest) = "%{digest}  %{Path.to_string path}"
 let hash_all! done files =
   Par.map
     8
-    (fn f ->
-      (
-        let digest = Hash.file! Digest.Sha256 f |> Digest.hex;
-        Shared.update done (fn n -> n + 1);
-        (f, digest)
-      ))
+    (fn f -> (
+      let digest = Hash.file! Digest.Sha256 f |> Digest.hex;
+      Shared.update done (fn n -> n + 1);
+      (f, digest)
+    ))
     files
 
 let main! () =

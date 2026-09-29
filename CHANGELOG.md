@@ -139,6 +139,23 @@
 
 ### Fixed
 
+- **`wand f` opens a `fn`'s block on the `fn` line.** A `fn` whose body
+  is a block of statements put the block's `(` on a line of its own, with
+  the statements two more columns in. Now the block opens on the `fn`
+  line and closes at the `fn`'s indent, as a block does after `=` and
+  `then`:
+
+  ```
+  Par.map
+    8
+    (fn f -> (
+      let digest = Hash.file! Digest.Sha256 f |> Digest.hex;
+      Shared.update done (fn n -> n + 1);
+      (f, digest)
+    ))
+    files
+  ```
+
 - **A recursive glob can be written in brackets.** `FS.glob (**.wand)` was
   a lex error that said "a comment is `--` to the end of the line",
   because wand read `(**` as the start of an OCaml doc comment. You had to

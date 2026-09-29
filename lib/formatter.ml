@@ -1138,10 +1138,15 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        second binding reads as the statement after the lambda rather than
        as the rest of its body. An `if` or a `match` places itself from the
        column it starts at and already sits where it should. *)
+    (* A block that holds more than bindings is written in its brackets,
+       and those open on the arrow's line and close at the `fn`'s indent, as
+       a block does after `=` and `then`. Sent below with the chains, its
+       `(` stood on a line alone and its statements two further in. *)
     let body_indent =
       match strip_located body with
-      | Let (_, _, _, (LetIn | LetBlock))
-      | LetRec (_, _, (LetIn | LetBlock)) -> indent + 2
+      | Let (_, _, _, LetIn) | LetRec (_, _, LetIn) -> indent + 2
+      | Let (_, _, _, LetBlock) | LetRec (_, _, LetBlock)
+        when is_bare_chain body -> indent + 2
       | Contract (reqs, ens, _) when reqs <> [] || ens <> [] -> indent + 2
       | _ -> indent
     in
