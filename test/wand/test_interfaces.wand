@@ -55,3 +55,10 @@ group "the built-in interface" (fn () -> [
   test "String" (fn t -> t.eq "b" (widest String "a" "b")),
   test "between?" (fn t -> t.ok (Int.between? 0 10 5))
 ])
+
+-- A record field can hold a module, as a parameter can: the field's type
+-- is the interface.
+type Holder(named: iface.Named, others: List iface.Named = [])
+
+test "a record field holds a module" (fn t ->
+  t.eq "Int" (Holder(named = ints).named.label ()))

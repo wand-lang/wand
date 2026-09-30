@@ -6472,7 +6472,10 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       List.iter (fun c ->
         List.iter (fun (fname, te) ->
           List.iter (fun n ->
-            if not (builtin_type_name n || List.mem n known || List.mem n params)
+            (* An interface is a type a field can have, as an annotation
+               can: a record may hold a module. *)
+            if not (builtin_type_name n || List.mem n known || List.mem n params
+                    || is_iface n)
             then
               let where = match fname with
                 | Some f -> Printf.sprintf "field '%s' of '%s'" f c.name

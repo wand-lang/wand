@@ -6,6 +6,10 @@
 
 - `Wand.load` and `Wand.load!`: load a file as a module of an interface, named by its derived `loader` (#68).
 
+### Fixed
+
+- A record field can have an interface type (#69).
+
 ## [0.95.3] - 2026-09-30
 
 ### Fixed
