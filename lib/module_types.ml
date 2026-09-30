@@ -200,6 +200,21 @@ let resolve_stdlib name =
             name
             (String.concat ", " (List.map fst Stdlib_embed.table)))))
 
+(* `a/b/../c` as `a/c`, by the text alone. *)
+let lexical_normalize s =
+  let is_abs = String.length s > 0 && s.[0] = '/' in
+  let rec go acc = function
+    | [] -> List.rev acc
+    | ("" | ".") :: rest -> go acc rest
+    | ".." :: rest ->
+      (match acc with
+       | [] | ".." :: _ -> go (".." :: acc) rest
+       | _ :: tl -> go tl rest)
+    | p :: rest -> go (p :: acc) rest
+  in
+  let joined = String.concat "/" (go [] (String.split_on_char '/' s)) in
+  if is_abs then "/" ^ joined else if joined = "" then "." else joined
+
 let resolve_import base_dir = function
   | Ast.StdlibModule name -> resolve_stdlib name
   | Ast.ModuleURL url ->
@@ -213,6 +228,15 @@ let resolve_import base_dir = function
       if Filename.is_relative path
       then Filename.concat base_dir (add_ext path)
       else add_ext path
+    in
+    (* A file checked before it is saved (`Wand.check_at`) can live in a
+       directory that does not exist yet, and the OS cannot go through it to
+       follow `..`. There is no directory there, so no link to follow, and
+       the text alone says where the import is. (#66) *)
+    let file =
+      if Filename.is_relative path && not (Sys.file_exists base_dir)
+      then lexical_normalize file
+      else file
     in
     (try Package.check_private_path ~base_dir file
      with Package.Unresolved msg -> raise (ImportError msg));

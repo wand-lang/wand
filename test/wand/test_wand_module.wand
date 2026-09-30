@@ -92,6 +92,15 @@ test "check_at reads imports from beside the path" (fn t ->
     let c = Wand.check_at! (Path.join d ./door.wand) "let room = import ./room\nroom.name";
     t.eq (Some "String", []) (c.type, c.diagnostics)
   ))
+-- The first file in a new directory is checked before the directory is
+-- made. (#66)
+test "check_at follows .. out of a directory that does not exist yet" (fn t ->
+  with FS.temp_dir "wand_check_at_" as d -> (
+    FS.write_file! (Path.join d ./room.wand) `let name = "hall"`;
+    let c =
+      Wand.check_at! (Path.join d ./new/door.wand) "let room = import ../room\nroom.name";
+    t.eq (Some "String", []) (c.type, c.diagnostics)
+  ))
 test "check_at names the path in what it finds" (fn t ->
   with FS.temp_dir "wand_check_at_" as d -> (
     let door = Path.join d ./door.wand;
