@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.96.0] - 2026-09-30
 
 ### Added
 
@@ -9,6 +9,7 @@
 ### Fixed
 
 - A record field can have an interface type (#69).
+- Two `implement` blocks in one file cannot declare the same member (#70).
 
 ## [0.95.3] - 2026-09-30
 

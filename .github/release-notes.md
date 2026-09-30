@@ -1,7 +1,10 @@
-## 0.95.3 - 2026-09-30
+## 0.96.0 - 2026-09-30
+
+### Added
+
+- `Wand.load` and `Wand.load!`: load a file as a module of an interface, named by its derived `loader` (#68).
 
 ### Fixed
 
-- A function in an `and` group can call a member defined after it, and a member that does not fit names its line (#65).
-- `Wand.check_at` follows `..` out of a directory that does not exist yet (#66).
-- V-BANG1 no longer warns about a function that only returns a function that can raise (#67).
+- A record field can have an interface type (#69).
+- Two `implement` blocks in one file cannot declare the same member (#70).
