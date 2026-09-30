@@ -2610,9 +2610,28 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
                            the unwinding produced; it is discarded, and the
                            case answers with its own. *)
                         let resumed = ref false in
+                        let answered = ref false in
                         let saved = as_handler () in
+                        (* A continuation resumes once, and only while its
+                           case runs: once the case has answered without
+                           calling it, the body is unwound below. A case that
+                           hands `k` out -- in a function it returns, say --
+                           and calls it later would resume a body that is
+                           gone, which OCaml reports by stopping the
+                           interpreter. It is said here instead. (#53) *)
                         let cont =
                           VBuiltin (fun v ->
+                            if !answered then
+                              raise (EvalError (Printf.sprintf
+                                "'%s' was called after its case answered: a \
+                                 case that answers without calling '%s' ends \
+                                 the body it handled, so '%s' has nothing \
+                                 left to resume. Call it inside the case"
+                                cont_name cont_name cont_name));
+                            if !resumed then
+                              raise (EvalError (Printf.sprintf
+                                "'%s' was called twice: a continuation \
+                                 resumes the body once" cont_name));
                             resumed := true;
                             in_fiber saved (fun () -> Effect.Deep.continue k v))
                         in
@@ -2630,6 +2649,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
                            this -- gets both, because `discontinue` returns
                            to the case rather than transferring away from
                            it. *)
+                        answered := true;
                         if not !resumed then
                           in_fiber saved (fun () ->
                             try ignore (Effect.Deep.discontinue k Abandoned)

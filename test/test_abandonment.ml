@@ -132,6 +132,33 @@ let test_try_cannot_catch_the_unwind () =
   Alcotest.(check string) "the case's value" "answered" answer;
   check_released "released" ["r"]
 
+(* A continuation used after its case answered, or used twice, is an error
+   the script can read. The body behind it was unwound when the case
+   answered, and OCaml reports a second resume by stopping the interpreter
+   with `Continuation_already_resumed`, which is what a handler that carries
+   state in a returned function reached (#53). *)
+let stale_resume_is_an_error () =
+  let says src needle =
+    match eval_wand src with
+    | s -> Alcotest.failf "expected an error, got %s" s
+    | exception Evaluator.EvalError msg ->
+      let n = String.length needle and m = String.length msg in
+      let rec has i = i + n <= m && (String.sub msg i n = needle || has (i + 1)) in
+      if not (has 0) then Alcotest.failf "expected %S in: %s" needle msg
+  in
+  says
+    {|(handle (holding "r" (fn () -> let x = $(echo hi) in x)) with
+        | Shell!command c k -> k c
+        | Shell!run _ k -> fn s -> (k s) s
+        | return x -> fn _ -> x) "late"|}
+    "was called after its case answered";
+  check_released "the body was released when the case answered" ["r"];
+  says
+    {|handle (holding "r" (fn () -> let x = $(echo hi) in x)) with
+        | Shell!command c k -> k c
+        | Shell!run _ k -> k "a" ++ k "b"|}
+    "was called twice"
+
 let () =
   Alcotest.run "Abandonment" [
     "a handler case that does not resume", [
@@ -141,5 +168,6 @@ let () =
       Alcotest.test_case "release may perform"      `Quick test_release_can_perform;
       Alcotest.test_case "resume in one branch"     `Quick test_conditional_resume;
       Alcotest.test_case "try cannot catch unwind"  `Quick test_try_cannot_catch_the_unwind;
+      Alcotest.test_case "stale resume is an error" `Quick stale_resume_is_an_error;
     ];
   ]

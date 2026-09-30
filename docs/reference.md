@@ -2035,6 +2035,11 @@ The intercepted code stops there, and it gives back what it holds. A `with`
 inside it releases on the way out. So a mock cannot leak the resources of the
 code that it replaces.
 
+A continuation resumes once, and only inside its case. A case that returns
+a function which calls `k` later has already answered without resuming, so
+the body is gone by then, and the call is an error that says so. Calling `k`
+twice is an error too.
+
 The operations you can intercept are the builtins that touch the world
 outside. **Each name is the function you call, with a `!` where its dot
 would be**: you call `FS.read_file`, you intercept `FS!read_file`. A `!`

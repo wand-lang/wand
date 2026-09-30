@@ -27,6 +27,13 @@
   interface both modules claim, inside tuples too, so
   `Map.from_list [("i", ints), ("r", rev)]` works (#52).
 
+- **A continuation used after its case answered is an error, not a crash.**
+  A handler that carried state in a function each case returned, and
+  called `k` inside it, stopped wand with
+  `Fatal error: exception Stdlib.Effect.Continuation_already_resumed`. The
+  case had answered without resuming, so the body was already unwound. Now
+  the call says so, and calling `k` twice says so too (#53).
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed
