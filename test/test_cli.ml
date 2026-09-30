@@ -848,6 +848,30 @@ let test_an_interface_travels_with_its_types () =
     let (code, out) = wand_out ~dir:d ["main.wand"] in
     Alcotest.(check (pair int string)) "it runs" (0, "3 1\n") (code, out))
 
+(* Two different modules that implement one interface, in one list. Each
+   module is its own type, and the list took the first one's, so the second
+   was refused with a message that named one interface twice (#52). *)
+let test_a_list_of_modules_is_a_list_of_their_interface () =
+  in_scratch (fun d ->
+    iface_files d;
+    write_file (Filename.concat d "rev.wand")
+      "let ord = import ./ord\n\n\
+       implement ord.Ranked Int =\n\
+       \  let top a b = if a < b then a else b;\n\
+       \  let bottom a b = if a > b then a else b\n";
+    write_file (Filename.concat d "main.wand")
+      "uses {IO}\n\nimport IO\nimport List\nimport Map\n\n\
+       let ord = import ./ord\n\
+       let ints = import ./ints\n\
+       let rev = import ./rev\n\n\
+       let typed : List (ord.Ranked Int) = [ints, rev]\n\
+       let bare = [ints, rev]\n\
+       let named : Map (ord.Ranked Int) = Map.from_list [(\"i\", ints), (\"r\", rev)]\n\n\
+       IO.println \"%{List.map (fn (m: ord.Ranked Int) -> m.top 3 7) typed} \
+       %{List.length bare} %{Map.size named}\"\n";
+    let (code, out) = wand_out ~dir:d ["main.wand"] in
+    Alcotest.(check (pair int string)) "it runs" (0, "[7, 3] 2 2\n") (code, out))
+
 (* A module that did not claim the interface does not fit, however many of
    its members happen to line up. *)
 let test_a_module_must_have_claimed_it () =
@@ -1149,6 +1173,7 @@ let () =
       Alcotest.test_case "two modules, one name" `Quick test_two_modules_may_declare_one_name;
       Alcotest.test_case "conformance is claimed" `Quick test_a_module_must_have_claimed_it;
       Alcotest.test_case "an interface travels with its types" `Quick test_an_interface_travels_with_its_types;
+      Alcotest.test_case "a list of modules" `Quick test_a_list_of_modules_is_a_list_of_their_interface;
       Alcotest.test_case "a qualifier uses its import" `Quick test_a_qualified_interface_uses_its_import;
       Alcotest.test_case "wand t --effects" `Quick test_effects_of_one_file;
       Alcotest.test_case "--effects is inferred" `Quick test_effects_ignore_the_manifest;

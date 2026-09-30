@@ -879,8 +879,8 @@ let string_of_typ t =
       "a module implementing "
       ^ String.concat ", "
           (List.map (fun (n, args) ->
-             if args = [] then n
-             else n ^ " " ^ String.concat " " (List.map go args)) claims)
+             if args = [] then iface_display n
+             else iface_display n ^ " " ^ String.concat " " (List.map go args)) claims)
   in
   go t
 
@@ -3294,6 +3294,34 @@ let rec binders_below e =
   | Seq (_, e2) -> binders_below e2
   | _ -> []
 
+(* Two different modules, each its own type, meeting where one type is
+   wanted: the elements of a list. What they have in common is what they
+   both claim, so where they claim exactly one interface in common, that is
+   the type they share. Inside a tuple or a list the same, position by
+   position, so `[("a", m1), ("b", m2)]` is a list of pairs whose second is
+   the interface. None where nothing is shared, or where two interfaces
+   are, since then no one of them is the answer; the unification that
+   follows reports it. (#52) *)
+let rec module_join a b =
+  match repr a, repr b with
+  | TModule c1, TModule c2 when c1 != c2 ->
+    let shared =
+      List.filter (fun (n, args) ->
+        List.exists (fun (n2, args2) ->
+          n = n2 && List.length args = List.length args2) c2) c1
+    in
+    (match shared with
+     | [ (n, args) ] -> Some (TIface (n, args))
+     | _ -> None)
+  | TTuple xs, TTuple ys when List.length xs = List.length ys ->
+    let joined = List.map2 module_join xs ys in
+    if List.for_all Option.is_none joined then None
+    else
+      Some (TTuple (List.map2 (fun x j ->
+        match j with Some t -> t | None -> x) xs joined))
+  | TList x, TList y -> Option.map (fun j -> TList j) (module_join x y)
+  | _ -> None
+
 let rec infer tenv (env : env) (e : expr) : typ =
   match e with
   | Int _      -> TInt
@@ -3645,11 +3673,17 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Tuple es -> TTuple (List.map (infer tenv env) es)
   | List []        -> TList (fresh ())
   | List (e :: rest) ->
-    let t = infer tenv env e in
-    (* The first element sets the type of the list; a later one that differs
-       is the one to report. *)
-    List.iter (fun e' ->
-      unify_expected ~expected:t ~got:(infer tenv env e')) rest;
+    let first = infer tenv env e in
+    let others = List.map (infer tenv env) rest in
+    (* The first element sets the type of the list, and a later one that
+       differs is the one to report -- except where two different modules
+       meet, each its own type: then the list holds what they both claim. *)
+    let t =
+      List.fold_left (fun acc t' ->
+        match module_join acc t' with Some j -> j | None -> acc) first others
+    in
+    if t != first then unify_expected ~expected:t ~got:first;
+    List.iter (fun t' -> unify_expected ~expected:t ~got:t') others;
     TList t
   (* Settled here, where the declaration is, exactly as the pattern side
      settles `PConstrBare`. *)

@@ -20,6 +20,13 @@
   interface now travels with its types, and is one interface in every file
   (#51).
 
+- **A list can hold different modules that implement one interface.**
+  `[ints, rev]` was refused with `expected a module implementing
+  ord.Ranked Int, got a module implementing ord.Ranked Int`, unless each
+  module had been given the interface type first. Now the list holds the
+  interface both modules claim, inside tuples too, so
+  `Map.from_list [("i", ints), ("r", rev)]` works (#52).
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed
