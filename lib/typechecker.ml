@@ -6366,10 +6366,15 @@ let check_shared_nesting tenv =
        | None -> raise (TypeError msg))
     | _ -> ()) (List.rev !shared_uses)
 
+(* The members this file's `implement` blocks have declared so far, each
+   with the interface it was declared for. *)
+let implemented_members : (string * string) list ref = ref []
+
 let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[])
     ?(init_ifaces=[]) ?(init_effects=Effect_set.EffSet.empty)
     (prog : program) : typedef_env * env * env * typ =
   next_id := 0;
+  implemented_members := [];
   (* Seeded per file rather than accumulated: an interface is in scope where
      it is declared and where it is imported, and nowhere else. *)
   Hashtbl.reset iface_defs;
@@ -6805,6 +6810,22 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
         (!item_index, Effect_set.labels_of eff) :: !expr_item_effects;
       (env, t)
     | TLImplement (im, loc) ->
+      (* Each member is a top-level binding of the module, so a second block
+         that declares one again would replace it while the first block's
+         claim stood: a module that says `Ord Int` and `Ord Float` had one
+         `max`, the Float one, and a caller trusting the Int claim got it. *)
+      List.iter (fun (n, _, _, mloc) ->
+        (match List.assoc_opt n !implemented_members with
+         | Some earlier ->
+           fail_at_opt (Some mloc) (Printf.sprintf
+             "'%s' is a member of an earlier 'implement %s' in this file. \
+              A member is a binding of the module, so two blocks cannot \
+              both declare it: a module implements an interface once, and \
+              interfaces that share a member name are implemented in \
+              separate modules" n earlier)
+         | None -> ());
+        implemented_members := (n, im.Ast.im_iface) :: !implemented_members)
+        im.Ast.im_binds;
       let idef =
         match Hashtbl.find_opt iface_defs im.Ast.im_iface with
         | Some i -> i

@@ -2269,6 +2269,27 @@ let both = "implement Ranked Int =\n\
             \  let max a b = if a > b then a else b;\n\
             \  let min a b = if a < b then a else b\n"
 
+(* Each member is a binding of the module, so a second block declaring it
+   would replace the first block's while that block's claim stood (#70). *)
+let test_a_member_is_implemented_once () =
+  let ord t =
+    Printf.sprintf
+      "implement Ord %s =\n  let max a b = a;\n  let min a b = a;\n  \
+       let clamp lo hi x = x;\n  let between? lo hi x = true\n" t
+  in
+  err_contains "one interface for two types"
+    (ord "Int" ^ ord "Float" ^ "1")
+    "'max' is a member of an earlier 'implement Ord' in this file";
+  err_contains "one interface twice"
+    ("interface Named(label: Unit -> String)\n\
+      implement Named =\n  let label () = \"a\"\n\
+      implement Named =\n  let label () = \"b\"\n1")
+    "'label' is a member of an earlier 'implement Named'";
+  ok "two interfaces with no member in common"
+    ("interface Named(label: Unit -> String)\n\
+      implement Named =\n  let label () = \"ints\"\n" ^ ord "Int" ^ "label ()")
+    "ints"
+
 let test_an_implementation_is_checked () =
   iface_ok (ord ^ both);
   (* The bindings are the module's own, so they are in scope below the
@@ -2454,6 +2475,7 @@ let () =
     ];
     "interfaces", [
       Alcotest.test_case "an implementation is checked" `Quick test_an_implementation_is_checked;
+      Alcotest.test_case "a member is implemented once" `Quick test_a_member_is_implemented_once;
       Alcotest.test_case "every member answered for"    `Quick test_every_member_is_answered_for;
       Alcotest.test_case "held to its declared type"    `Quick test_a_member_is_held_to_its_declared_type;
       Alcotest.test_case "type arguments counted"       `Quick test_the_type_arguments_are_counted;
