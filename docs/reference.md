@@ -4041,6 +4041,19 @@ wand p upgrade github.com/mjstahl/json      # one
 wand p upgrade github.com/mjstahl/json@1.4.0  # one, to that version
 ```
 
+`wand p upgrade`, `wand p add` and `wand p tidy` take only a version that
+the installed wand can use. Each version's `wand.pkg` names the lowest wand
+it works with (`wand = 0.93.1`), and these commands pass over a version that
+needs a newer wand than the one installed. It says which version it passed over and which wand that version
+needs, and asking for that version by name is refused with the same words:
+
+```
+github.com/mjstahl/json 1.5.0 needs wand 0.94.0 or later, before 1.0.0, and this is wand 0.93.1; keeping 1.4.0
+```
+
+So a package can need a newer wand in a fix release: a user whose wand is
+older keeps the version they have.
+
 The package that the run or the check starts from decides two things for the
 whole build: its `local` fields, and its sum section.
 
@@ -4144,8 +4157,9 @@ where a reviewer sees it.
 ```sh
 wand p interface          # write the interface section; keep its version line
 wand p interface --check  # fail when it does not match the code or the latest tag
-wand p release        # release with the smallest change the interface needs
-wand p release minor  # or a larger one
+wand p release           # release with the smallest change the interface needs
+wand p release feature   # or name a larger change: breaking, feature or fix
+wand p release 1.0.0     # or the version itself
 ```
 
 `wand p release` compares the interface with the interface section of the last
@@ -4153,17 +4167,38 @@ release tag:
 
 | Change | Interface change |
 |---|---|
-| major | an export or a type is removed, or its type changes, a more general type included |
-| major | a variant or a field is added to or removed from a type |
-| major | an effect or an interface is added or removed |
-| minor | an export, a type or a public module is added |
-| patch | no change to the interface |
+| breaking | an export or a type is removed, or its type changes, a more general type included |
+| breaking | a variant or a field is added to or removed from a type |
+| breaking | an effect or an interface is added or removed |
+| feature | an export, a type or a public module is added |
+| fix | no change to the interface |
 
-Before 1.0, a major change moves the minor number (0.3.1 to 0.4.0), and any
-other change moves the patch number. The first release is 0.1.0, or 1.0.0
-with `wand p release major`. A change in what a function does, with no
-change to its type, is invisible to the types: ask for the larger change
-yourself.
+The kind of change gives the version:
+
+| Kind | Before 1.0 | From 1.0 |
+|---|---|---|
+| `breaking` | 0.3.1 → 0.4.0 | 1.2.3 → 2.0.0 |
+| `feature` | 0.3.1 → 0.3.2 | 1.2.3 → 1.3.0 |
+| `fix` | 0.3.1 → 0.3.2 | 1.2.3 → 1.2.4 |
+
+Before 1.0, each minor version counts as a major (see Major versions), so
+only a breaking change moves the minor. The first release is 0.1.0, or 1.0.0
+with `wand p release breaking`.
+
+A change in what a function does, with no change to its type, is invisible
+to the types: name the kind yourself. A move to 1.0 is a decision about
+stability, not a change the types show: write the version,
+`wand p release 1.0.0`. A version is refused when it is not after the last
+release, or when it is a smaller change than the interface needs. The
+command then lists the changes that need more.
+
+A new `wand` line in `wand.pkg` is not a change to the interface, and it
+does not make the change larger: `wand p upgrade` keeps a user on an older
+wand at the version they have. `wand p release` prints the line, so that
+the person who releases sees it.
+
+`major`, `minor` and `patch` are the earlier words for `breaking`, `feature`
+and `fix`. They still work, and print the new word.
 
 The working tree must be clean. The command writes the interface section with the new
 version, commits it, and tags the commit `v<version>`, so the tag and the

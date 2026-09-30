@@ -180,6 +180,42 @@ let latest versions =
   | v :: _ -> Some v
   | [] -> None
 
+(* Why a tag of a module cannot be used by the wand that is running: its
+   wand.pkg names a range of wand versions, and this one is outside it. The
+   tag is fetched into the cache to read its wand.pkg. None when this wand
+   can use it, or when the tag has no wand.pkg. *)
+let unusable path version =
+  let r = { Package.path; version; name = None; local = None } in
+  let dir = Package.cache_dir r in
+  if not (Sys.file_exists dir) then ignore (Package.fetch r);
+  if not (Sys.file_exists (Filename.concat dir Package.file_name)) then None
+  else
+    let range = (Package.read dir).wand in
+    if Package.accepts range Version.value then None
+    else
+      Some (Printf.sprintf "%s %s needs wand %s or later, before %s, and this is wand %s"
+              (short path) version range (Package.upper_bound range) Version.value)
+
+(* The newest of `versions` that this wand can use, after `current` when
+   there is one, and why the newest one it passed over cannot be used. Tags
+   are read from the newest down, so only the ones that are passed over are
+   fetched. *)
+let newest_usable path current versions =
+  let releases = List.filter (fun v -> not (String.contains v '-')) versions in
+  let pool = if releases = [] then versions else releases in
+  let newer = match current with
+    | Some c -> List.filter (fun v -> Semver.compare_versions v c > 0) pool
+    | None -> pool
+  in
+  let rec go skipped = function
+    | [] -> (None, skipped)
+    | v :: rest ->
+      (match unusable path v with
+       | None -> (Some v, skipped)
+       | Some why -> go (if skipped = None then Some why else skipped) rest)
+  in
+  go None (List.rev newer)
+
 (* The module a URL belongs to: the longest prefix that is a repository
    with a tagged version. *)
 let find_module_versions url =
@@ -203,9 +239,14 @@ let find_module_versions url =
   in
   try_prefix (List.length segs)
 
+(* A module's newest version that this wand can use. *)
 let find_module url =
   let (path, vs) = find_module_versions url in
-  (path, Option.get (latest vs))
+  match newest_usable path None vs with
+  | (Some v, Some why) -> prerr_endline ("wand: " ^ why); (path, v)
+  | (Some v, None) -> (path, v)
+  | (None, Some why) -> fail (why ^ "; no version of it can be used")
+  | (None, None) -> (path, Option.get (latest vs))
 
 (* ── tidy and upgrade ──────────────────────────────────────────────────── *)
 
@@ -314,12 +355,21 @@ let upgrade ~dir target =
                Require it as its own entry, with a `name`, and change the \
                imports that should use it"
               r.path v r.version);
-          Some v
+          (match unusable r.path v with
+           | Some why -> fail why
+           | None -> Some v)
         | None ->
           (match tagged_versions r.path with
            | None -> fail (Printf.sprintf "cannot list the versions of %s" r.path)
            | Some vs ->
-             latest (List.filter (fun v -> Package.major v = Package.major r.version) vs))
+             let (chosen, skipped) =
+               newest_usable r.path (Some r.version)
+                 (List.filter (fun v -> Package.major v = Package.major r.version) vs) in
+             (match skipped, chosen with
+              | Some why, None -> say := Printf.sprintf "%s; keeping %s" why r.version :: !say
+              | Some why, Some _ -> say := why :: !say
+              | None, _ -> ());
+             chosen)
       in
       match target_version with
       | Some v when v <> r.version ->
@@ -382,9 +432,10 @@ let last_release pkg = match List.rev (released_versions pkg) with v :: _ -> Som
 
 (* ── The bump ──────────────────────────────────────────────────────────── *)
 
-type bump = Patch | Minor | Major
+(* The kind of change a release is. The version number follows from it. *)
+type bump = Fix | Feature | Breaking
 
-let bump_name = function Patch -> "patch" | Minor -> "minor" | Major -> "major"
+let bump_name = function Fix -> "fix" | Feature -> "feature" | Breaking -> "breaking"
 
 let split_once text sep =
   let n = String.length sep and m = String.length text in
@@ -438,9 +489,9 @@ let changes ~before ~after =
     if List.mem_assoc name b then None else Some (Added now)) a
 
 let needed changes =
-  if List.exists (function Removed _ | Changed _ -> true | Added _ -> false) changes then Major
-  else if changes <> [] then Minor
-  else Patch
+  if List.exists (function Removed _ | Changed _ -> true | Added _ -> false) changes then Breaking
+  else if changes <> [] then Feature
+  else Fix
 
 let show_change = function
   | Removed old -> "- " ^ old
@@ -452,26 +503,54 @@ let show_change = function
 let next_version last bump =
   let n i = Semver.version_number last i in
   match bump, n 0 with
-  | Major, 0 -> Printf.sprintf "0.%d.0" (n 1 + 1)
-  | (Minor | Patch), 0 -> Printf.sprintf "0.%d.%d" (n 1) (n 2 + 1)
-  | Major, m -> Printf.sprintf "%d.0.0" (m + 1)
-  | Minor, m -> Printf.sprintf "%d.%d.0" m (n 1 + 1)
-  | Patch, m -> Printf.sprintf "%d.%d.%d" m (n 1) (n 2 + 1)
+  | Breaking, 0 -> Printf.sprintf "0.%d.0" (n 1 + 1)
+  | (Feature | Fix), 0 -> Printf.sprintf "0.%d.%d" (n 1) (n 2 + 1)
+  | Breaking, m -> Printf.sprintf "%d.0.0" (m + 1)
+  | Feature, m -> Printf.sprintf "%d.%d.0" m (n 1 + 1)
+  | Fix, m -> Printf.sprintf "%d.%d.%d" m (n 1) (n 2 + 1)
+
+(* The kind of change a move from `last` to `v` says, by the same rule. *)
+let kind_of_move last v =
+  let n x i = Semver.version_number x i in
+  if n v 0 > n last 0 then Breaking
+  else if n v 1 > n last 1 then (if n last 0 = 0 then Breaking else Feature)
+  else Fix
 
 (* ── release ───────────────────────────────────────────────────────────── *)
 
 let git_in (pkg : Package.t) args = Package.run_git ("-C" :: pkg.root :: args)
 
+(* What `wand p release` was asked for: a kind of change, or a version. *)
+type asked = Kind of bump | Exact of string
+
+let asked_of word =
+  let renamed old kind =
+    Printf.eprintf "wand: `wand p release %s` is now `wand p release %s`. A later release of wand removes `%s`\n%!"
+      old (bump_name kind) old;
+    Kind kind
+  in
+  match word with
+  | "breaking" -> Kind Breaking
+  | "feature" -> Kind Feature
+  | "fix" -> Kind Fix
+  | "major" -> renamed "major" Breaking
+  | "minor" -> renamed "minor" Feature
+  | "patch" -> renamed "patch" Fix
+  | v when is_version v -> Exact v
+  | other ->
+    fail (Printf.sprintf
+      "a release is breaking, feature or fix, or a version such as 1.0.0, not %s" other)
+
+(* The `wand` field of the record section of a wand.pkg's text. *)
+let wand_of_text text =
+  match Package.parse ~file:Package.file_name
+          (Package.split_sections ~file:Package.file_name text).record with
+  | (_, wand, _, _) -> Some wand
+  | exception Package.Error _ -> None
+
 let release ~dir asked =
   let pkg = package_here dir in
-  let asked = match asked with
-    | None -> None
-    | Some "major" -> Some Major
-    | Some "minor" -> Some Minor
-    | Some "patch" -> Some Patch
-    | Some other ->
-      fail (Printf.sprintf "the bump is major, minor or patch, not %s" other)
-  in
+  let asked = Option.map asked_of asked in
   let (code, status) = git_in pkg ["status"; "--porcelain"; "--"; "."] in
   if code <> 0 then fail ("the package is not in a git repository: " ^ status);
   let dirty = List.filter (fun l ->
@@ -483,34 +562,59 @@ let release ~dir asked =
        :: List.map (fun l -> "  " ^ String.trim l) dirty));
   let lines = current_interface pkg in
   let now = List.filter (( <> ) "") lines in
-  let version = match last_release pkg with
-    | None -> (match asked with Some Major -> "1.0.0" | _ -> "0.1.0")
+  let (version, wand_before) = match last_release pkg with
+    | None ->
+      ((match asked with
+        | Some (Exact v) -> v
+        | Some (Kind Breaking) -> "1.0.0"
+        | _ -> "0.1.0"), None)
     | Some last ->
-      let before = match git_in pkg ["show"; "v" ^ last ^ ":./" ^ Package.file_name] with
-        | (0, text) ->
-          (match (Package.split_sections ~file:Package.file_name text).iface with
-           | Some lines -> snd (parse_interface lines)
-           | None -> fail (Printf.sprintf "v%s has no interface section in wand.pkg to compare with" last))
+      let text = match git_in pkg ["show"; "v" ^ last ^ ":./" ^ Package.file_name] with
+        | (0, text) -> text
         | _ -> fail (Printf.sprintf "v%s holds no wand.pkg to compare with" last)
+      in
+      let before = match (Package.split_sections ~file:Package.file_name text).iface with
+        | Some lines -> snd (parse_interface lines)
+        | None -> fail (Printf.sprintf "v%s has no interface section in wand.pkg to compare with" last)
       in
       let found = changes ~before ~after:now in
       let least = match needed found, Semver.version_number last 0 with
-        | Minor, 0 -> Patch
+        | Feature, 0 -> Fix
         | b, _ -> b
       in
-      let rank = function Patch -> 0 | Minor -> 1 | Major -> 2 in
-      let bump = match asked with
-        | None -> least
-        | Some b when rank b >= rank least -> b
-        | Some b ->
-          fail (String.concat "\n"
-            (Printf.sprintf "these changes need a %s release, not a %s one:"
-               (bump_name least) (bump_name b)
-             :: List.map show_change
-                  (List.filter (fun c -> rank (needed [c]) >= rank least) found)))
+      let rank = function Fix -> 0 | Feature -> 1 | Breaking -> 2 in
+      let too_small head =
+        fail (String.concat "\n"
+          (head :: List.map show_change
+                    (List.filter (fun c -> rank (needed [c]) >= rank least) found)))
       in
-      next_version last bump
+      let version = match asked with
+        | None -> next_version last least
+        | Some (Kind b) when rank b >= rank least -> next_version last b
+        | Some (Kind b) ->
+          too_small (Printf.sprintf "these changes need a %s release, not a %s release:"
+                       (bump_name least) (bump_name b))
+        | Some (Exact v) ->
+          if Semver.compare_versions v last <= 0 then
+            fail (Printf.sprintf "%s is not after the latest release, %s" v last);
+          let b = kind_of_move last v in
+          if rank b < rank least then
+            too_small (Printf.sprintf
+              "these changes need a %s release, and %s after %s is a %s release:"
+              (bump_name least) v last (bump_name b));
+          v
+      in
+      (version, wand_of_text text)
   in
+  (match wand_before with
+   | Some w when Semver.compare_versions pkg.wand w > 0 ->
+     Printf.printf
+       "wand %s -> %s: a user whose wand is older than %s keeps an earlier \
+        version when they run `wand p upgrade`\n" w pkg.wand pkg.wand
+   | Some w when Semver.compare_versions pkg.wand w < 0 ->
+     Printf.printf "wand %s -> %s: a user with wand %s can now use this version\n"
+       w pkg.wand pkg.wand
+   | _ -> ());
   let sections = Package.read_sections pkg.root in
   Package.write_sections pkg.root
     { sections with iface = Some (render_interface (Some version) lines) };
@@ -567,11 +671,19 @@ let add ~dir target ~name =
   let url = Package.normalize_url url in
   let (path, versions) = find_module_versions url in
   let version = match asked with
-    | Some v when List.mem v versions -> v
+    | Some v when List.mem v versions ->
+      (match unusable path v with
+       | Some why -> fail why
+       | None -> v)
     | Some v ->
       fail (Printf.sprintf "%s has no release %s; it has %s" path v
               (String.concat ", " versions))
-    | None -> Option.get (latest versions)
+    | None ->
+      (match newest_usable path None versions with
+       | (Some v, Some why) -> prerr_endline ("wand: " ^ why); v
+       | (Some v, None) -> v
+       | (None, Some why) -> fail (why ^ "; no version of it can be used")
+       | (None, None) -> Option.get (latest versions))
   in
   let same_path = List.filter (fun (r : Package.require) -> r.path = path) pkg.require in
   let already r =

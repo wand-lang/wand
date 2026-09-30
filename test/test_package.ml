@@ -473,6 +473,54 @@ let test_init_tidy_upgrade () =
       Alcotest.(check bool) "and its lines" false
         (contains (sum_section app) "text"))
 
+(* A version whose wand.pkg needs a newer wand than this one is passed over
+   by add, tidy and upgrade, and asking for it by name is refused. *)
+let test_upgrade_skips_what_this_wand_cannot_use () =
+  let n = Semver.version_number Version.value in
+  let newer =
+    if n 0 = 0 then Printf.sprintf "0.%d.0" (n 1 + 1) else Printf.sprintf "%d.%d.0" (n 0) (n 1 + 1) in
+  let json_needing wand v = [
+    ("wand.pkg", Printf.sprintf "{ package = https://x.dev/me/json, wand = %s }" wand);
+    ("json.wand", Printf.sprintf "let version = \"%s\"" v) ] in
+  with_repos [
+    ("json", [("1.4.0", json_at "1.4"); ("1.4.1", json_at "1.4.1");
+              ("1.5.0", json_needing newer "1.5")]) ]
+    (fun ~app ->
+      write (Filename.concat app "wand.pkg") (Printf.sprintf
+        "{ package = https://x.dev/me/app, wand = %s, require = [ { path = https://x.dev/me/json, version = 1.4.0 } ] }"
+        Version.value);
+      write (Filename.concat app "main.wand") "import https://x.dev/me/json\njson.version";
+      Package_cmd.upgrade ~dir:app None;
+      Alcotest.(check (result string string)) "the newest this wand can use" (Ok "1.4.1")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      Package_cmd.upgrade ~dir:app None;
+      Alcotest.(check bool) "and it stays there" true
+        (contains (read_file (Filename.concat app "wand.pkg")) "version = 1.4.1");
+      Alcotest.(check bool) "asking for the version it passed over is refused" true
+        (match Package_cmd.upgrade ~dir:app (Some "https://x.dev/me/json@1.5.0") with
+         | exception Package_cmd.Failed msg ->
+           contains msg (Printf.sprintf "json 1.5.0 needs wand %s or later" newer)
+         | () -> false);
+      let fresh name =
+        let d = Filename.concat (Filename.dirname app) name in
+        Unix.mkdir d 0o755;
+        Package_cmd.init ~dir:d (Some ("https://x.dev/me/" ^ name));
+        write (Filename.concat d "main.wand") "import https://x.dev/me/json\njson.version";
+        d
+      in
+      let added = fresh "added" in
+      Package_cmd.add ~dir:added "https://x.dev/me/json" ~name:None;
+      Alcotest.(check bool) "add takes the newest this wand can use" true
+        (contains (read_file (Filename.concat added "wand.pkg")) "version = 1.4.1");
+      Alcotest.(check bool) "add refuses the version by name" true
+        (match Package_cmd.add ~dir:(fresh "named") "https://x.dev/me/json@1.5.0" ~name:None with
+         | exception Package_cmd.Failed msg -> contains msg "needs wand"
+         | () -> false);
+      let tidied = fresh "tidied" in
+      Package_cmd.tidy ~dir:tidied;
+      Alcotest.(check bool) "tidy takes the newest this wand can use" true
+        (contains (read_file (Filename.concat tidied "wand.pkg")) "version = 1.4.1"))
+
 let test_schemeless_urls () =
   let (url, _, _, require) =
     parse "{ package = x.dev/me/app, wand = 0.85.0, require = [ { path = x.dev/me/json, version = 1.4.0 } ] }" in
@@ -499,29 +547,35 @@ let test_bump_rules () =
   let bump after = Package_cmd.needed (Package_cmd.changes ~before ~after) in
   let check label want got =
     Alcotest.(check string) label (Package_cmd.bump_name want) (Package_cmd.bump_name got) in
-  check "nothing changed" Patch (bump before);
-  check "padding is not a change" Patch
+  check "nothing changed" Fix (bump before);
+  check "padding is not a change" Fix
     (bump ["type m.Algorithm = Sha256 | Sha512"; "m.of   : String -> Int"]);
-  check "an export added" Minor (bump (before @ ["m.to : Int -> String"]));
-  check "an export removed" Major (bump ["type m.Algorithm = Sha256 | Sha512"]);
-  check "a type made more general" Major
+  check "an export added" Feature (bump (before @ ["m.to : Int -> String"]));
+  check "an export removed" Breaking (bump ["type m.Algorithm = Sha256 | Sha512"]);
+  check "a type made more general" Breaking
     (bump ["type m.Algorithm = Sha256 | Sha512"; "m.of : 'a -> Int"]);
-  check "an effect added" Major
+  check "an effect added" Breaking
     (bump ["type m.Algorithm = Sha256 | Sha512"; "m.of : String -> Int ! {IO}"]);
-  check "a variant added" Major
+  check "a variant added" Breaking
     (bump ["type m.Algorithm = Sha256 | Sha512 | Md5"; "m.of : String -> Int"]);
   (* A record whose fields do not fit on one line: the code gives it as one
      string, and wand.pkg read back as a line for each field. *)
   let long = "type m.Pod(\n  name: String,\n  image: String\n)" in
   let read_back = ["type m.Pod("; "  name: String,"; "  image: String"; ")"] in
   let bump_long before after = Package_cmd.needed (Package_cmd.changes ~before ~after) in
-  check "a record on several lines, read back" Patch (bump_long read_back [long]);
-  check "and a field of it changed" Major
+  check "a record on several lines, read back" Fix (bump_long read_back [long]);
+  check "and a field of it changed" Breaking
     (bump_long read_back ["type m.Pod(\n  name: String,\n  image: Int\n)"]);
   let next last b = Package_cmd.next_version last b in
   Alcotest.(check (list string)) "versions"
-    ["0.4.0"; "0.3.2"; "2.0.0"; "1.3.0"; "1.2.4"]
-    [next "0.3.1" Major; next "0.3.1" Minor; next "1.2.3" Major; next "1.2.3" Minor; next "1.2.3" Patch]
+    ["0.4.0"; "0.3.2"; "0.3.2"; "2.0.0"; "1.3.0"; "1.2.4"]
+    [next "0.3.1" Breaking; next "0.3.1" Feature; next "0.3.1" Fix;
+     next "1.2.3" Breaking; next "1.2.3" Feature; next "1.2.3" Fix];
+  let move last v = Package_cmd.bump_name (Package_cmd.kind_of_move last v) in
+  Alcotest.(check (list string)) "the kind of a move to a version"
+    ["breaking"; "breaking"; "fix"; "breaking"; "feature"; "fix"]
+    [move "0.4.0" "1.0.0"; move "0.3.1" "0.4.0"; move "0.3.1" "0.3.5";
+     move "1.2.3" "2.0.0"; move "1.2.3" "1.4.0"; move "1.2.3" "1.2.9"]
 
 (* A record whose fields go on several lines passes the check that the
    section written for it is held to. *)
@@ -570,13 +624,34 @@ let test_interface_and_release () =
     (match Package_cmd.interface ~dir:root ~check:true with
      | exception Package_cmd.Failed msg -> contains msg "+ digest.name : 'a -> Int"
      | () -> false);
-  Alcotest.(check bool) "a patch is refused" true
-    (match Package_cmd.release ~dir:root (Some "patch") with
-     | exception Package_cmd.Failed msg -> contains msg "need a major release"
-     | () -> false);
+  let refused label needle asked =
+    Alcotest.(check bool) label true
+      (match Package_cmd.release ~dir:root (Some asked) with
+       | exception Package_cmd.Failed msg -> contains msg needle
+       | () -> false)
+  in
+  refused "a fix is refused" "need a breaking release, not a fix release" "fix";
+  refused "the old word still works, and is refused the same way"
+    "need a breaking release, not a fix release" "patch";
+  refused "a version too small for the change"
+    "need a breaking release, and 0.1.1 after 0.1.0 is a fix release" "0.1.1";
+  refused "a version that is not after the last" "is not after the latest release, 0.1.0" "0.1.0";
+  refused "a word that is neither" "breaking, feature or fix, or a version" "big";
   Package_cmd.release ~dir:root None;
   Alcotest.(check bool) "before 1.0 a break moves the minor" true
     (contains (interface_section root) "version 0.2.0");
+  write (Filename.concat root "digest.wand")
+    "type Algorithm = Sha256 | Sha512\nlet name a = 1\nlet more = 2\n";
+  ignore (git ["commit"; "-qam"; "three"]);
+  Package_cmd.release ~dir:root (Some "1.0.0");
+  Alcotest.(check bool) "a version asked for by name leaves 0.x" true
+    (contains (interface_section root) "version 1.0.0");
+  write (Filename.concat root "digest.wand")
+    "type Algorithm = Sha256 | Sha512\nlet name a = 1\nlet more = 2\nlet most = 3\n";
+  ignore (git ["commit"; "-qam"; "four"]);
+  Package_cmd.release ~dir:root (Some "feature");
+  Alcotest.(check bool) "from 1.0 a feature moves the minor" true
+    (contains (interface_section root) "version 1.1.0");
   write (Filename.concat root "junk.txt") "x";
   Alcotest.(check bool) "a dirty tree is refused" true
     (match Package_cmd.release ~dir:root None with
@@ -713,6 +788,9 @@ let () =
         (fun () -> if git_present then test_add () else Alcotest.skip ());
       Alcotest.test_case "init, tidy, upgrade" `Quick
         (fun () -> if git_present then test_init_tidy_upgrade () else Alcotest.skip ());
+      Alcotest.test_case "add, tidy and upgrade pass over what this wand cannot use" `Quick
+        (fun () -> if git_present then test_upgrade_skips_what_this_wand_cannot_use ()
+          else Alcotest.skip ());
     ];
     "releasing", [
       Alcotest.test_case "the bump rules"      `Quick test_bump_rules;
