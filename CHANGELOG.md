@@ -4,91 +4,27 @@
 
 ### Added
 
-- **Byte escapes: `\xNN`.** A string can hold any byte, written `\x` and
-  two hex digits, as in `"\xff\xfb\x01"`. A `String` is bytes, and a byte
-  that is no character had no spelling. `wand f` keeps such bytes, and
-  writes valid UTF-8 as the character. In a regex, `\xNN` now works inside
-  a character class too, so `r/[\xfb-\xfe]/` is a byte range (#56).
-
-- **`wand f` takes a directory**, and formats every `.wand` file under it,
-  as `wand t` and `wand s` read one (#57).
-
-- **`Wand.check_at`: check text as the file it will be.** What the text
-  imports is read from beside the path, and what the check finds names the
-  path, so an editor can check a buffer before it saves it (#59).
-
-- **`Checked.effects`: what a source performs, as data.** Each label is
-  written as a `uses` line writes it, such as `["FS.Write", "Shell(git)"]`,
-  so a program that checks code before it trusts it reads the answer, not
-  the text of an error (#60).
-
-### Documentation
-
-- **Serving with no socket, in a test.** The reference shows how a handler
-  serves fake connections: it answers `Net!listen` with a list, one element
-  per connection, and `Net!read_line` and `Net!write` for each (#58).
+- `\xNN` byte escapes in strings and in regex character classes (#56).
+- `wand f` takes a directory (#57).
+- `Wand.check_at`: check text as the file at a path (#59).
+- `Checked.effects`: what a source performs (#60).
 
 ### Changed
 
-- **`Shared.update` answers the value from before the update**, as
-  `getAndUpdate` does in Java. What an update takes out is no longer lost:
-  `Shared.update outbox (fn _ -> [])` answers the lines it removed, and
-  `Shared.update counter (fn c -> c + 1)` answers the number this caller
-  took. The new value is `f` of the old one. An `update` where `Unit` is
-  required, as in `if c then Shared.update s f else ()`, now needs its
-  value dropped, and a handler for `Shared!update` resumes with the old
-  value (#55).
+- `Shared.update` returns the value from before the update (#55).
 
 ### Fixed
 
-- **A record update uses the type of its own module.** With two modules
-  that each declare a type of one name, such as `type State`, an update in
-  one module could build the other module's type: a wrong value, or
-  `constructor 'State' has no field named ...` when the fields did not
-  match. Which one it built depended on the order of the imports (#50).
+- A function stored in a record field is charged where it is stored (#61).
+- A record update uses the type of its own module (#50).
+- An interface can name its own module's types across modules (#51).
+- A list can hold different modules that implement one interface (#52).
+- A continuation used after its case answered is an error, not a crash (#53).
+- A self-call inside a closure no longer takes on the closure's effects (#54).
 
-- **An interface can name its own module's types, and be implemented from
-  another module.** An interface `B(create: Int -> N)` with `N` declared
-  beside it could not be implemented from another file: the error was
-  `unknown type 'N' (did you mean 'a.N'?)`, with no line. A type alias that
-  names an imported interface, such as `type Lib = Map a.B`, was unknown in
-  any file that used the alias. And two files that bound the interface's
-  module under different names did not agree that a module fits it. An
-  interface now travels with its types, and is one interface in every file
-  (#51).
+### Documentation
 
-- **A list can hold different modules that implement one interface.**
-  `[ints, rev]` was refused with `expected a module implementing
-  ord.Ranked Int, got a module implementing ord.Ranked Int`, unless each
-  module had been given the interface type first. Now the list holds the
-  interface both modules claim, inside tuples too, so
-  `Map.from_list [("i", ints), ("r", rev)]` works (#52).
-
-- **A continuation used after its case answered is an error, not a crash.**
-  A handler that carried state in a function each case returned, and
-  called `k` inside it, stopped wand with
-  `Fatal error: exception Stdlib.Effect.Continuation_already_resumed`. The
-  case had answered without resuming, so the body was already unwound. Now
-  the call says so, and calling `k` twice says so too (#53).
-
-- **A function that stores a closure calling itself no longer takes on the
-  closure's effects.** `let make s = O(poke = fn () -> make (next s))`,
-  with `poke : Unit -> O ! {Raise}`, came out as raising, so `V-BANG1`
-  asked for `make!`, though building an object raises nothing. A
-  self-call inside a closure now has effects of its own, which must hold
-  everything the function performs, so a closure still cannot hide an
-  effect the function has (#54).
-
-- **A function stored in a record field is charged where it is stored.** A
-  field whose type writes no effects, such as `f: Unit -> String`, could
-  hold a function that runs a command, and no manifest saw it: not the file
-  that built the value, and not a file that called the field in another
-  module. A program under `uses {IO}` ran the command. Now building the
-  value performs what the stored function performs, except `Raise`, so the
-  file that stores it declares it (#61).
-
-  A file that builds such a value, and did not declare the effects, is now
-  refused: `wand t` names the line to add.
+- Serving fake connections in a test (#58).
 
 ## [0.94.1] - 2026-09-30
 
