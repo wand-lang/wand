@@ -347,3 +347,16 @@ let free_vars r =
 let extra ~allowed ~found =
   let (Set (la, _)) = repr allowed and (Set (lb, _)) = repr found in
   List.map name_of (EffSet.elements (EffSet.diff lb la))
+
+(* `absorb`, for a call whose callee shares its caller's row: an open callee
+   is tied to all of the ambient, labels as well as tail, rather than to the
+   tail alone. Used once the caller's scope is done, so the ambient is all
+   the caller performs. *)
+let absorb_whole ~ambient l =
+  let (Set (la, ta)) = repr ambient in
+  let (Set (ll, tl)) = repr l in
+  (match tl, ta with
+   | Some vl, Some va when vl.id = va.id -> ()
+   | Some vl, _ -> bind vl (Set (EffSet.diff la ll, ta))
+   | None, _ -> ());
+  Set (EffSet.union la ll, ta)

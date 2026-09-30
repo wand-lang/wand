@@ -2410,9 +2410,40 @@ let test_a_self_call_in_a_closure_keeps_the_effects () =
      count 2"
     "0"
 
+(* A call to a member of an `and` group whose body comes later was tied to
+   what the caller had not yet said it performs, and not to what it had.
+   When the group's rows closed, that made the member pure, and its own
+   body no longer fit. The error had no location (#65). *)
+let test_a_group_member_called_before_its_body () =
+  ok "a pure member called before its body"
+    "import Random\n\
+     type Obj(input: Option (Int -> Option Obj ! {Random, Raise}) = None)\n\
+     let make (n: Int) = Obj(input = Some (fn x -> _input n x))\n\
+     and _to n = Some (make n)\n\
+     and _input n x = if x == 0 then Some (make n) else _run n x\n\
+     and _run n x = if x > 1 then _print n else _to n\n\
+     and _print n = _to n\n\
+     1"
+    "1";
+  (* It is still held to what the field allows. *)
+  err_contains "a member that prints, where the field allows no IO"
+    "import IO\n\
+     type Obj(input: Option (Int -> Option Obj ! {Raise}) = None)\n\
+     let make (n: Int) = Obj(input = Some (fn x -> _run n x))\n\
+     and _run n x = if x > 1 then _print n else Some (make n)\n\
+     and _print n = (IO.println \"x\"; Some (make n))\n\
+     1"
+    "IO";
+  (* And a member that does not fit says where it is. *)
+  err_contains "a member that does not fit names its line"
+    "let f (n: Int) = g n + 1\nand g (n: Int) = \"x\"\nf 1"
+    "2:"
+
 let () =
   Alcotest.run "Typechecker" [
     "recursion", [
+      Alcotest.test_case "a group member called before its body" `Quick
+        test_a_group_member_called_before_its_body;
       Alcotest.test_case "a self-call in a closure keeps the effects" `Quick
         test_a_self_call_in_a_closure_keeps_the_effects;
     ];

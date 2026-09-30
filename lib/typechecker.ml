@@ -163,14 +163,27 @@ let current_eff : Effect_set.t ref = ref (Effect_set.unknown ())
 
 let performs r = current_eff := Effect_set.absorb ~ambient:!current_eff r
 
+(* The effects of calls, in the scope being inferred, to members of a
+   recursive group whose own bodies have not been inferred yet. Each is tied
+   to all the scope performs, once the scope is done (#65). See
+   `performs_call`. *)
+let member_calls : Effect_set.t list ref = ref []
+
 (* Run `f` with its own effect accumulator, returning what it performed
    alongside its result and leaving the enclosing accumulator untouched. *)
 let scoped_eff f =
-  let saved = !current_eff in
+  let saved = !current_eff and saved_calls = !member_calls in
   current_eff := Effect_set.unknown ();
-  let result = (try f () with e -> current_eff := saved; raise e) in
-  let inner = !current_eff in
-  current_eff := saved;
+  member_calls := [];
+  let restore () = current_eff := saved; member_calls := saved_calls in
+  let result = (try f () with e -> restore (); raise e) in
+  let inner =
+    try
+      List.fold_left (fun acc l -> Effect_set.absorb_whole ~ambient:acc l)
+        !current_eff !member_calls
+    with e -> restore (); raise e
+  in
+  restore ();
   (result, inner)
 
 (* Name of the function whose body is being inferred, so a match that came
@@ -3478,6 +3491,42 @@ let instantiate_ctor (sch : scheme) =
 let perform_stored rows =
   List.iter (fun r -> performs (Effect_set.remove Effect_set.Raise r)) rows
 
+(* The placeholders of recursive-group members whose bodies are not
+   inferred yet. *)
+let uninferred_members : typ list ref = ref []
+
+let with_members ps f =
+  let saved = !uninferred_members in
+  uninferred_members := ps @ saved;
+  Fun.protect ~finally:(fun () -> uninferred_members := saved) f
+
+let inferred_member p =
+  uninferred_members := List.filter (fun q -> q != p) !uninferred_members
+
+let rec app_head e =
+  match strip_located e with
+  | App (g, _) -> app_head g
+  | x -> x
+
+(* Record what a call performs. A call to a member of a recursive group
+   whose body comes later is different: nothing is known of what that
+   member does, and absorbing it now ties it to what this scope has not
+   said yet, leaving out what it already has. Once the group's rows close,
+   that made the member pure, and its own body then did not fit (#65). So
+   such a call waits for the end of its scope, and is tied to all of it,
+   the way a call and its caller share one row in a recursive group. *)
+let performs_call (env : env) f latent =
+  let uninferred =
+    match app_head f with
+    | Var n ->
+      (match List.assoc_opt n env with
+       | Some (Mono t) -> List.exists (fun p -> p == t) !uninferred_members
+       | _ -> false)
+    | _ -> false
+  in
+  if uninferred then member_calls := latent :: !member_calls
+  else performs latent
+
 let rec infer tenv (env : env) (e : expr) : typ =
   match e with
   | Int _      -> TInt
@@ -3699,7 +3748,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
           raise (TypeError (effects_conflict_message
                               ~expected:"the parameter" ~got:"the function given"
                               a b)));
-       performs latent;
+       performs_call env f latent;
        tr
      | _ ->
        let tx = infer tenv env x in
@@ -3707,7 +3756,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        let tr = fresh () in
        let latent = Effect_set.unknown () in
        unify_expected ~expected:tf ~got:(TFun (tx, tr, latent));
-       performs latent;
+       performs_call env f latent;
        tr))
   | Let (p, e1, e2, _) ->
     let below = binders_below e2 in
@@ -3733,12 +3782,15 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | LetRec (bindings, e2, _) ->
     let placeholders = List.map (fun (name, _, _) -> (name, fresh ())) bindings in
     let env_rec = List.map (fun (name, t) -> (name, Mono t)) placeholders @ env in
-    let inferred = List.map (fun (name, params, body) ->
-      let t = with_current_fn name (fun () -> infer tenv env_rec (Fn (params, body))) in
-      unify (List.assoc name placeholders) t;
-      record_local name t;
-      (name, t)
-    ) bindings in
+    let inferred = with_members (List.map snd placeholders) (fun () ->
+      List.map (fun (name, params, body) ->
+        let p = List.assoc name placeholders in
+        let t = with_current_fn name (fun () -> infer tenv env_rec (Fn (params, body))) in
+        inferred_member p;
+        unify p t;
+        record_local name t;
+        (name, t)
+      ) bindings) in
     let env' = List.map (fun (name, t) -> (name, generalize env t)) inferred @ env in
     infer tenv env' e2
   | If (cond, then_, else_) ->
@@ -4736,7 +4788,7 @@ and infer_app_spine ?extra tenv (env : env) head args =
       let latent = Effect_set.unknown () in
       at loc (fun () ->
         unify_expected ~expected:!cur ~got:(TFun (tx, tr, latent)));
-      performs latent;
+      performs_call env head latent;
       cur := tr) args;
   (* A piped value is an argument written to the left of the call, so it
      lands after every argument written inside it. *)
@@ -4773,7 +4825,7 @@ and infer_app_spine ?extra tenv (env : env) head args =
                              a b)));
       (* A lambda in function position has no separate latent set: applying
          it is what performs its body, and the arrow already carries that. *)
-      (match latent with Some l -> performs l | None -> ()))) (List.rev !waiting);
+      (match latent with Some l -> performs_call env head l | None -> ()))) (List.rev !waiting);
   !cur
 
 and infer_binop tenv (env : env) op a b : typ =
@@ -6676,11 +6728,17 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     | TLLetRec bindings ->
       let placeholders = List.map (fun (name, _, _) -> (name, fresh ())) bindings in
       let env_rec = List.map (fun (name, t) -> (name, Mono t)) placeholders @ env in
-      let inferred = List.map (fun (name, params, body) ->
-        let t = with_current_fn name (fun () -> infer tenv env_rec (Fn (params, body))) in
-        unify (List.assoc name placeholders) t;
-        (name, t)
-      ) bindings in
+      let inferred = with_members (List.map snd placeholders) (fun () ->
+        List.map (fun (name, params, body) ->
+          let p = List.assoc name placeholders in
+          let t = with_current_fn name (fun () -> infer tenv env_rec (Fn (params, body))) in
+          inferred_member p;
+          (* Where the binding stands: a member that does not fit what the
+             rest of the group made of it is the line to look at. *)
+          (try unify p t
+           with TypeError msg -> fail_at_opt (loc_of_expr body) msg);
+          (name, t)
+        ) bindings) in
       let env' = List.map (fun (name, t) -> (name, generalize env t)) inferred @ env in
       (env', last_t)
     | TLLetPat (_, body) when is_import_expr body ->
