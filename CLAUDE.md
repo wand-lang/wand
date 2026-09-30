@@ -144,6 +144,13 @@ inside that band is layout, not work.
 rather than at release time — otherwise a build from `main` claims to be the
 last release while behaving differently.
 
+`CHANGELOG.md` and `.github/release-notes.md` give one short line per
+change, with its issue number, under Added, Changed, Fixed and
+Documentation: `- wand f takes a directory (#57).` The explanation belongs
+in the commit message and the issue. The release notes add an Upgrading
+section only when a change can make an existing file fail, one line per
+change saying what to do.
+
 ```bash
 make release VERSION=0.6.0          # tags, pushes, builds the macOS x86_64
                                     # archive, attaches it
