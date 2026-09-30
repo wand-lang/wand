@@ -62,6 +62,7 @@ wand d "List.map"       # show doc string
 wand d                  # list the modules in scope
 wand d --index          # every module's members, with signatures
 wand f script.wand      # format a file in place
+wand f .                # format every .wand file from here down
 wand s                  # run every test_*.wand from here down
 wand h                  # help
 wand v                  # print the version

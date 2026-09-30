@@ -872,6 +872,22 @@ let test_a_list_of_modules_is_a_list_of_their_interface () =
     let (code, out) = wand_out ~dir:d ["main.wand"] in
     Alcotest.(check (pair int string)) "it runs" (0, "[7, 3] 2 2\n") (code, out))
 
+(* A directory is every `.wand` file under it, as `wand t` and `wand s` read
+   one. `wand f driver/` used to answer `Is a directory` (#57). *)
+let test_fmt_takes_a_directory () =
+  in_scratch (fun d ->
+    Unix.mkdir (Filename.concat d "sub") 0o755;
+    write_file (Filename.concat d "a.wand") "let x    =  1\n";
+    write_file (Filename.concat d "sub/b.wand") "let y    =  2\n";
+    let (code, _) = wand_out ~dir:d ["f"; "."] in
+    Alcotest.(check int) "it succeeds" 0 code;
+    Alcotest.(check (pair string string)) "both files are formatted"
+      ("let x = 1\n", "let y = 2\n")
+      (read_file (Filename.concat d "a.wand"), read_file (Filename.concat d "sub/b.wand"));
+    Unix.mkdir (Filename.concat d "empty") 0o755;
+    let (code, _) = wand_out ~dir:d ["f"; "empty"] in
+    Alcotest.(check int) "a directory with no files is an error" 1 code)
+
 (* A function stored in a field whose type writes no effects. The file that
    builds the value answers for what the function performs: another file
    that calls the field rebuilds the type with rows of its own, so neither
@@ -1184,6 +1200,7 @@ let () =
     ];
     "rewriting a file", [
       Alcotest.test_case "wand f"        `Quick test_fmt_rewrites_in_place;
+      Alcotest.test_case "wand f takes a directory" `Quick test_fmt_takes_a_directory;
       Alcotest.test_case "wand t --fix"  `Quick test_fix_rewrites_in_place;
       Alcotest.test_case "wand t over a tree" `Quick test_type_over_a_tree;
       Alcotest.test_case "wand t on one file" `Quick test_type_of_one_file_is_unchanged;

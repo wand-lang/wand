@@ -10,6 +10,9 @@
   writes valid UTF-8 as the character. In a regex, `\xNN` now works inside
   a character class too, so `r/[\xfb-\xfe]/` is a byte range (#56).
 
+- **`wand f` takes a directory**, and formats every `.wand` file under it,
+  as `wand t` and `wand s` read one (#57).
+
 ### Changed
 
 - **`Shared.update` answers the value from before the update**, as

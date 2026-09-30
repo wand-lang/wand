@@ -17,7 +17,7 @@ let usage () =
   print_endline "Commands:";
   print_endline "  d   doc [name]              What a name is: its doc, a module's members,";
   print_endline "                              or everything in scope";
-  print_endline "  f   fmt <file>...           Format .wand files in place";
+  print_endline "  f   fmt [<file>|<dir>]...   Format .wand files in place";
   print_endline "  h   help [cmd]              Show this help, or help for a command";
   print_endline "  i   interactive             Start an interactive session";
   print_endline "  l   lsp                     Start the language server (LSP over stdio)";
@@ -146,10 +146,11 @@ let usage_for sub =
     print_endline "  --json          Emit the name, type, and doc as JSON";
     print_endline "  --load <file>   Load a .wand file before looking up the name (repeatable)"
   | "f" | "fmt" ->
-    print_endline "Usage: wand f <file.wand>...";
+    print_endline "Usage: wand f <file.wand>|<dir>...";
     print_endline "";
     print_endline "Format one or more .wand files in place (each file is";
-    print_endline "overwritten with its formatted contents).";
+    print_endline "overwritten with its formatted contents). A directory is";
+    print_endline "every .wand file under it, as wand t and wand s read one.";
     print_endline "Comments are preserved. An item with a comment inside it is";
     print_endline "left exactly as written, since moving a comment to the wrong";
     print_endline "expression is worse than leaving it where its author put it."
@@ -1139,7 +1140,19 @@ let main () =
       (match rest with
        | [] ->
          Printf.eprintf "Error: expected one or more files\nRun 'wand h f' for usage.\n"; exit 1
-       | paths ->
+       | roots ->
+         (* A directory is every `.wand` file under it, with the same skips
+            `wand t` and `wand s` make, so the three commands read one tree
+            the same way. *)
+         let paths =
+           List.concat_map (fun p ->
+             if Wand.Runner.is_dir p then Wand.Runner.find_wand_files p else [p])
+             roots
+         in
+         if paths = [] then begin
+           Printf.eprintf "No .wand files found in %s\n" (String.concat ", " roots);
+           exit 1
+         end;
          let had_error = ref false in
          List.iter (fun path ->
            match (try Ok (In_channel.with_open_text path In_channel.input_all)
