@@ -13,6 +13,12 @@
 - **`wand f` takes a directory**, and formats every `.wand` file under it,
   as `wand t` and `wand s` read one (#57).
 
+### Documentation
+
+- **Serving with no socket, in a test.** The reference shows how a handler
+  serves fake connections: it answers `Net!listen` with a list, one element
+  per connection, and `Net!read_line` and `Net!write` for each (#58).
+
 ### Changed
 
 - **`Shared.update` answers the value from before the update**, as

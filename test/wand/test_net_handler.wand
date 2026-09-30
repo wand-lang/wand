@@ -1,0 +1,41 @@
+uses {Net.Listen, Shared}
+
+-- A server tested with no socket: a handler answers Net!listen with fake
+-- connections, feeds each its own lines, and keeps what each was sent.
+-- "%{conn}" is the element the handler gave for a connection.
+
+import List
+import Map
+import Net
+import Par
+import Shared
+
+let {test} = import Test
+
+let echo! conn =
+  match Net.read_line conn with
+  | Some line -> (Net.write! "%{line}!" conn; echo! conn)
+  | None -> ()
+
+let served! scripts =
+  with Shared.make scripts as input ->
+  with Shared.make Map.empty as out -> (
+    handle Net.listen :4000 |> Par.each_stream 8 echo! with
+    | Net!listen _ k -> k (Map.keys scripts)
+    | Net!read_line conn k -> (
+      let name = "%{conn}";
+      match Map.get name (Shared.get input) with
+      | Some [l :: rest] -> (Shared.update input (Map.set name rest); k (Some l))
+      | _ -> k None
+    )
+    | Net!write (conn, text) k -> (
+      Shared.update out (Map.update "%{conn}" [] (fn o -> List.concat o [text]));
+      k Ok()
+    );
+    Shared.get out
+  )
+
+test "each fake connection gets the replies to its own lines" (fn t ->
+  t.eq
+    (Map.from_list [("ann", ["hi!"]), ("bo", ["yo!", "bye!"])])
+    (served! (Map.from_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])))

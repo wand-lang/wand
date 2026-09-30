@@ -5302,6 +5302,45 @@ A port another process holds, or one below 1024 without the privilege for
 it, raises when the read begins. The effects are `Net.Listen`; see
 [Naming the ports](#naming-the-ports-netlisten8080).
 
+#### Serving with no socket, in a test
+
+A handler can serve whole connections with no port and no client. It answers
+`Net!listen` with a list, and each element is one connection. A handler
+for `Net!read_line` and one for `Net!write` then give each connection its
+input and keep what it was sent. The element is what the handler sees as
+the connection, so `"%{conn}"` tells the connections apart:
+
+```ocaml
+-- `scripts` maps a connection's name to the lines it sends.
+let served! scripts =
+  with Shared.make scripts as input ->
+  with Shared.make Map.empty as out -> (
+    handle Net.listen :4000 |> Par.each_stream 8 echo! with
+    | Net!listen _ k -> k (Map.keys scripts)
+    | Net!read_line conn k -> (
+      let name = "%{conn}";
+      match Map.get name (Shared.get input) with
+      | Some [l :: rest] -> (Shared.update input (Map.set name rest); k (Some l))
+      | _ -> k None
+    )
+    | Net!write (conn, text) k -> (
+      Shared.update out (Map.update "%{conn}" [] (fn o -> List.concat o [text]));
+      k (Ok ())
+    );
+    Shared.get out
+  )
+
+served! (Map.from_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])
+-- {ann = ["hi!"], bo = ["yo!", "bye!"]} for a server that echoes with a "!"
+```
+
+`test/wand/test_net_handler.wand` is this, whole.
+
+Every fiber the server starts is inside the handler, so both sides of a
+session that reads and writes at once are answered. The connections are
+not real, so `peer` does not answer for them; the name the handler gave is
+the name to use.
+
 ### `HTTP`
 
 ```ocaml

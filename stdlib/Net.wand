@@ -18,6 +18,11 @@ uses {Net.Listen}
 --
 -- A port another process holds, or one below 1024 without the privilege
 -- for it, raises when the read begins.
+--
+-- In a test, a handler serves connections with no socket: it answers
+-- `Net!listen` with a list, one element per connection, and answers
+-- `Net!read_line` and `Net!write` for each. `"%{conn}"` shows which
+-- element a read or a write is for. The reference shows the whole pattern.
 let listen port = net_listen port
 
 -- The next line from `conn`, without its line ending, or `None` once the
