@@ -590,7 +590,7 @@ let operations : operation list =
     { op_name = "Shared!update"; op_effect = Shared;
       op_types = (fun () ->
         let a = fresh () in
-        Some (TTuple [TShared a; TFun (a, a, Effect_set.pure)], TUnit));
+        Some (TTuple [TShared a; TFun (a, a, Effect_set.pure)], a));
       op_performers = ["Shared.update"] };
   ]
 
@@ -4969,7 +4969,7 @@ let stdlib_type_env : env = [
   ("shared_update",
    let a = fresh () in
    generalize []
-     (TShared a @-> effs [Effect_set.Shared] (TFun (a, a, Effect_set.pure)) TUnit));
+     (TShared a @-> effs [Effect_set.Shared] (TFun (a, a, Effect_set.pure)) a));
   ("option_get_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TUnit) (a)));
   ("fail_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TString) (a)));
   (* A file is named by a Path, like every other filesystem operation. These

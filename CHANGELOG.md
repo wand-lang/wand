@@ -2,6 +2,17 @@
 
 ## [0.95.0] - 2026-09-30
 
+### Changed
+
+- **`Shared.update` answers the value from before the update**, as
+  `getAndUpdate` does in Java. What an update takes out is no longer lost:
+  `Shared.update outbox (fn _ -> [])` answers the lines it removed, and
+  `Shared.update counter (fn c -> c + 1)` answers the number this caller
+  took. The new value is `f` of the old one. An `update` where `Unit` is
+  required, as in `if c then Shared.update s f else ()`, now needs its
+  value dropped, and a handler for `Shared!update` resumes with the old
+  value (#55).
+
 ### Fixed
 
 - **A record update uses the type of its own module.** With two modules

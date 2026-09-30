@@ -6330,7 +6330,7 @@ the computing in its own `Par` call, before or after the effects.
 ```ocaml
 make   : 'a -> Resource {..} (Shared 'a)
 get    : Shared 'a -> 'a ! {Shared}
-update : Shared 'a -> ('a -> 'a) -> Unit ! {Shared}
+update : Shared 'a -> ('a -> 'a) -> 'a ! {Shared}
 ```
 
 State that changes. A `Shared` holds one value, and the only way to change
@@ -6351,6 +6351,19 @@ with Shared.make Counts(hits = 0, names = []) as counts ->
 change to several fields of a record is one step. The function given to
 `update` performs nothing, and it runs without being interrupted by other
 work. A second update of the same `Shared` that starts inside it raises.
+
+**`update` answers the value from before the update**, as `getAndUpdate`
+does in Java. What an update removes is gone once it is done, so this is
+the only way to take it out and keep it:
+
+```ocaml
+let lines = Shared.update outbox (fn _ -> [])    -- what was there, now empty
+let n = Shared.update counter (fn c -> c + 1)     -- the number this caller took
+```
+
+The new value is the function applied to the old one: `let now = f old`.
+The function is pure, so that is the value the update stored. A `get` after
+the update is not the same thing, since another update may come between.
 
 **A `Shared` exists only inside its `with`.** When the `with` ends, a `get`
 or an `update` raises. A function uses one only if it is passed one, so

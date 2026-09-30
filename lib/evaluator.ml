@@ -3073,7 +3073,10 @@ let performing name f =
   VBuiltin (fun v -> perform_wand (name, v))
 
 (* One update at a time: the function runs without yielding, and a second
-   update of the same Shared that starts while it runs is refused. *)
+   update of the same Shared that starts while it runs is refused. It
+   answers the value from before the update: what an update removes is
+   otherwise gone before the caller can see it, and the new value is `f`
+   of the old one, which the caller can compute. *)
 let () = Hashtbl.replace direct_impl "Shared!update" (function
   | VTuple [VShared c; f] ->
     shared_open c;
@@ -3086,13 +3089,14 @@ let () = Hashtbl.replace direct_impl "Shared!update" (function
     let cell = loc_cell () in
     let budget = cell.budget in
     cell.budget <- max_int;
+    let old = c.s_value in
     let v =
-      Fun.protect (fun () -> apply f c.s_value) ~finally:(fun () ->
+      Fun.protect (fun () -> apply f old) ~finally:(fun () ->
         cell.budget <- budget;
         c.s_busy <- false)
     in
     c.s_value <- v;
-    VUnit
+    old
   | _ -> raise (EvalError "Shared.update: expected a Shared and a function"))
 
 (* ── Serving ───────────────────────────────────────────────────────────── *)

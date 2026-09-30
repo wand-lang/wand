@@ -40,12 +40,14 @@ let make init = Resource.make (fn () -> shared_new init) (fn s -> shared_close s
 let get s = shared_get s
 
 -- Change the value a `Shared` holds: `f` gets the value now and answers
--- the new one.
+-- the new one. `update` answers the value from before, so what an update
+-- takes out is not lost: `Shared.update outbox (fn _ -> [])` answers the
+-- lines it removed. The new value is `f` of that, since `f` is pure.
 --
 -- Updates happen one at a time, so none is lost when many run at once, and
 -- a change to several fields of a record is one step. `f` performs nothing,
 -- and a second update of the same `Shared` cannot start inside it.
 --
--- >> with Shared.make 1 as n -> (Shared.update n (fn x -> x + 1); Shared.get n)
--- 2 : Int
+-- >> with Shared.make 1 as n -> (Shared.update n (fn x -> x + 1), Shared.get n)
+-- (1, 2) : (Int, Int)
 let update s f = shared_update s f

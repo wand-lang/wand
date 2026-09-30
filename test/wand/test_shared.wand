@@ -3,6 +3,7 @@ uses {Clock, Shared}
 import Clock
 import List
 import Par
+import Result
 import Shared
 import Test
 
@@ -59,3 +60,26 @@ test "a handler answers a read" (fn t ->
     handle Shared.get n + 1 with
     | Shared!get _ k -> k 41
     ))
+
+-- An update answers the value from before it, so what it takes out is not
+-- lost, and many fibers taking numbers from one counter each get their own.
+group "update answers the old value" (fn () -> [
+  test "what an update removes comes back" (fn t ->
+    t.eq
+      ([1, 2, 3], [])
+      (with Shared.make [1, 2, 3] as box -> (
+        let taken = Shared.update box (fn _ -> []);
+        (taken, Shared.get box)
+      ))),
+  test "the new value is f of the old" (fn t ->
+    let bump x = x + 1;
+    t.eq 8 (with Shared.make 7 as n -> bump (Shared.update n bump))),
+  test "every fiber takes its own number" (fn t ->
+    t.eq
+      (List.range 0 49)
+      (with Shared.make 0 as next ->
+      List.sort
+        (List.filter_map
+          Result.to_option
+          (Par.map 16 (fn _ -> Shared.update next (fn c -> c + 1)) (List.range 1 50)))))
+])
