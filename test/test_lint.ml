@@ -141,6 +141,24 @@ let test_bang1_ignores_a_demanded_raise () =
   fires "a real raiser is still named" 
     "import List\nlet first xs = List.head! xs\nfirst [1]" "V-BANG1"
 
+(* A function that builds an object whose field may raise, where the field
+   makes the next object by calling the function again. Building one raises
+   nothing; the field is what may raise, when it is called. The call inside
+   the field tied the function's effects to the field's, so it came out
+   raising (#54). *)
+let test_bang1_ignores_a_stored_raise () =
+  not_fired "a builder that stores a raising closure"
+    "type O(poke: Unit -> O ! {Raise})\n\
+     type State(pulls: Int = 0)\n\
+     let make (s: State) = O(poke = fn () -> make (State(s, pulls = s.pulls + 1)))\n\
+     make (State())" "V-BANG1";
+  (* A builder that raises while it builds is still named. *)
+  fires "a builder that raises while it builds"
+    "import List\n\
+     type O(poke: Unit -> O ! {Raise})\n\
+     let make (xs: List Int) = (let _ = List.head! xs in O(poke = fn () -> make xs))\n\
+     make [1]" "V-BANG1"
+
 (* A name takes one ending. `ok?!` and `ok!?` are both parse errors, so the
    advice for a predicate that raises cannot be to add the `!`, which is
    what it used to be -- a name the reader could not have written. *)
@@ -806,6 +824,8 @@ let () =
         test_bang1_on_a_predicate;
       Alcotest.test_case "V-BANG1 ignores a demanded raise" `Quick
         test_bang1_ignores_a_demanded_raise;
+      Alcotest.test_case "V-BANG1 ignores a stored raise" `Quick
+        test_bang1_ignores_a_stored_raise;
       Alcotest.test_case "V-BANG1 reads a contract" `Quick
         test_bang1_reads_a_contract;
       Alcotest.test_case "V-OR1"    `Quick test_or1;

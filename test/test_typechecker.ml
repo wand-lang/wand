@@ -2387,8 +2387,35 @@ let test_errors_say_the_fix () =
     "`Shell.inspect!` takes no input. To send the piped value to the \
      command's stdin, write `x |> Shell.inspect_with! $*(...)`"
 
+(* A self-call inside a closure has an effect row of its own, and is made to
+   hold everything the function performs. So a closure that may only raise
+   cannot call a builder that prints, and a function whose effects come from
+   its parameter still lends them to the closure (#54). *)
+let test_a_self_call_in_a_closure_keeps_the_effects () =
+  err_contains "a closure that may only raise, around a builder that prints"
+    "import IO\n\
+     type O(poke: Unit -> O ! {Raise})\n\
+     let make (n: Int) = (IO.println \"made\"; O(poke = fn () -> make (n + 1)))\n\
+     make 1"
+    "performs {IO";
+  err_contains "the parameter's effects reach the closure"
+    "import IO\n\
+     type O(poke: Unit -> O ! {Raise})\n\
+     let run f = (f (); O(poke = fn () -> run f))\n\
+     run (fn () -> IO.println \"hi\")"
+    "performs IO";
+  ok "a loop that prints still types"
+    "import IO\n\
+     let count n = if n == 0 then 0 else (IO.println \"%{n}\"; count (n - 1))\n\
+     count 2"
+    "0"
+
 let () =
   Alcotest.run "Typechecker" [
+    "recursion", [
+      Alcotest.test_case "a self-call in a closure keeps the effects" `Quick
+        test_a_self_call_in_a_closure_keeps_the_effects;
+    ];
     "shared", [
       Alcotest.test_case "a Shared holds no Shared" `Quick test_a_shared_holds_no_shared;
       Alcotest.test_case "an update performs nothing" `Quick test_an_update_performs_nothing;

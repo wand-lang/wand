@@ -1371,6 +1371,93 @@ let generalize (env : env) t =
   if quantify = [] && quantify_evars = [] then Mono t
   else Poly (quantify, quantify_evars, t)
 
+(* ── A function that calls itself inside a closure ────────────────────────
+   A call adds the callee's effects to the calling scope and ties the
+   callee's unknown effects to the scope's, which over-approximates in the
+   safe direction. For a function that calls itself inside a closure the
+   scope is the closure, and the tie runs the wrong way: whatever the
+   closure is allowed to perform becomes what the function performs. A
+   function that builds an object whose `poke : Unit -> O ! {Raise}` makes
+   the next object came out raising, though building one raises nothing
+   (#54).
+
+   So a self-reference inside a closure gets an effect row of its own, and
+   once the function's own effects are known, each such row is made to
+   hold them: the closure performs at least what the function does, which
+   is the sound direction. The function's unknown effects are tied as
+   before only where they are shared with something outside it -- its
+   parameters, its result, or the environment -- since there they may
+   stand for real effects. A self-call in the function's own body is not
+   inside a closure and is tied as before, which is what a loop needs. *)
+
+type rec_self = {
+  rs_name : string;
+  rs_placeholder : typ;
+  rs_depth : int;
+  rs_args : typ list;
+  rs_ret : typ;
+  mutable rs_rows : Effect_set.t list;
+}
+
+(* How many `fn`s the inference is inside. *)
+let lambda_depth = ref 0
+
+let rec_selfs : rec_self list ref = ref []
+
+(* A curried function of `args`, whose body's effects are `row` on the
+   innermost arrow, as `fn` builds one. *)
+let arrows args ret row =
+  let rec build = function
+    | [] -> ret
+    | [a] -> TFun (a, ret, row)
+    | a :: tl -> TFun (a, build tl, Effect_set.unknown ())
+  in
+  build args
+
+(* The type a self-reference inside a closure sees: the function's own
+   arguments and result, with an effect row of its own. *)
+let self_reference (r : rec_self) =
+  let row = Effect_set.unknown () in
+  r.rs_rows <- row :: r.rs_rows;
+  arrows r.rs_args r.rs_ret row
+
+(* Infer a function `name` of `arity` arguments that may call itself.
+   `infer_body` infers it given the type its self-references see. *)
+let with_recursive_self (env : env) name arity (infer_body : typ -> typ) =
+  let args = List.init arity (fun _ -> fresh ()) in
+  let ret = fresh () in
+  let row = Effect_set.unknown () in
+  let placeholder = arrows args ret row in
+  let r = { rs_name = name; rs_placeholder = placeholder;
+            rs_depth = !lambda_depth; rs_args = args; rs_ret = ret;
+            rs_rows = [] } in
+  rec_selfs := r :: !rec_selfs;
+  let t =
+    Fun.protect ~finally:(fun () ->
+        rec_selfs := List.filter (fun x -> x != r) !rec_selfs)
+      (fun () -> infer_body placeholder)
+  in
+  unify placeholder t;
+  let tied =
+    match Effect_set.tail_of row with
+    | None -> false
+    | Some v ->
+      List.mem v.Effect_set.id
+        (List.concat_map free_evars_typ (ret :: args) @ free_evars_env env)
+  in
+  let labels = Effect_set.of_list (Effect_set.EffSet.elements (Effect_set.labels_of row)) in
+  List.iter (fun occ ->
+    if tied then ignore (Effect_set.absorb ~ambient:occ row)
+    else
+      try Effect_set.unify occ (Effect_set.union labels (Effect_set.unknown ()))
+      with Effect_set.Conflict _ ->
+        raise (TypeError (Printf.sprintf
+          "'%s' calls itself inside a function that may perform %s, and '%s' \
+           performs %s"
+          name (Effect_set.to_string occ) name (Effect_set.to_string row))))
+    r.rs_rows;
+  t
+
 (* ── Reading a scheme back from a cache ───────────────────────────────────
    A scheme carries unification variables, and `instantiate` tells them apart
    by their integer id. Those ids were issued by whichever process wrote the
@@ -3341,6 +3428,11 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Size _     -> TSize
   | Var name ->
     (match List.assoc_opt name env with
+     (* A function naming itself inside a closure of its own body. *)
+     | Some (Mono t) when List.exists (fun r ->
+         r.rs_placeholder == t && !lambda_depth > r.rs_depth + 1) !rec_selfs ->
+       self_reference
+         (List.find (fun r -> r.rs_placeholder == t) !rec_selfs)
      | Some s -> instantiate s
      | None ->
        if not (Hashtbl.mem unbound_seen name) then begin
@@ -3445,7 +3537,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
         (ts @ [t], infer_pat tenv p t env)
       ) ([], env) params
     in
-    let (body_t, body_effects) = scoped_eff (fun () -> infer tenv env' body) in
+    incr lambda_depth;
+    let (body_t, body_effects) =
+      Fun.protect ~finally:(fun () -> decr lambda_depth)
+        (fun () -> scoped_eff (fun () -> infer tenv env' body)) in
     let body_effects =
       if List.exists (pat_is_refutable tenv) params
       then Effect_set.add Effect_set.Raise body_effects
@@ -3548,12 +3643,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Let (p, e1, e2, _) ->
     let below = binders_below e2 in
     (match p, e1 with
-     | PVar name, Fn _ ->
-       let placeholder = fresh () in
-       let env_rec = (name, Mono placeholder) :: env in
-       let t1 = with_defined_below below (fun () ->
-         with_current_fn name (fun () -> infer tenv env_rec e1)) in
-       unify placeholder t1;
+     | PVar name, Fn (ps, _) ->
+       let t1 = with_recursive_self env name (List.length ps) (fun self ->
+         with_defined_below below (fun () ->
+           with_current_fn name (fun () -> infer tenv ((name, Mono self) :: env) e1))) in
        record_local name t1;
        infer tenv ((name, generalize env t1) :: env) e2
      | _ ->
@@ -6469,10 +6562,9 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
         Effect_set.EffSet.union !last_load_effects (Effect_set.labels_of eff);
       ((name, generalize env t) :: env, last_t)
     | TLLet (name, params, body) ->
-      let placeholder = fresh () in
-      let env_rec = (name, Mono placeholder) :: env in
-      let t = with_current_fn name (fun () -> infer tenv env_rec (Fn (params, body))) in
-      unify placeholder t;
+      let t = with_recursive_self env name (List.length params) (fun self ->
+        with_current_fn name (fun () ->
+          infer tenv ((name, Mono self) :: env) (Fn (params, body)))) in
       ((name, generalize env t) :: env, last_t)
     | TLLetRec bindings ->
       let placeholders = List.map (fun (name, _, _) -> (name, fresh ())) bindings in
@@ -6564,15 +6656,19 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       let env' =
         List.fold_left (fun env (name, params, body, _) ->
           let want = List.assoc name declared in
-          let placeholder = fresh () in
-          let env_rec = (name, Mono placeholder) :: env in
           let t =
-            with_current_fn name (fun () ->
-              match params with
-              | [] -> infer tenv env_rec body
-              | _  -> infer tenv env_rec (Fn (params, body)))
+            match params with
+            | [] ->
+              let placeholder = fresh () in
+              let t = with_current_fn name (fun () ->
+                infer tenv ((name, Mono placeholder) :: env) body) in
+              unify placeholder t;
+              t
+            | _ ->
+              with_recursive_self env name (List.length params) (fun self ->
+                with_current_fn name (fun () ->
+                  infer tenv ((name, Mono self) :: env) (Fn (params, body))))
           in
-          unify placeholder t;
           (* Located at the binding rather than at the block: the member that
              does not fit is the line to look at. *)
           (try unify_expected ~expected:want ~got:t

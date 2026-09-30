@@ -34,6 +34,14 @@
   case had answered without resuming, so the body was already unwound. Now
   the call says so, and calling `k` twice says so too (#53).
 
+- **A function that stores a closure calling itself no longer takes on the
+  closure's effects.** `let make s = O(poke = fn () -> make (next s))`,
+  with `poke : Unit -> O ! {Raise}`, came out as raising, so `V-BANG1`
+  asked for `make!`, though building an object raises nothing. A
+  self-call inside a closure now has effects of its own, which must hold
+  everything the function performs, so a closure still cannot hide an
+  effect the function has (#54).
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed
