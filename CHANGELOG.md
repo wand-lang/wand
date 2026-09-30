@@ -10,6 +10,16 @@
   `constructor 'State' has no field named ...` when the fields did not
   match. Which one it built depended on the order of the imports (#50).
 
+- **An interface can name its own module's types, and be implemented from
+  another module.** An interface `B(create: Int -> N)` with `N` declared
+  beside it could not be implemented from another file: the error was
+  `unknown type 'N' (did you mean 'a.N'?)`, with no line. A type alias that
+  names an imported interface, such as `type Lib = Map a.B`, was unknown in
+  any file that used the alias. And two files that bound the interface's
+  module under different names did not agree that a module fits it. An
+  interface now travels with its types, and is one interface in every file
+  (#51).
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed

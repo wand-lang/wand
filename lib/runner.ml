@@ -2331,7 +2331,13 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
            (match alias with
             | None -> []
             | Some a ->
-              List.map (fun (n, i) -> (a ^ "." ^ n, i)) modul_import.ifaces)
+              List.filter_map (fun (n, i) ->
+                if Module_types.is_canonical n then None
+                else Some (a ^ "." ^ n, i)) modul_import.ifaces)
+           (* The canonical entries come whatever the import binds: no
+              file can write one, so they put no name in scope. *)
+           @ List.filter (fun (n, _) -> Module_types.is_canonical n)
+               modul_import.ifaces
            @ acc.ifaces;
          load_effects = Effect_set.EffSet.union load_eff acc.load_effects;
          words = words @ acc.words },
@@ -2547,6 +2553,15 @@ and load_module src_ref ~cache ~loading ~evaluate =
         Some (n, Module_types.canonical_type ~modul:path n)
       | _ -> None) prog.Ast.items
   in
+  (* Its interfaces too, so that the module names its own interface by the
+     name its importers do: a claim or a type made here then matches one
+     made in the file that imports it. *)
+  let own_iface_names =
+    List.filter_map (function
+      | Ast.TLInterface (i, _) ->
+        Some (i.Ast.if_name, Module_types.canonical_type ~modul:path i.Ast.if_name)
+      | _ -> None) prog.Ast.items
+  in
   let own_key = Compile_cache.key ~path ~source:src ~deps:dep_keys in
   Hashtbl.replace module_keys path own_key;
   (* Only the module's own share is written down. What inference returns is
@@ -2572,7 +2587,7 @@ and load_module src_ref ~cache ~loading ~evaluate =
                ~init_ifaces:imported.ifaces
                ~init_effects:imported.load_effects
                ~import_words:imported.words
-               ~type_names:(own_type_names @ imported.type_names) prog with
+               ~type_names:(own_type_names @ own_iface_names @ imported.type_names) prog with
        | Ok (type_env, own_type, load_eff) as ok ->
          let n_own = List.length type_env - tail_len in
          if n_own >= 0 then begin
@@ -2634,7 +2649,24 @@ and load_module src_ref ~cache ~loading ~evaluate =
        (* What this module's declarations mean, read the way its own
           typecheck read them: its types first, then its imports under the
           names it gave them. *)
-       let module_names = own_type_names @ imported.type_names in
+       let own_ifaces =
+         List.filter_map (function
+           | Ast.TLInterface (i, _) -> Some i
+           | _ -> None) prog.Ast.items
+       in
+       (* Interfaces are named the same way: this module's own by the name it
+          declared, and an import's by the name this module wrote for it, both
+          to the canonical name. A member type or an alias that names one
+          then means it from any file. *)
+       let iface_names =
+         List.map (fun (i : Ast.interface_def) ->
+           (i.Ast.if_name, Module_types.canonical_type ~modul:path i.Ast.if_name))
+           own_ifaces
+         @ List.filter_map (fun (k, (i : Ast.interface_def)) ->
+             if Module_types.is_canonical k then None else Some (k, i.Ast.if_name))
+             imported.ifaces
+       in
+       let module_names = own_type_names @ iface_names @ imported.type_names in
        (* A derived decoder reads the field types off the declaration, and a
           field that names one of the module's own types has to name it
           canonically: two modules may each declare a `Meta`, and the
@@ -2663,9 +2695,18 @@ and load_module src_ref ~cache ~loading ~evaluate =
               reaching one through a module that merely imported it would
               put a name in scope that no file asked for. *)
            ifaces =
-             List.filter_map (function
-               | Ast.TLInterface (i, _) -> Some (i.Ast.if_name, i)
-               | _ -> None) prog.Ast.items;
+             (let canon =
+                List.map (Module_types.canonicalise_iface ~modul:path module_names)
+                  own_ifaces in
+              List.map2 (fun (i : Ast.interface_def) c -> (i.Ast.if_name, c))
+                own_ifaces canon
+              (* And under the canonical names, which no file writes, so an
+                 alias or a member type that names one resolves wherever
+                 the declaration travels. The imports' travel too, by that
+                 name only. *)
+              @ List.map (fun (c : Ast.interface_def) -> (c.Ast.if_name, c)) canon
+              @ List.filter (fun (k, _) -> Module_types.is_canonical k)
+                  imported.ifaces);
            load_effects = own_load_eff;
            words = imported.words } in
        (* What each exported function runs. Read from the parse, so a

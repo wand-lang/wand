@@ -677,6 +677,38 @@ let needs_brackets = function
   | TDecoder _ | TShared _ | TStream _ | TResource _ -> true
   | _ -> false
 
+(* Every interface in scope, by the name a file writes for it and by its
+   canonical name. A contract declares no value, so this is the whole of what
+   an interface is: a list of members and their types, read where a module
+   claims it and where a parameter is annotated with it. *)
+let iface_defs : (string, Ast.interface_def) Hashtbl.t = Hashtbl.create 8
+
+(* The short name a canonical one was declared under. A type or an interface
+   carries the module that declares it, and a reader wrote the short name,
+   so that is what a message shows. *)
+let short_type_name n =
+  match String.rindex_opt n '#' with
+  | Some i -> String.sub n (i + 1) (String.length n - i - 1)
+  | None -> n
+
+(* An interface as a message shows it: by a name this file wrote for it, such
+   as `ord.Ranked`, found from the canonical name it is held under. Both
+   names hold the one declaration. *)
+let iface_display n =
+  if not (Module_types.is_canonical n) then n
+  else
+    match Hashtbl.find_opt iface_defs n with
+    | None -> short_type_name n
+    | Some d ->
+      let written =
+        Hashtbl.fold (fun k v acc ->
+          if v == d && not (Module_types.is_canonical k) then k :: acc else acc)
+          iface_defs []
+      in
+      (match List.sort compare written with
+       | k :: _ -> k
+       | [] -> short_type_name n)
+
 let string_of_typ t =
   let counter = ref 0 in
   let names : (int, string) Hashtbl.t = Hashtbl.create 4 in
@@ -751,12 +783,7 @@ let string_of_typ t =
     | TJson     -> "JSON"
     | TToml     -> "TOML"
     | TYaml     -> "YAML"
-    (* A type carries the module that declares it. A reader wrote the short
-       name, so that is what a message shows. *)
-    | TName n   ->
-      (match String.rindex_opt n '#' with
-       | Some i -> String.sub n (i + 1) (String.length n - i - 1)
-       | None -> n)
+    | TName n   -> short_type_name n
     (* A constrained variable is named like any other, and carries its
        constraint where it is first met: `'a: Ord -> 'a -> 'a` says the three
        are one type, which `Ord -> Ord -> Ord` could not, and says it about
@@ -839,9 +866,9 @@ let string_of_typ t =
       go f ^ " " ^ sa
     (* `Ord Int` -- the interface and what its parameters were bound to,
        written the way the annotation is written. *)
-    | TIface (n, []) -> n
+    | TIface (n, []) -> iface_display n
     | TIface (n, args) ->
-      n ^ " " ^ String.concat " "
+      iface_display n ^ " " ^ String.concat " "
         (List.map (fun a ->
            if wants_brackets (repr a) then "(" ^ go a ^ ")" else go a) args)
     (* A module has no spelling in a signature -- an interface is what a
@@ -1023,11 +1050,12 @@ let rec unify_ t1 t2 =
        raise (TypeError (Printf.sprintf
          "this module does not implement %s, which it would have to declare \
           with 'implement %s %s' in its own file%s"
-         n n
+         (iface_display n) (iface_display n)
          (String.concat " " (List.map string_of_typ args))
          (if claims = [] then ""
           else Printf.sprintf ". It implements %s"
-                 (String.concat ", " (List.map fst claims)))))
+                 (String.concat ", "
+                    (List.map (fun (c, _) -> iface_display c) claims)))))
      | (_, cargs) :: _ -> List.iter2 unify_ cargs args)
   | TModule c1, TModule c2 when c1 == c2 -> ()
   | t1, t2 -> raise (Mismatch (t1, t2))
@@ -1534,12 +1562,6 @@ let canonical_type_name n =
   | Some c -> c
   | None -> n
 
-(* The short name a canonical one was declared under, for a message. *)
-let short_type_name n =
-  match String.rindex_opt n '#' with
-  | Some i -> String.sub n (i + 1) (String.length n - i - 1)
-  | None -> n
-
 let with_type_name_map m f =
   let saved = !type_name_map in
   type_name_map := m;
@@ -1580,11 +1602,6 @@ let written_evars : int list ref = ref []
    the value that later met it. A name whose arity is unknown -- a type
    variable in head position, or any name where there is no file to declare
    it -- is left alone: this reports what it is sure of. *)
-(* Every interface in scope, by the name a file writes for it. A contract
-   declares no value, so this is the whole of what an interface is: a list of
-   members and their types, read where a module claims it and where a
-   parameter is annotated with it. *)
-let iface_defs : (string, Ast.interface_def) Hashtbl.t = Hashtbl.create 8
 
 (* `Ord` is declared here rather than in a file, because it belongs to no
    module: it is what the eleven ordered types implement, and a type is
@@ -1652,6 +1669,16 @@ let undetermined_member_effect (te : Ast.type_expr) =
   | _ -> None
 
 let is_iface name = Hashtbl.mem iface_defs name
+
+(* The name an interface is known by everywhere: the module that declares it
+   and the name it was declared under. What a file writes, `a.B`, depends on
+   what that file bound the module as, so two files would otherwise name one
+   interface two ways, and a module that claims it in one spelling would not
+   fit it in the other. *)
+let iface_key name =
+  match Hashtbl.find_opt iface_defs name with
+  | Some i when Module_types.is_canonical i.Ast.if_name -> i.Ast.if_name
+  | _ -> canonical_type_name name
 
 (* The members an interface declares, for the listings that mark which of a
    module's bindings answer to one. None where the interface is not in
@@ -1807,7 +1834,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
           "'%s' takes %d type argument%s, and this names none: write '%s %s'"
           name want (if want = 1 then "" else "s") name
           (String.concat " " (List.map (fun p -> "'" ^ p) idef.Ast.if_params))));
-      TIface (name, [])
+      TIface (iface_key name, [])
     (* `Foo.Status`: the module says which `Status` this is. *)
     | TEQual (m, n) ->
       (match !known_type_names with
@@ -1843,7 +1870,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
         raise (TypeError (Printf.sprintf
           "'%s' takes %d type argument%s, and this names %d"
           name want (if want = 1 then "" else "s") got));
-      TIface (name, List.map go args)
+      TIface (iface_key name, List.map go args)
     (* An imported interface has no bare form, so a bare name that is one
        says what to write. Read before every case that would take the name
        for a type -- `Ord` is also a constraint, and answering about that
@@ -1864,7 +1891,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
           "'%s' takes %d type argument%s, and this names none: write '%s %s'"
           n want (if want = 1 then "" else "s") n
           (String.concat " " (List.map (fun p -> "'" ^ p) idef.Ast.if_params))));
-      TIface (n, [])
+      TIface (iface_key n, [])
     | TEName name when List.mem_assoc name !known_aliases
                     && not (List.mem name !resolving) ->
       (* The name is kept over what it names, for the message. Everything
@@ -1970,7 +1997,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
         raise (TypeError (Printf.sprintf
           "'%s' takes %d type argument%s, and this names %d"
           name want (if want = 1 then "" else "s") got));
-      TIface (name, List.map go args)
+      TIface (iface_key name, List.map go args)
     (* A parameterised alias applied to its arguments, written bare or
        written with the module it came from. `Args.Parser Opts` reached the
        generic application below, which read the head on its own -- an alias
@@ -6080,7 +6107,11 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
              told. Write what it performs, as '! {Shell}', or leave the \
              effects off where it performs none"
             mname v v i.Ast.if_name)) i.Ast.if_members;
-      Hashtbl.replace iface_defs i.Ast.if_name i
+      Hashtbl.replace iface_defs i.Ast.if_name i;
+      (* And under its canonical name, which is what a type or a claim that
+         names it holds. *)
+      let k = canonical_type_name i.Ast.if_name in
+      if k <> i.Ast.if_name then Hashtbl.replace iface_defs k i
     | _ -> ()) prog.items;
   let local_tenv = List.filter_map (function
     | TLType (((Variants (n, _, _) | Alias (n, _, _)) as tdef), _) -> Some (n, tdef)
@@ -6529,7 +6560,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   let claims =
     List.filter_map (function
       | TLImplement (im, _) ->
-        Some (im.Ast.im_iface, List.map type_of_te im.Ast.im_args)
+        Some (iface_key im.Ast.im_iface, List.map type_of_te im.Ast.im_args)
       | _ -> None) prog.items
   in
   let own_env =

@@ -79,22 +79,24 @@ let canonical_type ~modul name = modul ^ "#" ^ name
    Reading the declaration against the importer's map instead made
    `metadata : M.Meta` mean whatever the importer called `M`, or nothing:
    a file that bound the same module as `Meta` got "unknown type 'M.Meta'". *)
+let rec canonicalise_te (names : (string * string) list) (t : Ast.type_expr) =
+  let te = canonicalise_te names in
+  match t with
+  | Ast.TEName n ->
+    (match List.assoc_opt n names with
+     | Some c -> Ast.TEName c
+     | None -> t)
+  | Ast.TEQual (m, n) ->
+    (match List.assoc_opt (m ^ "." ^ n) names with
+     | Some c -> Ast.TEName c
+     | None -> t)
+  | Ast.TEVar _ -> t
+  | Ast.TEApp (f, a) -> Ast.TEApp (te f, te a)
+  | Ast.TETuple ts -> Ast.TETuple (List.map te ts)
+  | Ast.TEFun (a, b, e) -> Ast.TEFun (te a, te b, e)
+
 let canonicalise_tdef (names : (string * string) list) (tdef : Ast.type_def) =
-  let rec te (t : Ast.type_expr) : Ast.type_expr =
-    match t with
-    | Ast.TEName n ->
-      (match List.assoc_opt n names with
-       | Some c -> Ast.TEName c
-       | None -> t)
-    | Ast.TEQual (m, n) ->
-      (match List.assoc_opt (m ^ "." ^ n) names with
-       | Some c -> Ast.TEName c
-       | None -> t)
-    | Ast.TEVar _ -> t
-    | Ast.TEApp (f, a) -> Ast.TEApp (te f, te a)
-    | Ast.TETuple ts -> Ast.TETuple (List.map te ts)
-    | Ast.TEFun (a, b, e) -> Ast.TEFun (te a, te b, e)
-  in
+  let te = canonicalise_te names in
   match tdef with
   | Ast.Alias (n, ps, t) -> Ast.Alias (n, ps, te t)
   | Ast.Variants (n, ps, ctors) ->
@@ -102,6 +104,19 @@ let canonicalise_tdef (names : (string * string) list) (tdef : Ast.type_def) =
       List.map (fun (c : Ast.ctor_def) ->
         { c with Ast.fields = List.map (fun (f, t) -> (f, te t)) c.Ast.fields })
         ctors)
+
+(* An interface as it travels: under its canonical name, with every type its
+   members name made canonical against the declaring module's map. An
+   implementation in another module is checked against these member types,
+   and read against the implementing module's names instead, a member
+   `create : Int -> N` named whatever that module calls `N`, or nothing. *)
+let canonicalise_iface ~modul (names : (string * string) list) (i : Ast.interface_def) =
+  { i with
+    Ast.if_name = canonical_type ~modul i.Ast.if_name;
+    if_members = List.map (fun (n, t) -> (n, canonicalise_te names t)) i.Ast.if_members }
+
+(* Whether a name is canonical: one only the loader writes. *)
+let is_canonical name = String.contains name '#'
 
 (* One file, one key. A module reached as `../../x/a.wand` and as
    `/abs/x/./a.wand` is the same module, and its types are the same types, so

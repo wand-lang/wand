@@ -818,6 +818,36 @@ let test_two_modules_may_declare_one_name () =
     Alcotest.(check bool) "naming both" true
       (contains_sub out "'a.Shown'" && contains_sub out "'b.Shown'"))
 
+(* An interface whose members name its own module's types, implemented in
+   another module. The member types were read against the implementing
+   module's names, so `N` there was unknown, and an alias that named the
+   interface was unknown in any third file. And an interface was known by
+   the name a file wrote for it, so two files that bound its module under
+   different names did not agree that a module fits it (#51). *)
+let test_an_interface_travels_with_its_types () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "shapes.wand")
+      "type Id = String\n\
+       type N(g: Int, f: Unit -> N)\n\
+       interface B(create: Id -> N)\n";
+    write_file (Filename.concat d "impl.wand")
+      "let s = import ./shapes\n\n\
+       let make x = s.N(g = x, f = fn () -> make (x + 1))\n\n\
+       implement s.B =\n\
+       \  let create _ = make 3\n";
+    write_file (Filename.concat d "lib.wand")
+      "import Map\n\nlet shapes = import ./shapes\n\ntype Lib = Map shapes.B\n";
+    write_file (Filename.concat d "main.wand")
+      "uses {IO}\n\nimport IO\nimport Map\n\n\
+       let shp = import ./shapes\n\
+       let impl = import ./impl\n\
+       let lib = import ./lib\n\n\
+       let one : shp.B = impl\n\
+       let count (l: lib.Lib) = Map.size l\n\n\
+       IO.println \"%{(one.create \"x\").g} %{count (Map.from_list [(\"a\", one)])}\"\n";
+    let (code, out) = wand_out ~dir:d ["main.wand"] in
+    Alcotest.(check (pair int string)) "it runs" (0, "3 1\n") (code, out))
+
 (* A module that did not claim the interface does not fit, however many of
    its members happen to line up. *)
 let test_a_module_must_have_claimed_it () =
@@ -1118,6 +1148,7 @@ let () =
       Alcotest.test_case "no bare imported interface" `Quick test_an_imported_interface_has_no_bare_form;
       Alcotest.test_case "two modules, one name" `Quick test_two_modules_may_declare_one_name;
       Alcotest.test_case "conformance is claimed" `Quick test_a_module_must_have_claimed_it;
+      Alcotest.test_case "an interface travels with its types" `Quick test_an_interface_travels_with_its_types;
       Alcotest.test_case "a qualifier uses its import" `Quick test_a_qualified_interface_uses_its_import;
       Alcotest.test_case "wand t --effects" `Quick test_effects_of_one_file;
       Alcotest.test_case "--effects is inferred" `Quick test_effects_ignore_the_manifest;
