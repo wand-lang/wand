@@ -2594,6 +2594,17 @@ let module_first tenv m =
 (* `Apps.Deployment` where `Deployment` is one of `Apps`'s types, rather than
    a construction of it. The map holds the written name, so its presence is
    what says this is a type reached through a module. *)
+(* The interface an expression names, as a file writes it: `core.Blueprint`
+   or a bare `Ord`. *)
+let iface_written e =
+  match Ast.strip_located e with
+  | Ast.Qualified (m, inner) ->
+    (match Ast.strip_located inner with
+     | Ast.Constr t -> Some (m ^ "." ^ t)
+     | _ -> None)
+  | Ast.Constr t -> Some t
+  | _ -> None
+
 let qualified_type_head e =
   match Ast.strip_located e with
   | Ast.Qualified (m, inner) ->
@@ -4097,6 +4108,19 @@ let rec infer tenv (env : env) (e : expr) : typ =
        ) fields;
        perform_stored stored;
        result_t)
+  (* `core.Blueprint.loader`, or `Blueprint.loader` in the module that
+     declares it: what `Wand.load!` takes to load a file as a module of that
+     interface. It names the interface and nothing else, so its type is the
+     interface's, applied to fresh arguments for any parameters it has. *)
+  | Field (e, "loader")
+    when (match iface_written e with Some n -> is_iface n | None -> false) ->
+    let n = Option.get (iface_written e) in
+    let arity =
+      match Hashtbl.find_opt iface_defs n with
+      | Some i -> List.length i.Ast.if_params
+      | None -> 0
+    in
+    TApp (TName "Loader", TIface (iface_key n, List.init arity (fun _ -> fresh ())))
   (* `Apps.Deployment.decoder`: a type named through its module. The derived
      members are read off the declaration, and the declaration is the
      module's, so it is looked up with that module's types in scope and under
@@ -5509,6 +5533,13 @@ let stdlib_type_env : env = [
   (* The text is given, and what it imports is read from beside the path. *)
   ("wand_check_at", generalize []
      (TPath @-> effs [Effect_set.FsRead; Effect_set.Raise] TString wand_checked));
+  (* A loader names an interface, and the file it loads comes back as a
+     module of that interface: the claim and the effect bound are checked
+     when it runs, since the file is not there to check before. *)
+  ("wand_load",
+   (let a = fresh () in
+    generalize []
+      (TApp (TName "Loader", a) @-> effs [Effect_set.FsRead; Effect_set.Raise] TPath a)));
   ("wand_version", generalize [] TVersion);
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a

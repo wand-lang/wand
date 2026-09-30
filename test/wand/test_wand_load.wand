@@ -1,0 +1,80 @@
+uses {FS.Read, FS.Write, Random}
+
+-- `Wand.load!`: a file as a module of an interface, checked and gated
+-- before any of it runs.
+
+import FS
+import List
+import Option
+import Path
+import Result
+import String
+import Wand
+
+let {test} = import Test
+let shape = import ./load/shape
+
+-- `dune test` runs this from its sandbox, where the fixtures are under
+-- wand/, and `wand s test/wand` from the repo, where they are under
+-- test/wand/.
+let fixture name =
+  let found =
+    List.filter FS.exists? [Path.join ./wand/load name, Path.join ./test/wand/load name];
+  Option.default (Path.join ./test/wand/load name) (List.head found)
+
+-- The interface's file, as a file in another directory imports it.
+let shape_path () =
+  let file = Path.to_string (Path.join (FS.cwd ()) (fixture ./shape.wand));
+  String.slice 0 (String.length file - 5) file
+
+let err path =
+  match Wand.load shape.Shape.loader (fixture path) with
+  | Ok _ -> ""
+  | Error e -> e
+
+test "a file that claims the interface loads, and its members run" (fn t ->
+  t.eq 9 ((Wand.load! shape.Shape.loader (fixture ./square.wand)).area 3))
+test "a file that performs what the interface does not allow is refused" (fn t ->
+  t.ok (String.contains? "it performs IO, and shape.Shape allows Random" (err ./loud.wand)))
+test "a file that claims nothing is refused" (fn t ->
+  t.ok (String.contains? "it does not implement" (err ./unclaimed.wand)))
+test "a file that is not there is refused" (fn t ->
+  t.not_ok (Result.ok? (Wand.load shape.Shape.loader (fixture ./absent.wand))))
+test "a built-in interface loads the same way" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./ints.wand;
+    FS.write_file!
+      f
+      "implement Ord Int =\n  let max a b = if a > b then a else b;\n  let min a b = if a < b then a else b;\n  let clamp lo hi x = if x < lo then lo else if x > hi then hi else x;\n  let between? lo hi x = x >= lo && x <= hi\n";
+    t.eq 2 ((Wand.load! Ord.loader f).min 2 3)
+  ))
+-- A file that does not check is written here rather than kept beside the
+-- fixtures, where the suite checks every file.
+test "a file that does not check is refused, with the checker's message" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./mistyped.wand;
+    FS.write_file!
+      f
+      "let shape = import %{shape_path ()}\nimplement shape.Shape =\n  let area n = \"wide\"\n";
+    t.ok
+      (String.contains?
+        "expected Int, got String"
+        (match Wand.load shape.Shape.loader f with
+        | Ok _ -> ""
+        | Error e -> e
+        ))
+  ))
+-- The file is read again on every load: that is what a reload is.
+test "loading a path again runs what the file says now" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./grow.wand;
+    let write body =
+      FS.write_file!
+        f
+        "let shape = import %{shape_path ()}\nimplement shape.Shape =\n  let area n = %{body}\n";
+    write "n";
+    let before = (Wand.load! shape.Shape.loader f).area 3;
+    write "n + 100";
+    let after = (Wand.load! shape.Shape.loader f).area 3;
+    t.eq (3, 103) (before, after)
+  ))

@@ -2520,6 +2520,21 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
       | _ -> tname
     in
     (match strip_located e, label with
+     (* `core.Blueprint.loader`: the interface's canonical name, which the
+        module that declares it binds under the interface's own name. A
+        built-in interface such as `Ord` is its own canonical name. *)
+     | Qualified (m, inner), "loader"
+       when (match strip_located inner with Constr _ -> true | _ -> false) ->
+       (match strip_located inner, lookup_var m env with
+        | Constr n, Some (VRecord vr) ->
+          (match vrecord_get n vr with
+           | Some v -> v
+           | None -> raise (EvalError (Printf.sprintf "'%s.%s' is not an interface" m n)))
+        | _ -> raise (EvalError (Printf.sprintf "'%s' is not a module" m)))
+     | Constr n, "loader" ->
+       (match lookup_var n env with
+        | Some (VString _ as v) -> v
+        | _ -> VString n)
      | Qualified (m, inner), ("decoder" | "encoder" | "usage" | "parser")
        when qualified_key m inner <> None ->
        let k = Option.get (qualified_key m inner) in
@@ -4978,6 +4993,10 @@ let wand_check_hook : (string -> value) ref =
   ref (fun _ -> raise (EvalError "Wand.check is not available here"))
 let wand_check_file_hook : (string -> string -> value) ref =
   ref (fun _ _ -> raise (EvalError "Wand.check_file! is not available here"))
+(* `Wand.load!`: the interface's canonical name, the file's path, and the
+   text read for it. *)
+let wand_load_hook : (string -> string -> string -> value) ref =
+  ref (fun _ _ _ -> raise (EvalError "Wand.load! is not available here"))
 
 (* The formatter and the checker keep state of their own between the calls
    they make, which was safe while each ran once, before a program started.
@@ -6623,6 +6642,18 @@ let stdlib_eval_env : env = [
           with_wand_tools (fun () -> !wand_check_file_hook p src)
         | _ -> raise (EvalError "Wand.check_at: expected a String"))
     | _ -> raise (EvalError "Wand.check_at: expected a Path")));
+  (* `Wand.load!`: a file's module, as the interface the loader names. The
+     file is read through the effect, as `check_file!` reads one, so a
+     handler or a trace sees it. Everything else -- the check, the gate,
+     running the module -- is the runner's, which owns the loader. *)
+  ("wand_load", VBuiltin (function
+    | VString key -> VBuiltin (function
+        | (VPath p | VString p) as path ->
+          (match perform_wand ("FS!read_file", path) with
+           | VString src -> with_wand_tools (fun () -> !wand_load_hook key p src)
+           | _ -> raise (EvalError "Wand.load!: the read gave no text"))
+        | _ -> raise (EvalError "Wand.load!: expected a Path"))
+    | _ -> raise (EvalError "Wand.load!: expected a loader")));
   ("wand_version", VVersion Version.value);
   ("shell_in_dir", VBuiltin (fun d -> VBuiltin (fun c ->
     let dir = match d with

@@ -1,0 +1,3 @@
+-- Fixture for test_wand_load.wand: the interface the loaded files claim.
+-- `area` may draw a random number, and nothing else.
+interface Shape(area: Int -> Int ! {Random})

@@ -1,0 +1,12 @@
+-- Does not load: it prints at its top level, which Shape does not allow.
+-- Nothing of it may run, so the line must never appear.
+uses {IO, Random}
+
+import IO
+
+let shape = import ./shape
+
+IO.println "loud.wand ran"
+
+implement shape.Shape =
+  let area n = n

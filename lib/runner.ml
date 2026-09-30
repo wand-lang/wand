@@ -2096,7 +2096,14 @@ let run_item ?modul env item =
          | Some v -> (name, v) :: env
          | None   -> (name, VFix (name, env, params, body)) :: env))
       env im.Ast.im_binds
-  | Ast.TLInterface _ -> env  (* a contract declares no value *)
+  (* A contract declares no value of its own. Its name stands for its
+     canonical one, which is what `Iface.loader` hands `Wand.load!`: the
+     module that declares it is the one place that knows its path. *)
+  | Ast.TLInterface (i, _) ->
+    (match modul with
+     | Some m ->
+       (i.Ast.if_name, VString (Module_types.canonical_type ~modul:m i.Ast.if_name)) :: env
+     | None -> env)
   (* An alias to a type with one constructor names that constructor too, so
      the alias binds it. An alias to anything else binds nothing. *)
   | Ast.TLType ((Ast.Alias (aname, _, target) as tdef), _) ->
@@ -2250,6 +2257,10 @@ let module_keys : (string, string) Hashtbl.t = Hashtbl.create 16
    does not run against the bindings the check stood up. *)
 let module_cache_key ~evaluate path =
   (if evaluate then "run:" else "sig:") ^ path
+
+(* The module cache of the program running now, for `Wand.load!` to load
+   through. *)
+let run_cache = ref None
 
 let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate prog =
   List.fold_left (fun (acc, acc_docs) (item_index, item) ->
@@ -3323,6 +3334,7 @@ let () = Evaluator.with_default_handler := run_with_default_handler
 let run_program ?(mode = Normal) ~base_dir prog =
   let cache = Hashtbl.create 8 in
   let loading = ref [] in
+  run_cache := Some (cache, loading);
   let (imp, _) = load_imports_for ~base_dir ~cache ~loading ~evaluate:true prog in
   (* Settled once, here, so the typechecker and the evaluator are handed the
      same program: `type This = That` is an alias to both of them or a
@@ -3486,6 +3498,7 @@ let run_test_program ~base_dir ?(item_locs = []) prog
   : (test_outcome list, string) result =
   let cache = Hashtbl.create 8 in
   let loading = ref [] in
+  run_cache := Some (cache, loading);
   let (imp, _) = load_imports_for ~base_dir ~cache ~loading ~evaluate:true prog in
   (* Settled before anything reads the program's own declarations: an
      alias parses as a variant with one nullary constructor, and a lint
@@ -4422,9 +4435,72 @@ let check_file_value (path : string) (src : string) : Evaluator.value =
   Fun.protect ~finally:(fun () -> Package.main := saved) (fun () ->
     checked_value ~file:path (typecheck_source ~path src))
 
+(* The labels an interface's members may perform: the effects written on
+   the innermost arrow of each. A loaded module is held to these, so a
+   file claiming `core.Blueprint` performs no more than `create` allows,
+   in its functions or at its top level. *)
+let iface_bound (i : Ast.interface_def) =
+  List.concat_map (fun (_, te) ->
+    match snd (Typechecker.member_spine te) with
+    | Some e -> e.Ast.te_labels
+    | None -> []) i.Ast.if_members
+  |> List.sort_uniq compare
+
+(* `Wand.load!`: check the file, hold it to the interface `key` names, and
+   run it as an import would, answering with its module.
+
+   The check comes first and on the text that was read, so nothing of a
+   file that fails runs. The module is then loaded through the running
+   program's own cache: a module the file imports that the program has
+   loaded already is the same one, state and all, rather than a second
+   copy. The file itself is taken out of the cache first, so loading it
+   again reads it again -- which is what a reload is. *)
+let load_value (key : string) (path : string) (src : string) : Evaluator.value =
+  let fail msg = raise (Evaluator.EvalError (Printf.sprintf "%s: %s" path msg)) in
+  let saved = !Package.main in
+  Fun.protect ~finally:(fun () -> Package.main := saved) (fun () ->
+    let sc =
+      match typecheck_source ~set_main:false ~path src with
+      | Error d -> fail (Diag.legacy d)
+      | Ok sc -> sc
+    in
+    let (_, claims) = Typechecker.split_claims sc.sc_env in
+    if not (List.mem_assoc key claims) then
+      fail (Printf.sprintf "it does not implement %s"
+              (Typechecker.iface_display key));
+    let bound =
+      match Hashtbl.find_opt Typechecker.iface_defs key with
+      | Some i -> iface_bound i
+      | None -> []
+    in
+    (match List.filter (fun (e, _) -> not (List.mem e bound)) sc.sc_effects with
+     | [] -> ()
+     | extra ->
+       fail (Printf.sprintf "it performs %s, and %s allows %s"
+               (String.concat ", " (List.map fst extra))
+               (Typechecker.iface_display key)
+               (match List.filter (fun l -> l <> "Raise") bound with
+                | [] -> "nothing"
+                | ls -> String.concat ", " ls)));
+    let (cache, loading) =
+      match !run_cache with
+      | Some c -> c
+      | None -> (Hashtbl.create 8, ref [])
+    in
+    let src_ref = Module_types.File (entry_path path) in
+    let modul = Module_types.key_of src_ref in
+    Hashtbl.remove cache (module_cache_key ~evaluate:true modul);
+    let (_, _, own_eval, own_tenv, _, _, _) =
+      try load_module src_ref ~cache ~loading ~evaluate:true
+      with
+      | Module_types.ImportError msg | Module_types.ImportErrorAt (_, msg) -> fail msg
+    in
+    VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))
+
 let () =
   Evaluator.wand_check_hook := check_text;
-  Evaluator.wand_check_file_hook := check_file_value
+  Evaluator.wand_check_file_hook := check_file_value;
+  Evaluator.wand_load_hook := load_value
 
 (* Lint a stdlib module's own source. Module bodies are inferred against the
    raw builtins rather than the user-visible globals, so they need the same

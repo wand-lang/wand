@@ -2267,6 +2267,37 @@ A bare name that is only reachable qualified says which spelling to write:
 declares it: write 'ord.Ranked'
 ```
 
+### Loading a module at run time
+
+An import is fixed when a file is checked. `Wand.load!` is how a running
+program takes a module it did not start with — a plugin, or a file a user
+just wrote — and it takes it as a module of an interface.
+
+Every interface has a derived member, `loader`, that names it:
+
+```ocaml
+import Wand
+
+let shape = import ./shape     -- interface Shape(area: Int -> Int ! {Random})
+
+let m = Wand.load! shape.Shape.loader ./plugins/square.wand
+m.area 3                       -- m : shape.Shape
+```
+
+`Wand.load! : Loader 'a -> Path -> 'a ! {FS.Read, Raise}`. Nothing of the
+file runs until all of these hold:
+
+- it checks, as `wand t` would check it;
+- it declares `implement` of the interface the loader names;
+- it performs, in its functions and at its top level, only what the
+  interface's members allow. A file that claims `Shape` and prints is
+  refused, whatever its `uses` line says.
+
+Then it runs as an import does. A module it imports that the program loaded
+already is the same module, so the two share its state and its types.
+Loading the same path again reads the file again, which is how a program
+takes a new version of it. `Wand.load` gives an `Error` where `load!` raises.
+
 ### `Ord` is built in
 
 `Ord` is declared by the compiler rather than by a file, because it belongs
@@ -6997,6 +7028,8 @@ check_file  : Path -> Result String Checked ! {FS.Read}
 check_file! : Path -> Checked ! {FS.Read, Raise}
 check_at    : Path -> String -> Result String Checked ! {FS.Read}
 check_at!   : Path -> String -> Checked ! {FS.Read, Raise}
+load        : Loader 'a -> Path -> Result String 'a ! {FS.Read}
+load!       : Loader 'a -> Path -> 'a ! {FS.Read, Raise}
 version     : Version
 ```
 
@@ -7057,9 +7090,14 @@ live:
 Wand.check_at! ./rooms/hall.wand buffer   -- `import ../std/room` resolves
 ```
 
-These functions read source and give an answer. None of them runs the
-source. A `String` does not become a running program, as it does not become
-a `Command`, so a manifest still says everything a script can do.
+These functions read source and give an answer, and none of them runs it.
+A `String` does not become a running program, as it does not become a
+`Command`, so a manifest still says everything a script can do.
+
+`load!` is the one that runs source: a file, as a module of the interface
+its loader names, and only a file that checks, implements that interface,
+and performs no more than its members allow. See Loading a module at run
+time, under Interfaces.
 
 `version` is the version of the wand that runs the script.
 

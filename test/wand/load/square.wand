@@ -1,0 +1,9 @@
+-- Loads: it claims Shape and draws, which Shape allows.
+uses {Random}
+
+import Random
+
+let shape = import ./shape
+
+implement shape.Shape =
+  let area n = n * n + Random.int 0 0

@@ -1,0 +1,2 @@
+-- Does not load: it has an `area`, but claims no interface.
+let area (n: Int) = n

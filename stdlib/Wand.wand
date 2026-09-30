@@ -10,8 +10,11 @@ import List
 -- program that checks other wand files uses `check_file!` and reads the
 -- answer as values, not as the text of `wand t --json`.
 --
--- Each one reads source and gives an answer. None runs the source: text
--- does not become a running program, as it does not become a `Command`.
+-- Each one but `load!` reads source and gives an answer without running
+-- it: text does not become a running program, as it does not become a
+-- `Command`. `load!` is the one that runs source, and only a file that
+-- checks, that implements the interface its caller names, and that
+-- performs no more than that interface allows.
 
 -- One finding of a check, as `wand t --json` reports it. `severity` is
 -- "error" or "warning".
@@ -126,6 +129,31 @@ let check_at! (path: Path) (src: String) = _checked (wand_check_at path src)
 -- >> Result.ok? (Wand.check_at ./x.wand "1 + 1")
 -- true : Bool
 let check_at (path: Path) (src: String) = try check_at! path src
+
+-- ── Load ───────────────────────────────────────────────────────────────
+
+-- Load the file at `path` as a module of the interface `loader` names,
+-- such as `core.Blueprint.loader`. The file is checked first, and nothing
+-- of it runs unless it checks, declares `implement` of that interface, and
+-- performs, in its functions and at its top level, only what the
+-- interface's members allow. Then it runs as an import does, and what it
+-- imports that the program has loaded already is the same module. Loading
+-- the same path again reads the file again, so a program can load a new
+-- version of it. Raises, with what was wrong, when any of that fails.
+--
+-- >> with FS.temp_dir "ex_" as d -> (
+-- ..   let f = Path.join d ./ints.wand;
+-- ..   FS.write_file! f "implement Ord Int =\n  let max a b = if a > b then a else b;\n  let min a b = if a < b then a else b;\n  let clamp lo hi x = if x < lo then lo else if x > hi then hi else x;\n  let between? lo hi x = x >= lo && x <= hi\n";
+-- ..   (Wand.load! Ord.loader f).max 2 3
+-- .. )
+-- 3 : Int
+let load! loader (path: Path) = wand_load loader path
+
+-- `load!`, giving an `Error` where it raises.
+--
+-- >> Result.ok? (Wand.load Ord.loader ./no-such-file.wand)
+-- false : Bool
+let load loader (path: Path) = try load! loader path
 
 -- ── Version ────────────────────────────────────────────────────────────
 
