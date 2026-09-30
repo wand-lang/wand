@@ -1,21 +1,42 @@
-## 0.93.1 - 2026-09-29
+## 0.94.0 - 2026-09-29
 
-A broken wand.pkg can be repaired with `wand p tidy`.
+`wand p release` names the kind of change, and can release 1.0.0. `wand p upgrade`, `add` and `tidy` take only a version that your wand can use.
 
-### Fixed
+### Added
 
-- **`wand p tidy` repairs a `wand.pkg` whose sections cannot be read.**
-  `tidy` writes the sections again. It keeps each sum line it can read, 
-  so a hash already recorded is still checked, and it names the lines 
-  it drops. Then `wand p interface` writes the interface section from the 
-  code.
+- **Release a version by its number.** `wand p release 1.0.0` releases
+  that version. Before, a package that had released 0.1.0 had no way to
+  reach 1.0.0. The version must come after the last release, and it
+  cannot be a smaller change than the interface needs.
 
-- **A clear error for text after the record that is in no section.** When
-  the interface marker line was deleted, the interface lines became part
-  of the record, and the error was `cons is '::'`. Now the error says that
-  the text is in no section, and to run `wand p tidy`.
+  ```sh
+  wand p release 1.0.0
+  ```
 
-- **The error for a wrong sum hash names the other cause.** It said only
-  that the module or the cache changed. Now it also says: if the sum
-  section was changed by hand, restore it from version control, or remove
-  the line and run `wand p tidy`.
+### Changed
+
+- **`wand p release` names the kind of change: `breaking`, `feature` or
+  `fix`.** Before 1.0, `wand p release major` gave 0.4.0 after 0.3.0, not
+  1.0.0, and `minor` did the same as `patch`. The new words say what the
+  change does, and wand chooses the number from it:
+
+  ```sh
+  wand p release breaking   # 0.3.1 -> 0.4.0, or 1.2.3 -> 2.0.0
+  wand p release feature    # 0.3.1 -> 0.3.2, or 1.2.3 -> 1.3.0
+  wand p release fix        # 0.3.1 -> 0.3.2, or 1.2.3 -> 1.2.4
+  ```
+
+  `major`, `minor` and `patch` still work, and print the new word.
+
+- **`wand p upgrade`, `add` and `tidy` take only a version that your wand
+  can use.** Each version of a package names the lowest wand it works
+  with. Before, these commands could give you a version that needs a newer
+  wand than the one you have, and then it did not run. Now they pass over
+  that version and say why:
+
+  ```
+  github.com/mjstahl/json 1.5.0 needs wand 0.94.0 or later, before 1.0.0, and this is wand 0.93.1; keeping 1.4.0
+  ```
+
+  So a package can need a newer wand in a fix release. `wand p release`
+  prints the new `wand` line, so that you see it when you release.
