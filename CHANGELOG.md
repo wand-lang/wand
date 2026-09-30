@@ -2,6 +2,14 @@
 
 ## [0.95.0] - 2026-09-30
 
+### Added
+
+- **Byte escapes: `\xNN`.** A string can hold any byte, written `\x` and
+  two hex digits, as in `"\xff\xfb\x01"`. A `String` is bytes, and a byte
+  that is no character had no spelling. `wand f` keeps such bytes, and
+  writes valid UTF-8 as the character. In a regex, `\xNN` now works inside
+  a character class too, so `r/[\xfb-\xfe]/` is a byte range (#56).
+
 ### Changed
 
 - **`Shared.update` answers the value from before the update**, as

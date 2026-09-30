@@ -149,3 +149,16 @@ test "a literal in a loop answers the same as one hoisted out" (fn t ->
 -- per domain rather than shared.
 test "a literal works inside Par workers" (fn t ->
   t.eq 40 (List.length (Par.map 8 (fn i -> Regex.match? r/^a+$/ "aaa") (List.range 1 40))))
+
+-- `\xNN` inside a character class is the byte, as it is outside one.
+test "a byte range in a class" (fn t ->
+  t.eq (true, false) (
+    Regex.match? r/^[\xfb-\xfe]$/ "\xfc",
+    Regex.match? r/^[\xfb-\xfe]$/ "\xfa"
+  ))
+test "a byte that closes a class stays in it" (fn t ->
+  t.ok (Regex.match? r/^[a\x5d]+$/ "a]a"))
+test "Regex.compile reads it too" (fn t ->
+  t.eq
+    (Ok true)
+    (Result.map (fn r -> Regex.match? r "\xfd") (Regex.compile "[\\xfb-\\xfe]")))

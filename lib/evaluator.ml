@@ -582,6 +582,50 @@ let ctor_env () =
    their own, and a shared `Hashtbl` written from several at once is a data
    race. Compiling a pattern twice on two domains costs a little and is
    safe; sharing one table is neither. *)
+(* `\xNN` inside a character class, as the byte itself. The pattern parser
+   reads `\xNN` outside a class and refuses it inside one, so `[\xfb-\xfe]`
+   -- the bytes a telnet option starts with -- was an invalid regex. A byte
+   that means something inside a class keeps a backslash. (#56) *)
+let class_bytes pat =
+  let n = String.length pat in
+  let buf = Buffer.create n in
+  let is_hex = function
+    | '0'..'9' | 'a'..'f' | 'A'..'F' -> true
+    | _ -> false
+  in
+  let rec go i in_class =
+    if i < n then begin
+      let c = pat.[i] in
+      if c = '\\' && i + 1 < n then begin
+        if in_class && pat.[i + 1] = 'x' && i + 3 < n
+           && is_hex pat.[i + 2] && is_hex pat.[i + 3] then begin
+          let b = Char.chr (int_of_string ("0x" ^ String.sub pat (i + 2) 2)) in
+          (match b with
+           | ']' | '\\' | '^' | '-' | '[' -> Buffer.add_char buf '\\'
+           | _ -> ());
+          Buffer.add_char buf b;
+          go (i + 4) in_class
+        end else begin
+          Buffer.add_char buf c;
+          Buffer.add_char buf pat.[i + 1];
+          go (i + 2) in_class
+        end
+      end
+      else if c = '[' && not in_class then begin
+        Buffer.add_char buf c;
+        (* A `]` first in a class, after an optional `^`, is itself. *)
+        let j = if i + 1 < n && pat.[i + 1] = '^' then (Buffer.add_char buf '^'; i + 2)
+                else i + 1 in
+        if j < n && pat.[j] = ']' then (Buffer.add_char buf ']'; go (j + 1) true)
+        else go j true
+      end
+      else if c = ']' && in_class then (Buffer.add_char buf c; go (i + 1) false)
+      else (Buffer.add_char buf c; go (i + 1) in_class)
+    end
+  in
+  go 0 false;
+  Buffer.contents buf
+
 let regex_literals : (string * string, Re.re) Hashtbl.t Domain.DLS.key =
   Domain.DLS.new_key (fun () -> Hashtbl.create 16)
 
@@ -2530,7 +2574,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
         | Some why -> raise (EvalError why)
         | None ->
           (try
-             let re = Re.compile (Re.Pcre.re ~flags:opts pat) in
+             let re = Re.compile (Re.Pcre.re ~flags:opts (class_bytes pat)) in
              Hashtbl.replace cache (pat, flags) re;
              VRegex re
            with Re.Pcre.Parse_error ->
@@ -6332,7 +6376,7 @@ let stdlib_eval_env : env = [
       (match regex_repeat_error pat with
        | Some why -> VConstr (Ctor.Builtin "Error", [VString why])
        | None ->
-         (try VConstr (Ctor.Builtin "Ok", [VRegex (Re.compile (Re.Pcre.re pat))])
+         (try VConstr (Ctor.Builtin "Ok", [VRegex (Re.compile (Re.Pcre.re (class_bytes pat)))])
           with Re.Pcre.Parse_error ->
             VConstr (Ctor.Builtin "Error", [VString (Printf.sprintf "invalid regex: %s" pat)])))
     | _ -> raise (EvalError "regex_compile: expected String")));

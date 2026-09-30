@@ -154,15 +154,51 @@ let strip_located = Ast.strip_located
 let reopen_raw s =
   if String.contains s '\n' then "\n" ^ s else s
 
+(* The length of the UTF-8 character that starts at [i], or 0 where the
+   byte there does not start one. A string is bytes, so a literal may hold a
+   byte that is no character; that one is written as `\xNN`, and a valid
+   character is written as itself. *)
+let utf8_length str i =
+  let n = String.length str in
+  let cont j = j < n && Char.code str.[j] land 0xC0 = 0x80 in
+  let c = Char.code str.[i] in
+  if c < 0x80 then 1
+  else if c land 0xE0 = 0xC0 && c >= 0xC2 && cont (i + 1) then 2
+  else if c land 0xF0 = 0xE0 && cont (i + 1) && cont (i + 2) then 3
+  else if c land 0xF8 = 0xF0 && c <= 0xF4 && cont (i + 1) && cont (i + 2)
+          && cont (i + 3) then 4
+  else 0
+
+(* Whether the byte at [i] has to be written as `\xNN`: a control byte with
+   no escape of its own, DEL, or a byte that starts no UTF-8 character. *)
+let needs_hex str i =
+  let c = Char.code str.[i] in
+  (c < 0x20 && c <> 0x0A && c <> 0x09 && c <> 0x0D) || c = 0x7F
+  || (c >= 0x80 && utf8_length str i = 0)
+
+let has_hex_bytes str =
+  let rec go i = i < String.length str && (needs_hex str i || go (i + 1)) in
+  go 0
+
 let escape_string_body str =
   let n = String.length str in
   let buf = Buffer.create (n + 8) in
+  (* Bytes that continue a UTF-8 character already written. *)
+  let skip = ref 0 in
   (* `{` or `!{` at this position -- the two shapes an opener takes. *)
   let opens_at j =
     j < n && (str.[j] = '{'
               || (str.[j] = '!' && j + 1 < n && str.[j + 1] = '{'))
   in
   String.iteri (fun i c ->
+    if !skip > 0 then decr skip
+    else if needs_hex str i then
+      Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
+    else if Char.code c >= 0x80 then begin
+      let len = utf8_length str i in
+      Buffer.add_string buf (String.sub str i len);
+      skip := len - 1
+    end else
     match c with
     | '\\' -> Buffer.add_string buf "\\\\"
     | '"'  -> Buffer.add_string buf "\\\""
@@ -193,7 +229,8 @@ let contains_sub s sub =
    characters -- turning a spelled-out `\n` or `\t` into invisible layout
    is a worse trade than the escaped quotes. *)
 let raw_safe s =
-  not (String.contains s '`')
+  not (has_hex_bytes s)
+  && not (String.contains s '`')
   && not (contains_sub s "%{")
   && String.for_all (fun c -> c <> '\n' && c <> '\t' && c <> '\r') s
 

@@ -316,6 +316,15 @@ keeps it. This is what you want when something else expands the string:
 
 For the literal text `%{`, escape the percent: `"\%{not an interpolation}"`.
 
+A byte is written `\x` and two hex digits. A `String` is bytes, and a byte
+that is no character has no other spelling. `wand f` keeps it, and writes a
+valid UTF-8 character as itself:
+
+```ocaml
+"\xff\xfb\x01"           -- three bytes: a telnet command
+"caf\xc3\xa9"            -- "café", which wand f writes as such
+```
+
 String concatenation with `++`:
 
 ```ocaml
@@ -1363,7 +1372,10 @@ Regex literals use the `r/pattern/` syntax with optional flags `i`, `m`, `s`:
 r/\d+/          -- one or more digits
 r/foo/i         -- case-insensitive
 r/^\w+/m        -- match at start of each line
+r/[\xfb-\xfe]/  -- one byte from 0xfb to 0xfe
 ```
+
+A byte is `\x` and two hex digits, inside a character class or outside one.
 
 ```ocaml
 Regex.match?      r/\d+/ "abc123"          -- true

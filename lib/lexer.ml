@@ -215,6 +215,20 @@ let read_string s =
       let c = match advance s with
         | 'n' -> '\n' | 't' -> '\t' | 'r' -> '\r'
         | '\\' -> '\\' | '"' -> '"' | '$' -> '$' | '%' -> '%' | '#' -> '#'
+        (* One byte, by its value. A String is bytes, and a byte that is no
+           character -- 255 starts a telnet command -- has no other way to
+           be written. *)
+        | 'x' ->
+          let digit () =
+            if is_at_end s then raise (Fail "unterminated string literal");
+            match advance s with
+            | ('0'..'9' | 'a'..'f' | 'A'..'F') as d -> d
+            | _ -> raise (Fail
+                "a byte is written \\x and two hex digits, as \\xff")
+          in
+          let hi = digit () in
+          let lo = digit () in
+          Char.chr (int_of_string (Printf.sprintf "0x%c%c" hi lo))
         | c -> raise (Fail (Printf.sprintf "unknown escape \\%c" c))
       in
       Buffer.add_char buf c; loop ()

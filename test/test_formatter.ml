@@ -512,6 +512,14 @@ let fmt_eq label src expected =
    above them says nothing the `=` did not. So a multi-line backtick string
    starts on the line of its `=`, as a bracket does -- which is what it is
    here. *)
+(* A string holding a byte that is no character is written with `\xNN`, and
+   never between backticks, where nothing is escaped. Valid UTF-8 is written
+   as itself (#56). *)
+let test_byte_escapes_round_trip () =
+  fmt_eq "a byte that is no character" "let x = \"a\\xffb\\x01c\"" "let x = \"a\\xffb\\x01c\"";
+  fmt_eq "a character spelled in bytes" "let x = \"\\xc3\\xa9\"" "let x = \"\xc3\xa9\"";
+  fmt_eq "not backticks, though it holds a quote" "let x = \"\\\"\\xff\"" "let x = \"\\\"\\xff\""
+
 let test_a_multiline_backtick_string_opens_on_the_eq_line () =
   fmt_eq "a top-level binding"
     "let a =\n  `\none\n  two`\na"
@@ -2123,6 +2131,7 @@ let () =
   Alcotest.run "Formatter" [
     "idempotency", [
       Alcotest.test_case "snippets" `Quick test_idempotent_snippets;
+      Alcotest.test_case "byte escapes" `Quick test_byte_escapes_round_trip;
       Alcotest.test_case "stdlib"   `Quick test_idempotent_stdlib;
       Alcotest.test_case "parses at any margin" `Slow test_output_parses_at_any_margin;
       Alcotest.test_case "wrapped if condition keeps its then" `Quick
