@@ -214,6 +214,65 @@ let test_exit_releases () =
       (Printf.sprintf "exit %d released first" n) false present
   ) [0; 1; 3; 42]
 
+(* `Par.all!` runs its branches as a race. A signal stops every branch,
+   and the race used to take that for "no branch finished": the script
+   failed with `race: no thunk finished` and exit 1, where it should stop
+   as a stopped script does. *)
+let par_all_script marker =
+  Printf.sprintf
+    {|import Clock
+import FS
+import Par
+import Path
+with FS.temp_dir "wand_sig_" as d ->
+  let () = FS.write_file! (Path.of_string "%s") (Path.to_string d) in
+  Par.all! [fn () -> Clock.sleep 5s, fn () -> Clock.sleep 5s]|}
+    marker
+
+let test_sigterm_in_par_all () =
+  let marker = Filename.temp_file "wand_sig_m" "" in
+  Sys.remove marker;
+  let (code, present, status) =
+    signalled_run ~signal:Sys.sigterm ~marker (par_all_script marker) in
+  if present then Alcotest.failf "the directory is still there (child %s)" status;
+  Alcotest.(check int) "exits 143" 143 code
+
+(* `exit` in one branch of `Par.all!` stops the program then, with its code.
+   It used to be lost: the race waited for the other branch and the script
+   went on. The other branch sleeps far longer than the check allows. *)
+let exit_in_par_script marker code =
+  Printf.sprintf
+    {|import Clock
+import FS
+import Par
+import Path
+import Proc
+with FS.temp_dir "wand_sig_" as d ->
+  let () = FS.write_file! (Path.of_string "%s") (Path.to_string d) in
+  Par.all! [fn () -> Proc.exit %d, fn () -> Clock.sleep 30s]|}
+    marker code
+
+let test_exit_in_par_all () =
+  List.iter (fun n ->
+    let marker = Filename.temp_file "wand_sig_m" "" in
+    let started = Unix.gettimeofday () in
+    let code =
+      match Runner.run_string (exit_in_par_script marker n) with
+      | _ -> -1
+      | exception Evaluator.Interrupted c -> c
+    in
+    let took = Unix.gettimeofday () -. started in
+    let dir = String.trim (In_channel.with_open_text marker In_channel.input_all) in
+    let present = Sys.file_exists dir in
+    if present then ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)));
+    (try Sys.remove marker with _ -> ());
+    Alcotest.(check int) (Printf.sprintf "exit %d keeps its code" n) n code;
+    Alcotest.(check bool) (Printf.sprintf "exit %d released first" n) false present;
+    Alcotest.(check bool)
+      (Printf.sprintf "exit %d did not wait for the other branch (%.1fs)" n took)
+      true (took < 10.0)
+  ) [0; 3]
+
 (* A server told to stop stops accepting, lets the request in progress
    finish, and then exits as a stopped process does. The request is sent
    from here, and the signal goes once the handler says it has started. *)
@@ -297,6 +356,8 @@ let () =
       Alcotest.test_case "SIGTERM" `Quick test_sigterm_releases;
       Alcotest.test_case "exit n"  `Quick test_exit_releases;
       Alcotest.test_case "Par workers" `Quick test_par_workers_release;
+      Alcotest.test_case "SIGTERM in Par.all!" `Quick test_sigterm_in_par_all;
+      Alcotest.test_case "exit in Par.all!" `Quick test_exit_in_par_all;
       Alcotest.test_case "during acquire" `Quick test_interrupt_during_acquire_releases;
       Alcotest.test_case "an HTTP server drains" `Quick test_http_server_drains;
     ];

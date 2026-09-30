@@ -4562,6 +4562,21 @@ and par_race_items ~keys n work =
     let m = Mutex.create () in
     let winner = ref None in
     let fatal = ref None in
+    (* The program stopping inside an item: a signal, or `exit`. Both raise
+       `Interrupted`, and so does an item this race cancelled, which is how
+       a loser unwinds. A loser's own flag is set before it raises, and a
+       signal carries a code that is not 0, so either one tells a stop from
+       a loss. A stop ends the race as it ends the program: the other items
+       are cancelled and the stop is raised again once they are joined.
+       Without this, a SIGTERM in every branch of `Par.all!` came out as
+       "race: no thunk finished", and an `exit` in one branch was lost while
+       the race waited for another. *)
+    let stop = ref None in
+    let rec stop_code = function
+      | Interrupted c -> Some c
+      | Fun.Finally_raised e -> stop_code e
+      | _ -> None
+    in
     let finish i r =
       let o = match r with
         | Ok v -> Some (VConstr (Ctor.Builtin "Ok", [v]))
@@ -4570,18 +4585,23 @@ and par_race_items ~keys n work =
            | Some msg -> Some (VConstr (Ctor.Builtin "Error", [msg]))
            | None ->
              if is_abandoned e && !fatal = None then fatal := Some e;
+             (match stop_code e with
+              | Some c when (c <> 0 || not !(cancels.(i))) && !stop = None ->
+                stop := Some e
+              | _ -> ());
              None)
       in
       Mutex.lock m;
-      let first = !winner = None && (o <> None || !fatal <> None) in
+      let first = !winner = None && (o <> None || !fatal <> None || !stop <> None) in
       if first then winner := o;
       Mutex.unlock m;
       if first then
         Array.iteri (fun j c -> if j <> i then c := true) cancels
     in
-    let stopped () = !winner <> None || !fatal <> None in
+    let stopped () = !winner <> None || !fatal <> None || !stop <> None in
     par_go ~limit:n ~cancels ~stopped ~keys work finish;
     settle fatal;
+    (match !stop with Some e -> raise e | None -> ());
     match !winner with
     | Some o -> o
     | None -> VConstr (Ctor.Builtin "Error", [VString "race: no thunk finished"]))
