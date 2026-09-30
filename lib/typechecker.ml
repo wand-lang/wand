@@ -3859,8 +3859,39 @@ let rec infer tenv (env : env) (e : expr) : typ =
          raise (TypeError (Printf.sprintf
            "'%s' declares no types, so '%s' names nothing in it"
            m (Ast.show inner))))
-    else
-    with_visible (List.map fst own) (fun () -> infer tenv' env inner)
+    else begin
+      (* The constructor is the module's, and its arguments are the
+         caller's. Inferring the arguments inside the module's scope read
+         the caller's types as the module's where the short names matched:
+         with `w : world.World`, `core.World(n = w.now)` failed with "core.World
+         and world.World are not the same type". So each argument is inferred
+         here first, and the construction sees only its type, under a name
+         no file can write. (#63) *)
+      let counter = ref 0 in
+      let env_args = ref env in
+      let hold e =
+        let t = infer tenv env e in
+        let n = Printf.sprintf "\000arg%d" !counter in
+        incr counter;
+        env_args := (n, Mono t) :: !env_args;
+        Var n
+      in
+      let rec held e =
+        match e with
+        | Located (l, inner) -> Located (l, held inner)
+        | ConstrApp (name, fields, a) ->
+          ConstrApp (name, List.map (fun (f, x) -> (f, hold x)) fields, a)
+        | ConstrUpdate (name, base, fields, a) ->
+          ConstrUpdate (name, hold base, List.map (fun (f, x) -> (f, hold x)) fields, a)
+        | App (f, x) when (match strip_located f with
+                           | Constr _ | App _ -> true | _ -> false) ->
+          let f' = held f in
+          App (f', hold x)
+        | other -> other
+      in
+      let inner' = held inner in
+      with_visible (List.map fst own) (fun () -> infer tenv' !env_args inner')
+    end
   | ConstrBare (name, ids) ->
     let name = expr_ctor_name tenv name in
     let named_fields =

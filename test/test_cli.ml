@@ -888,6 +888,24 @@ let test_fmt_takes_a_directory () =
     let (code, _) = wand_out ~dir:d ["f"; "empty"] in
     Alcotest.(check int) "a directory with no files is an error" 1 code)
 
+(* The arguments of a constructor reached through a module are the caller's.
+   They were inferred with that module's types in view, so where two modules
+   each declare `World`, `core.World(n = w.now)` read `w`'s `World` as
+   `core.World` and failed (#63). *)
+let test_qualified_constructor_arguments_are_the_callers () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "core.wand")
+      "type World(n: Int)\ntype Pair = Pair Int Int\n";
+    write_file (Filename.concat d "world.wand") "type World(now: Int)\n";
+    write_file (Filename.concat d "main.wand")
+      "uses {IO}\n\nimport IO\n\n\
+       let core = import ./core\n\
+       let world = import ./world\n\n\
+       let w = world.World(now = 5)\n\n\
+       IO.println \"%{core.World(n = w.now)} %{core.World(core.World(n = 1), n = w.now)} %{core.Pair w.now 7}\"\n";
+    let (code, out) = wand_out ~dir:d ["main.wand"] in
+    Alcotest.(check (pair int string)) "it runs" (0, "World(5) World(5) Pair(5, 7)\n") (code, out))
+
 (* A function stored in a field whose type writes no effects. The file that
    builds the value answers for what the function performs: another file
    that calls the field rebuilds the type with rows of its own, so neither
@@ -1217,6 +1235,7 @@ let () =
       Alcotest.test_case "an interface travels with its types" `Quick test_an_interface_travels_with_its_types;
       Alcotest.test_case "a list of modules" `Quick test_a_list_of_modules_is_a_list_of_their_interface;
       Alcotest.test_case "a stored function is charged" `Quick test_a_stored_function_is_charged_where_it_is_stored;
+      Alcotest.test_case "qualified constructor arguments" `Quick test_qualified_constructor_arguments_are_the_callers;
       Alcotest.test_case "a qualifier uses its import" `Quick test_a_qualified_interface_uses_its_import;
       Alcotest.test_case "wand t --effects" `Quick test_effects_of_one_file;
       Alcotest.test_case "--effects is inferred" `Quick test_effects_ignore_the_manifest;

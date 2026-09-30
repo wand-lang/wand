@@ -2438,6 +2438,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
          | _ -> VConstr (c, []))
      | ConstrApp (name, fields, allow) ->
        with_ident name (fun c -> eval_constr_app env c fields allow)
+     (* An update through a module, `m.T(base, f = v)`, is the module's `T`,
+        as a construction is. It fell through to the bare name, where the
+        module that declared `T` last wins. *)
+     | ConstrUpdate (name, base, fields, allow) ->
+       with_ident name (fun c -> eval_constr_update env c name base fields allow)
      | ConstrBare (name, ids) ->
        with_ident name (fun c ->
          let named_fields =
@@ -2462,35 +2467,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
   | ConstrApp (name, fields, allow) ->
     eval_constr_app env (ctor_in_scope env name) fields allow
   | ConstrUpdate (name, base, fields, allow) ->
-    let replacements = List.map (fun (fname, e) -> (fname, eval env e)) fields in
     (* The constructor in scope, as a construction finds it. By name alone
        the table answers with the type of whichever module declared that
        name last, which in a program with two `type State`s is not always
        the one the update was written against. *)
-    let c = ctor_in_scope env name in
-    (match eval env base, Hashtbl.find_opt constr_fields c with
-     (* Updating a request answers a request, and the bound is the one on the
-        file that wrote the update -- it is the file that chose the new
-        URL. *)
-     | VRequest (VConstr (_, values), _), Some field_names
-     | VConstr (_, values), Some field_names ->
-       let built =
-         VConstr (c, List.map2 (fun fname_opt v ->
-           match fname_opt with
-           | Some fn -> (match List.assoc_opt fn replacements with
-                         | Some v' -> v'
-                         | None -> v)
-           | None -> v) field_names values)
-       in
-       (* An update may name a different host, so it is checked like a
-          construction -- against the manifest of the file the update was
-          written in, which is the file that chose the new URL. *)
-       if c = Ctor.Builtin "HTTPRequest" then begin
-         check_request_host allow built;
-         VRequest (built, allow)
-       end else built
-     | _ -> raise (EvalError (Printf.sprintf
-         "'%s' cannot be updated: it has no named fields" name)))
+    eval_constr_update env (ctor_in_scope env name) name base fields allow
   | MapLit kvs ->
     VMap (vmap_of_list (List.map (fun (k, e) -> (k, eval env e)) kvs))
   | Field (e, label) ->
@@ -2850,6 +2831,34 @@ and command_line env e allow form : string =
   | VString resolved -> resolved
   | v -> raise (EvalError (Printf.sprintf
       "a handler for Shell!command answered with %s, and a command is a        String" (show_value v)))
+
+(* `T(base, f = v)` with its constructor `c` already found: through the
+   scope for a bare `T`, through the module for `m.T`. *)
+and eval_constr_update env c name base fields allow =
+  let replacements = List.map (fun (fname, e) -> (fname, eval env e)) fields in
+  (match eval env base, Hashtbl.find_opt constr_fields c with
+   (* Updating a request answers a request, and the bound is the one on the
+      file that wrote the update -- it is the file that chose the new
+      URL. *)
+   | VRequest (VConstr (_, values), _), Some field_names
+   | VConstr (_, values), Some field_names ->
+     let built =
+       VConstr (c, List.map2 (fun fname_opt v ->
+         match fname_opt with
+         | Some fn -> (match List.assoc_opt fn replacements with
+                       | Some v' -> v'
+                       | None -> v)
+         | None -> v) field_names values)
+     in
+     (* An update may name a different host, so it is checked like a
+        construction -- against the manifest of the file the update was
+        written in, which is the file that chose the new URL. *)
+     if c = Ctor.Builtin "HTTPRequest" then begin
+       check_request_host allow built;
+       VRequest (built, allow)
+     end else built
+   | _ -> raise (EvalError (Printf.sprintf
+       "'%s' cannot be updated: it has no named fields" name)))
 
 and eval_constr_app env c fields allow =
   let name = Ctor.name c in
