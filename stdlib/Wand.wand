@@ -155,6 +155,37 @@ let load! loader (path: Path) = wand_load loader path
 -- false : Bool
 let load loader (path: Path) = try load! loader path
 
+-- ── Limit ──────────────────────────────────────────────────────────────
+
+-- How much a limited call may do: how many steps it may take, and how
+-- deep its calls may nest. A step is one position the evaluator passes.
+-- Builtins whose output grows with their input -- `++`, `String.repeat`,
+-- `List.range`, `JSON` -- take steps for its size before they build it,
+-- so a limit bounds memory as well as time.
+type Limits(steps: Int = 100000, depth: Int = 1000)
+
+-- Run `thunk` under `limits`: `Ok` its value, or `Error` naming the limit
+-- that ran out. A `try` inside the thunk cannot catch that; only this does.
+-- A raise inside the thunk passes out as a raise. What the thunk may
+-- perform is unchanged: a limit bounds how long code runs, not what it
+-- does. An inner limit gets the smaller of its own and what is left of
+-- the outer one, and its steps count against the outer one too, as do
+-- the steps of fibers started inside it.
+--
+-- >> Wand.limit Wand.Limits() (fn () -> 1 + 2)
+-- Ok(3) : Result String Int
+--
+-- >> Wand.limit (Wand.Limits(steps = 1000)) (fn () -> List.length (List.range 1 100000))
+-- Error("ran out of steps after 1000") : Result String Int
+let limit (limits: Limits) thunk = wand_limit limits.steps limits.depth thunk
+
+-- Run `thunk` and give its value with the steps it took. It sets no limit
+-- of its own, and its steps count against any limit around it.
+--
+-- >> (fn (v, steps) -> (v, steps > 0)) (Wand.cost (fn () -> List.length (List.range 1 10)))
+-- (10, true) : (Int, Bool)
+let cost thunk = wand_cost thunk
+
 -- ── Version ────────────────────────────────────────────────────────────
 
 -- The version of this wand.

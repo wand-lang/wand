@@ -1,0 +1,59 @@
+-- `Wand.limit` and `Wand.cost`: a step and depth budget for a call.
+
+import List
+import Par
+import String
+import Wand
+
+let {test} = import Test
+
+let loop n = loop (n + 1)
+
+let deep n = if n == 0 then 0 else 1 + deep (n - 1)
+
+let steps n = Wand.Limits(steps = n)
+
+test "a call inside its limit gives its value" (fn t ->
+  t.eq (Ok 3) (Wand.limit Wand.Limits() (fn () -> 1 + 2)))
+test "a loop that never ends runs out of steps" (fn t ->
+  t.eq (Error "ran out of steps after 5000") (Wand.limit (steps 5000) (fn () -> loop 0)))
+test "calls nested too deep run out of depth" (fn t ->
+  t.eq
+    (Error "went deeper than 100 nested calls")
+    (Wand.limit Wand.Limits(depth = 100) (fn () -> deep 1000)))
+test "a try inside the limit cannot catch it" (fn t ->
+  t.eq (Error "ran out of steps after 5000") (Wand.limit (steps 5000) (fn () -> try loop 0)))
+test "a raise inside the limit passes out as a raise" (fn t ->
+  t.raises (fn () -> Wand.limit Wand.Limits() (fn () -> List.head! [])))
+test "a builtin takes steps for the size it builds" (fn t ->
+  t.eq
+    (Error "ran out of steps after 1000")
+    (Wand.limit (steps 1000) (fn () -> String.length (String.repeat 1000000 "x"))))
+
+-- Limits inside limits.
+test "an inner limit that is smaller runs out on its own" (fn t ->
+  t.eq
+    (Ok (Error "ran out of steps after 100"))
+    (Wand.limit (steps 100000) (fn () -> Wand.limit (steps 100) (fn () -> loop 0))))
+test "an inner limit that asks for more than is left runs out as the outer one" (fn t ->
+  t.eq
+    (Error "ran out of steps after 1000")
+    (Wand.limit (steps 1000) (fn () -> Wand.limit (steps 1000000) (fn () -> loop 0))))
+test "the steps of an inner limit count against the outer one" (fn t ->
+  t.eq
+    (Error "ran out of steps after 1000")
+    (Wand.limit (steps 1000) (fn () ->
+      let _ = Wand.limit (steps 800) (fn () -> loop 0);
+      Wand.limit (steps 800) (fn () -> loop 0))))
+test "fibers started inside the limit draw from it" (fn t ->
+  t.eq
+    (Error "ran out of steps after 5000")
+    (Wand.limit (steps 5000) (fn () -> Par.all! [fn () -> loop 0, fn () -> loop 0])))
+
+test "cost gives the value and the steps it took" (fn t ->
+  let (v, n) = Wand.cost (fn () -> List.length (List.range 1 100));
+  t.eq (100, true) (v, n > 0))
+test "more work costs more steps" (fn t ->
+  let (_, small) = Wand.cost (fn () -> deep 10);
+  let (_, big) = Wand.cost (fn () -> deep 1000);
+  t.ok (big > small))

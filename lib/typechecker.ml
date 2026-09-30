@@ -5540,6 +5540,16 @@ let stdlib_type_env : env = [
    (let a = fresh () in
     generalize []
       (TApp (TName "Loader", a) @-> effs [Effect_set.FsRead; Effect_set.Raise] TPath a)));
+  (* A limit passes the thunk's effects through: it bounds how long the
+     thunk runs, not what it may do. *)
+  ("wand_limit",
+   (let a = fresh () in
+    let e = Effect_set.unknown () in
+    generalize [] (TInt @-> TInt @-> TFun (TFun (TUnit, a, e), TResult (TString, a), e))));
+  ("wand_cost",
+   (let a = fresh () in
+    let e = Effect_set.unknown () in
+    generalize [] (TFun (TFun (TUnit, a, e), TTuple [a; TInt], e))));
   ("wand_version", generalize [] TVersion);
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a

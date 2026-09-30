@@ -7035,6 +7035,8 @@ check_at    : Path -> String -> Result String Checked ! {FS.Read}
 check_at!   : Path -> String -> Checked ! {FS.Read, Raise}
 load        : Loader 'a -> Path -> Result String 'a ! {FS.Read}
 load!       : Loader 'a -> Path -> 'a ! {FS.Read, Raise}
+limit       : Limits -> (Unit -> 'a ! 'e) -> Result String 'a ! 'e
+cost        : (Unit -> 'a ! 'e) -> ('a, Int) ! 'e
 version     : Version
 ```
 
@@ -7103,6 +7105,28 @@ A `String` does not become a running program, as it does not become a
 its loader names, and only a file that checks, implements that interface,
 and performs no more than its members allow. See Loading a module at run
 time, under Interfaces.
+
+`limit` runs a function under a budget, for a program that runs code it
+did not write -- a plugin, a user's rule -- and must not hang on it:
+
+```ocaml
+type Limits(steps: Int = 100000, depth: Int = 1000)
+
+Wand.limit (Wand.Limits(steps = 1000)) (fn () -> List.length (List.range 1 100000))
+-- Error("ran out of steps after 1000")
+```
+
+A step is one position the evaluator passes. Builtins whose output grows
+with their input -- `++`, `String.repeat`, `List.range`, `JSON` -- take
+steps for its size before they build it, so a limit bounds memory as well
+as time. `depth` bounds how deep calls nest. Running out gives an `Error`
+naming the limit, and a `try` inside the function cannot catch it. A raise
+inside the function passes out as a raise, and what it may perform is
+unchanged. An inner limit gets the smaller of its own and what is left of
+the outer one, and its steps count against the outer one, as do the steps
+of fibers started inside it.
+
+`cost` runs a function and gives its value with the steps it took.
 
 `version` is the version of the wand that runs the script.
 

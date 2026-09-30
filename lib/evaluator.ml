@@ -1242,8 +1242,29 @@ let request_interrupt code = Atomic.set interrupt_requested code
 
    Read only when an error is being reported. Until then it is written and
    never looked at. *)
+(* The steps a `Wand.limit` still allows. One is taken at every step the
+   evaluator passes, by the task that runs under the limit and by every
+   fiber it starts, so they draw from one budget. `owner` is the limit
+   that runs out when this one does: the limit itself, or an outer one
+   that had fewer steps left than this one asked for. *)
+type fuel = { mutable left : int; owner : int; owner_steps : int }
+
+(* No limit: never runs out. *)
+let unlimited = { left = max_int; owner = 0; owner_steps = max_int }
+
+(* A limit ran out: which one, and what it says. Not an `EvalError`, so a
+   `try` inside the limited code cannot catch it. Only the `Wand.limit`
+   that set the limit does. *)
+exception Limit_reached of int * string
+
 type loc_cell =
   { mutable at_line : int; mutable at_col : int;
+    (* The steps left under the innermost `Wand.limit`. *)
+    mutable fuel : fuel;
+    (* How deep calls may nest, and the limit that set it. *)
+    mutable depth_cap : int;
+    mutable depth_owner : int;
+    mutable depth_asked : int;
     (* Which file the position is in, "" for the one being run. A raise from
        inside an imported module used to report a bare line number, which
        reads as a line of the reader's own file and sends them to the wrong
@@ -1264,6 +1285,7 @@ let tasks = Atomic.make 0
 
 let new_loc_cell budget =
   { at_line = 0; at_col = 0; at_file = ""; depth = 0; budget;
+    fuel = unlimited; depth_cap = max_int; depth_owner = 0; depth_asked = 0;
     task = Atomic.fetch_and_add tasks 1;
     q0 = 0; q1 = 0; q2 = 0; q3 = 0; q4 = 0; q5 = 0; q6 = 0; q7 = 0; q8 = 0;
     q9 = 0; q10 = 0; q11 = 0; q12 = 0; q13 = 0; q14 = 0; q15 = 0 }
@@ -1445,6 +1467,59 @@ let yield_every =
    an effect is not performed but moves the item to the calling domain. *)
 let on_pool : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> false)
 
+let out_of_steps (f : fuel) =
+  raise (Limit_reached (f.owner,
+    Printf.sprintf "ran out of steps after %d" f.owner_steps))
+
+(* Take `n` steps at once: what a builtin charges for output whose size
+   depends on its input, before it builds it, so a limit bounds memory as
+   well as time. *)
+let charge n =
+  let f = (Domain.DLS.get current_loc).fuel in
+  if f != unlimited && n > 0 then begin
+    f.left <- f.left - n;
+    if f.left < 0 then out_of_steps f
+  end
+
+(* Text is charged a step for every 64 bytes it builds. *)
+let charge_bytes n = charge (n / 64)
+
+let limit_ids = Atomic.make 0
+
+(* Run `thunk` under a limit of `steps` and `depth`, giving `Ok` its value
+   or `Error` what ran out. A raise inside it passes out as a raise. The
+   steps it takes count against any limit around it too. *)
+let with_limit steps depth thunk =
+  let c = Domain.DLS.get current_loc in
+  let outer = c.fuel in
+  let id = Atomic.fetch_and_add limit_ids 1 + 1 in
+  let own = max 0 steps in
+  let f =
+    if outer == unlimited || own <= outer.left
+    then { left = own; owner = id; owner_steps = own }
+    else { left = outer.left; owner = outer.owner; owner_steps = outer.owner_steps }
+  in
+  let start = f.left in
+  let saved_cap = c.depth_cap and saved_owner = c.depth_owner
+  and saved_asked = c.depth_asked in
+  let cap = if depth >= max_int - c.depth then max_int else c.depth + max 0 depth in
+  if cap < c.depth_cap then begin
+    c.depth_cap <- cap; c.depth_owner <- id; c.depth_asked <- max 0 depth
+  end;
+  c.fuel <- f;
+  let restore () =
+    c.fuel <- outer;
+    c.depth_cap <- saved_cap;
+    c.depth_owner <- saved_owner;
+    c.depth_asked <- saved_asked;
+    if outer != unlimited then
+      outer.left <- outer.left - (start - max 0 f.left)
+  in
+  match thunk () with
+  | v -> restore (); Ok (v, start - max 0 f.left)
+  | exception Limit_reached (o, msg) when o = id -> restore (); Error msg
+  | exception e -> restore (); raise e
+
 let fiber_turn (c : loc_cell) =
   c.budget <- yield_every;
   if Atomic.get fibers_running <> 0 && not (Domain.DLS.get on_pool) then
@@ -1515,7 +1590,9 @@ let fresh_fiber ?cancel () = {
   f_file_net = Domain.DLS.get ambient_file_net;
   f_file_listen = Domain.DLS.get ambient_file_listen;
   f_deadline = None;
-  f_loc = new_loc_cell yield_every;
+  (* Work started under a limit draws from that limit. *)
+  f_loc = (let c = new_loc_cell yield_every and here = Domain.DLS.get current_loc in
+           c.fuel <- here.fuel; c.depth_cap <- max_int; c.depth_owner <- 0; c);
   f_cancelled = cancel_within ?own:cancel ();
   f_taken = ref false;
   (* Shared with the task that started this one: work a draining server
@@ -2814,6 +2891,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     let c = loc_cell () in
     c.budget <- c.budget - 1;
     if c.budget <= 0 then fiber_turn c;
+    let f = c.fuel in
+    if f != unlimited then begin
+      f.left <- f.left - 1;
+      if f.left < 0 then out_of_steps f
+    end;
     if tail then (mark_loc c loc; eval_tail env e)
     else begin
       let line = c.at_line and col = c.at_col in
@@ -2918,6 +3000,9 @@ and apply vf vx =
      `apply_tail` is the same call with nothing to come back to. *)
   let c = loc_cell () in
   let line = c.at_line and col = c.at_col in
+  if c.depth >= c.depth_cap then
+    raise (Limit_reached (c.depth_owner, Printf.sprintf
+      "went deeper than %d nested calls" c.depth_asked));
   if c.depth >= max_call_depth then
     raise (EvalError
       "too many nested calls -- only a call in tail position runs to any \
@@ -3045,7 +3130,9 @@ and eval_binop (env : env) op a b : value =
      | _ -> raise (EvalError "'%' requires Int operands"))
   | "++" ->
     (match eval env a, eval env b with
-     | VString s1, VString s2 -> VString (s1 ^ s2)
+     | VString s1, VString s2 ->
+       charge_bytes (String.length s1 + String.length s2);
+       VString (s1 ^ s2)
      | _ -> raise (EvalError "'++' requires strings"))
   | "::" ->
     let vh = eval env a in
@@ -4406,9 +4493,12 @@ let par_go_here ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   let own_handler = Atomic.get observers = 0 && not (Domain.DLS.get on_pool) in
   let caller_cancel = (Domain.DLS.get cancelled).flags in
   let caller_on_pool = Domain.DLS.get on_pool in
+  (* Items draw from the limit the call runs under, on whichever domain. *)
+  let caller_fuel = (loc_cell ()).fuel in
   let run_item i =
     Domain.DLS.set cancelled
       { flags = cancels.(i) :: caller_cancel; raised = false };
+    (loc_cell ()).fuel <- caller_fuel;
     let t0 = Unix.gettimeofday () in
     (* One sample a call is enough, and every item taking a shared lock is
        not free. *)
@@ -4480,6 +4570,7 @@ and par_go_pool ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
   let caller_cancel = (Domain.DLS.get cancelled).flags in
   let caller_deferred = Domain.DLS.get interrupts_deferred in
   let caller_on_pool = Domain.DLS.get on_pool in
+  let caller_fuel = (loc_cell ()).fuel in
   let stop () =
     Atomic.set stopping true;
     locked (fun () -> Condition.broadcast room);
@@ -4506,6 +4597,7 @@ and par_go_pool ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
       { flags = cancels.(i) :: caller_cancel; raised = false };
     Domain.DLS.set interrupts_deferred caller_deferred;
     (loc_cell ()).depth <- 0;
+    (loc_cell ()).fuel <- caller_fuel;
     let migrated = ref false in
     let t0 = Unix.gettimeofday () in
     (* One sample a call is enough, and every item taking a shared lock is
@@ -4712,6 +4804,11 @@ and par_race_items ~keys n work =
              (match stop_code e with
               | Some c when (c <> 0 || not !(cancels.(i))) && !stop = None ->
                 stop := Some e
+              | _ -> ());
+             (* A limit ran out inside an item: the call under it ends, as
+                it does on a stop, and the limit hears of it. *)
+             (match e with
+              | Limit_reached _ when !stop = None -> stop := Some e
               | _ -> ());
              None)
       in
@@ -5461,7 +5558,7 @@ let stdlib_eval_env : env = [
     | _ -> raise (EvalError "str_trim_right: expected String")));
   ("str_repeat", VBuiltin (function
     | VInt n -> VBuiltin (function
-      | VString s -> VString (str_repeat n s)
+      | VString s -> charge_bytes (max 0 n * String.length s); VString (str_repeat n s)
       | _ -> raise (EvalError "str_repeat: expected String"))
     | _ -> raise (EvalError "str_repeat: expected Int")));
   ("str_reverse", VBuiltin (function
@@ -6654,6 +6751,21 @@ let stdlib_eval_env : env = [
            | _ -> raise (EvalError "Wand.load!: the read gave no text"))
         | _ -> raise (EvalError "Wand.load!: expected a Path"))
     | _ -> raise (EvalError "Wand.load!: expected a loader")));
+  (* `Wand.limit`: the thunk's value, or which limit ran out. *)
+  ("wand_limit", VBuiltin (function
+    | VInt steps -> VBuiltin (function
+        | VInt depth -> VBuiltin (fun thunk ->
+            match with_limit steps depth (fun () -> apply thunk VUnit) with
+            | Ok (v, _) -> VConstr (Ctor.Builtin "Ok", [v])
+            | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
+        | _ -> raise (EvalError "Wand.limit: expected Int"))
+    | _ -> raise (EvalError "Wand.limit: expected Int")));
+  (* `Wand.cost`: the thunk's value and the steps it took, under no limit of
+     its own. *)
+  ("wand_cost", VBuiltin (fun thunk ->
+    match with_limit max_int max_int (fun () -> apply thunk VUnit) with
+    | Ok (v, used) -> VTuple [v; VInt used]
+    | Error msg -> raise (EvalError msg)));
   ("wand_version", VVersion Version.value);
   ("shell_in_dir", VBuiltin (fun d -> VBuiltin (fun c ->
     let dir = match d with
@@ -6929,6 +7041,7 @@ let stdlib_eval_env : env = [
       | _ -> raise (EvalError "yaml_field!: expected YAML"))));
   ("json_parse", VBuiltin (function
     | VString s ->
+      charge_bytes (String.length s);
       (try
          let j = Yojson.Basic.from_string s in
          if json_is_finite j then VConstr (Ctor.Builtin "Ok", [VJson j])
@@ -6953,7 +7066,10 @@ let stdlib_eval_env : env = [
       | VJson j -> raise (EvalError ("json_field_exn: expected object, got " ^ Yojson.Basic.to_string j))
       | _ -> raise (EvalError "json_field_exn: expected JSON"))));
   ("json_stringify", VBuiltin (function
-    | VJson j -> VString (Yojson.Basic.to_string j)
+    | VJson j ->
+      let s = Yojson.Basic.to_string j in
+      charge_bytes (String.length s);
+      VString s
     | _ -> raise (EvalError "json_stringify: expected JSON")));
   ("json_stringify_pretty", VBuiltin (function
     | VJson j -> VString (Yojson.Basic.pretty_to_string j)
@@ -7113,6 +7229,7 @@ let stdlib_eval_env : env = [
   ("list_range", VBuiltin (function
     | VInt lo -> VBuiltin (function
       | VInt hi ->
+        charge (hi - lo + 1);
         let rec go i acc =
           if i < lo then acc else go (i - 1) (VInt i :: acc)
         in
@@ -7121,13 +7238,14 @@ let stdlib_eval_env : env = [
     | _ -> raise (EvalError "list_range: expected Int")));
   ("list_flatten", VBuiltin (function
     | VList xss ->
+      charge (List.fold_left (fun n -> function VList xs -> n + List.length xs | _ -> n) 0 xss);
       VList (List.concat_map (function
         | VList xs -> xs
         | _ -> raise (EvalError "list_flatten: expected List of Lists")) xss)
     | _ -> raise (EvalError "list_flatten: expected List")));
   ("list_concat", VBuiltin (function
     | VList xs -> VBuiltin (function
-      | VList ys -> VList (xs @ ys)
+      | VList ys -> charge (List.length xs + List.length ys); VList (xs @ ys)
       | _ -> raise (EvalError "list_concat: expected List"))
     | _ -> raise (EvalError "list_concat: expected List")));
 ]
@@ -7191,6 +7309,7 @@ let map_builtins : env = [
     | _ -> raise (EvalError "map_to_list: expected Map")));
   ("map_from_list", VBuiltin (function
     | VList pairs ->
+      charge (List.length pairs);
       let kvs = List.map (function
         | VTuple [VString k; v] -> (k, v)
         | _ -> raise (EvalError "map_from_list: expected list of (String, value) tuples")) pairs
