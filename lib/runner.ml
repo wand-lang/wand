@@ -2495,11 +2495,11 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
     | _ -> (acc, acc_docs)
   ) (empty_import_env, []) (List.mapi (fun i it -> (i, it)) prog.Ast.items)
 
-and load_module src_ref ~cache ~loading ~evaluate =
+and load_module ?key src_ref ~cache ~loading ~evaluate =
   (* Embedded or on disk, a module is a name and some source from here on:
      the name keys the caches and the cycle check, and nothing below asks
      where the bytes came from. *)
-  let path = Module_types.key_of src_ref in
+  let path = match key with Some k -> k | None -> Module_types.key_of src_ref in
   let src = Module_types.read_source src_ref in
   let tokens =
     (* Every position from here names this file, so an error raised inside an
@@ -4455,6 +4455,9 @@ let iface_bound (i : Ast.interface_def) =
    loaded already is the same one, state and all, rather than a second
    copy. The file itself is taken out of the cache first, so loading it
    again reads it again -- which is what a reload is. *)
+(* How many times `Wand.load!` has loaded each file. *)
+let load_generations : (string, int) Hashtbl.t = Hashtbl.create 8
+
 let load_value (key : string) (path : string) (src : string) : Evaluator.value =
   let fail msg = raise (Evaluator.EvalError (Printf.sprintf "%s: %s" path msg)) in
   let saved = !Package.main in
@@ -4488,10 +4491,18 @@ let load_value (key : string) (path : string) (src : string) : Evaluator.value =
       | None -> (Hashtbl.create 8, ref [])
     in
     let src_ref = Module_types.File (entry_path path) in
-    let modul = Module_types.key_of src_ref in
+    (* Each load after the first is a module of its own, named for the file
+       and how many times it was loaded. The types a module declares are
+       keyed by its name, and code a program still holds from an earlier
+       load -- an object kept on its old code -- goes on reading its own
+       `State`, not the new one. *)
+    let file = Module_types.key_of src_ref in
+    let n = Option.value (Hashtbl.find_opt load_generations file) ~default:0 in
+    Hashtbl.replace load_generations file (n + 1);
+    let modul = if n = 0 then file else Printf.sprintf "%s@%d" file (n + 1) in
     Hashtbl.remove cache (module_cache_key ~evaluate:true modul);
     let (_, _, own_eval, own_tenv, _, _, _) =
-      try load_module src_ref ~cache ~loading ~evaluate:true
+      try load_module ~key:modul src_ref ~cache ~loading ~evaluate:true
       with
       | Module_types.ImportError msg | Module_types.ImportErrorAt (_, msg) -> fail msg
     in

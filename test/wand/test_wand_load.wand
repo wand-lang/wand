@@ -78,3 +78,20 @@ test "loading a path again runs what the file says now" (fn t ->
     let after = (Wand.load! shape.Shape.loader f).area 3;
     t.eq (3, 103) (before, after)
   ))
+
+-- A module loaded before keeps its own types after the file is loaded
+-- again: the decoder and the record update it holds read its `State`, not
+-- the new file's.
+test "a module from an earlier load keeps its own types" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./kept.wand;
+    FS.write_file!
+      f
+      "import JSON\nlet shape = import %{shape_path ()}\ntype State(n: Int = 0)\nimplement shape.Shape =\n  let area x = match JSON.decode State.decoder (State.encoder (State(State(), n = x))) with\n    | Ok s -> s.n\n    | Error _ -> -1\n";
+    let old = Wand.load! shape.Shape.loader f;
+    FS.write_file!
+      f
+      "let shape = import %{shape_path ()}\ntype State(m: String)\nimplement shape.Shape =\n  let area x = x + 100\n";
+    let new = Wand.load! shape.Shape.loader f;
+    t.eq (3, 103) (old.area 3, new.area 3)
+  ))

@@ -2296,7 +2296,8 @@ file runs until all of these hold:
 Then it runs as an import does. A module it imports that the program loaded
 already is the same module, so the two share its state and its types.
 Loading the same path again reads the file again, which is how a program
-takes a new version of it. `Wand.load` gives an `Error` where `load!` raises.
+takes a new version of it. Each load is a module of its own, so a module
+from an earlier load keeps its own types. `Wand.load` gives an `Error` where `load!` raises.
 
 ### `Ord` is built in
 
