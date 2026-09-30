@@ -1371,6 +1371,54 @@ let generalize (env : env) t =
   if quantify = [] && quantify_evars = [] then Mono t
   else Poly (quantify, quantify_evars, t)
 
+(* ── A function stored in a field ──────────────────────────────────────────
+   A field arrow whose effects nobody wrote gets an effect row that every use
+   of the constructor shares, so that a call through the field sees what
+   construction stored there. That holds inside one file. Another file
+   rebuilds the constructor from the declaration with rows of its own, so a
+   file that only calls the field saw nothing, and a file that only built
+   the value performed nothing: a closure running a command reached no
+   manifest at all (#61).
+
+   So building a value also performs those rows: the file that stores a
+   function in such a field answers for what the function performs. Rows
+   the declaration writes -- `! {Raise}`, or `! 'e` -- are the type's to
+   carry, and are left alone. *)
+
+(* The shared rows on the field arrows of a constructor's scheme: every
+   row with an effect variable the scheme does not quantify. The rows are
+   read as built, before anything bound them, so a row that has since
+   become `{Shell}` is still recognised by its variable. *)
+let stored_rows (sch : scheme) =
+  let (quantified, t) =
+    match sch with
+    | Poly (_, evs, t) -> (evs, t)
+    | Mono t -> ([], t)
+    | Namespace _ -> ([], TUnit)
+  in
+  let acc = ref [] in
+  let rec walk t =
+    match t with
+    | TFun (a, b, (Effect_set.Set (_, Some v) as r))
+      when not (List.mem v.Effect_set.id quantified) ->
+      acc := r :: !acc; walk a; walk b
+    | TFun (a, b, _) -> walk a; walk b
+    | TList x | TMap x | TShared x | TDecoder x -> walk x
+    | TTuple xs -> List.iter walk xs
+    | TResult (e, x) -> walk e; walk x
+    | TApp (f, x) -> walk f; walk x
+    | TResource (_, x) | TStream (_, x) -> walk x
+    | _ -> ()
+  in
+  (* The constructor's own arrows are pure; the fields are their
+     arguments. *)
+  let rec fields = function
+    | TFun (a, b, _) -> walk a; fields b
+    | _ -> ()
+  in
+  fields t;
+  !acc
+
 (* ── A function that calls itself inside a closure ────────────────────────
    A call adds the callee's effects to the calling scope and ties the
    callee's unknown effects to the scope's, which over-approximates in the
@@ -3409,6 +3457,27 @@ let rec module_join a b =
   | TList x, TList y -> Option.map (fun j -> TList j) (module_join x y)
   | _ -> None
 
+(* A constructor, as an expression that builds a value: it performs what the
+   functions stored in its unwritten field arrows perform. (#61)
+
+   Here the fields are not unified yet -- the constructor is applied later,
+   or passed on as a value -- so the rows are tied to the scope, and what
+   the fields turn out to hold reaches it when they are known. That includes
+   Raise, which a construction does not perform; a construction that names
+   its fields settles after they are unified instead, with `perform_stored`
+   below. *)
+let instantiate_ctor (sch : scheme) =
+  let t = instantiate sch in
+  List.iter performs (stored_rows sch);
+  t
+
+(* What a construction performs once its fields are unified: the stored
+   functions' effects, except Raise. Building a value raises nothing, and
+   Raise is no part of a manifest; the call through the field is what
+   raises, and it is charged there. *)
+let perform_stored rows =
+  List.iter (fun r -> performs (Effect_set.remove Effect_set.Raise r)) rows
+
 let rec infer tenv (env : env) (e : expr) : typ =
   match e with
   | Int _      -> TInt
@@ -3477,7 +3546,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
          (String.concat ", " (List.map (fun n -> n ^ " = ...") names))))
      | _ -> ());
     (match List.assoc_opt name ctor_env with
-     | Some s -> instantiate s
+     | Some s -> instantiate_ctor s
      | None   ->
        (match name with
         | "Ok"    -> let e = fresh () in let t = fresh () in t @-> TResult (e, t)
@@ -3499,7 +3568,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
         | _ when ctor_name_for tenv name <> name ->
           let cname = ctor_name_for tenv name in
           (match List.assoc_opt cname ctor_env with
-           | Some sch -> instantiate sch
+           | Some sch -> instantiate_ctor sch
            | None -> raise (TypeError (Printf.sprintf
                "'%s' is a type, not a value" name)))
         (* A name that is a type rather than a constructor is not unknown,
@@ -3825,10 +3894,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
           `Box(v = 3)` is a `Box Int`, exactly as `Box 3` is. Converting each
           field type separately gave every one an unrelated variable and left
           the result unapplied. *)
-       let arg_ts, result_t =
+       let (arg_ts, result_t), stored =
          match List.assoc_opt name (tenv_to_ctor_env tenv) with
-         | Some sch -> unwrap_ctor_type (instantiate sch)
-         | None -> ([], TName tname)
+         | Some sch -> (unwrap_ctor_type (instantiate sch), stored_rows sch)
+         | None -> (([], TName tname), [])
        in
        let field_type fname =
          let rec index i = function
@@ -3874,6 +3943,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
            name
            (if List.length missing = 1 then "" else "s")
            (String.concat ", " (List.map (fun n -> "'" ^ n ^ "'") missing))));
+       perform_stored stored;
        result_t)
   (* `T(r, b = 3)`: `r` is a `T` already, so the fields not named keep what
      it holds. Only the named ones are checked, which is the whole
@@ -3889,10 +3959,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
          name (module_only_hint tenv name)
          (Util.hint name (List.map fst (tenv_to_ctor_env tenv)))))
      | Some (tname, ctor) ->
-       let arg_ts, result_t =
+       let (arg_ts, result_t), stored =
          match List.assoc_opt name (tenv_to_ctor_env tenv) with
-         | Some sch -> unwrap_ctor_type (instantiate sch)
-         | None -> ([], TName tname)
+         | Some sch -> (unwrap_ctor_type (instantiate sch), stored_rows sch)
+         | None -> (([], TName tname), [])
        in
        let field_type fname =
          let rec index i = function
@@ -3942,6 +4012,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
            in
            unify (infer tenv env e) expected
        ) fields;
+       perform_stored stored;
        result_t)
   (* `Apps.Deployment.decoder`: a type named through its module. The derived
      members are read off the declaration, and the declaration is the

@@ -1615,6 +1615,14 @@ wand takes the effects from the value that builds the field. So `fire`
 performs `Shell`, and a file that calls it declares `Shell`. A named field
 behaves the same way, through dot access or through a match.
 
+Building the value performs them too, so the file that writes
+`Action (fn () -> $(git push))` declares `Shell` as well. That is what holds
+when the value goes to another file: the file that calls the field there
+reads the declaration afresh, and does not know what was stored. A function
+that builds such a value carries the effects on its own arrow. `Raise` is the
+exception, since building a value with named fields raises nothing; the call
+that raises is charged where it is made.
+
 A field can take a function and pass its effects on. To say so, name the
 same variable twice. The effects of a written type are part of that type:
 

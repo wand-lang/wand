@@ -42,6 +42,17 @@
   everything the function performs, so a closure still cannot hide an
   effect the function has (#54).
 
+- **A function stored in a record field is charged where it is stored.** A
+  field whose type writes no effects, such as `f: Unit -> String`, could
+  hold a function that runs a command, and no manifest saw it: not the file
+  that built the value, and not a file that called the field in another
+  module. A program under `uses {IO}` ran the command. Now building the
+  value performs what the stored function performs, except `Raise`, so the
+  file that stores it declares it (#61).
+
+  A file that builds such a value, and did not declare the effects, is now
+  refused: `wand t` names the line to add.
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed

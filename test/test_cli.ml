@@ -872,6 +872,31 @@ let test_a_list_of_modules_is_a_list_of_their_interface () =
     let (code, out) = wand_out ~dir:d ["main.wand"] in
     Alcotest.(check (pair int string)) "it runs" (0, "[7, 3] 2 2\n") (code, out))
 
+(* A function stored in a field whose type writes no effects. The file that
+   builds the value answers for what the function performs: another file
+   that calls the field rebuilds the type with rows of its own, so neither
+   file saw the command, and a program under `uses {IO}` ran it (#61). *)
+let test_a_stored_function_is_charged_where_it_is_stored () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "contract.wand") "type R(f: Unit -> String)\n";
+    write_file (Filename.concat d "stores.wand")
+      "uses {Random}\n\nlet c = import ./contract\n\
+       let r = c.R(f = fn () -> $(echo stored))\n";
+    write_file (Filename.concat d "maker.wand")
+      "let c = import ./contract\n\
+       let mk () = c.R(f = fn () -> $(echo made))\n";
+    let (code, out) = wand_out ~dir:d ["t"; "stores.wand"] in
+    Alcotest.(check int) "the file that stores it is refused" 1 code;
+    Alcotest.(check bool) "naming the effect" true (contains_sub out "Shell");
+    let (code, out) = wand_out ~dir:d ["t"; "maker.wand"] in
+    Alcotest.(check int) "a function that builds one types" 0 code;
+    ignore out;
+    write_file (Filename.concat d "uses_maker.wand")
+      "uses {IO}\n\nlet m = import ./maker\nlet r = m.mk ()\n";
+    let (code, out) = wand_out ~dir:d ["t"; "uses_maker.wand"] in
+    Alcotest.(check int) "and the effect is on its arrow" 1 code;
+    Alcotest.(check bool) "naming it" true (contains_sub out "Shell"))
+
 (* A module that did not claim the interface does not fit, however many of
    its members happen to line up. *)
 let test_a_module_must_have_claimed_it () =
@@ -1174,6 +1199,7 @@ let () =
       Alcotest.test_case "conformance is claimed" `Quick test_a_module_must_have_claimed_it;
       Alcotest.test_case "an interface travels with its types" `Quick test_an_interface_travels_with_its_types;
       Alcotest.test_case "a list of modules" `Quick test_a_list_of_modules_is_a_list_of_their_interface;
+      Alcotest.test_case "a stored function is charged" `Quick test_a_stored_function_is_charged_where_it_is_stored;
       Alcotest.test_case "a qualifier uses its import" `Quick test_a_qualified_interface_uses_its_import;
       Alcotest.test_case "wand t --effects" `Quick test_effects_of_one_file;
       Alcotest.test_case "--effects is inferred" `Quick test_effects_ignore_the_manifest;
