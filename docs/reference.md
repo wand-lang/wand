@@ -2293,6 +2293,10 @@ file runs until all of these hold:
   interface's members allow. A file that claims `Shape` and prints is
   refused, whatever its `uses` line says.
 
+A file may implement several interfaces, and it loads as any one of them
+whose members allow all it performs. A member performs what its interface
+declares for it, so a file that implements `Shape` performs `Random`.
+
 Then it runs as an import does. A module it imports that the program loaded
 already is the same module, so the two share its state and its types.
 Loading the same path again reads the file again, which is how a program

@@ -95,3 +95,31 @@ test "a module from an earlier load keeps its own types" (fn t ->
     let new = Wand.load! shape.Shape.loader f;
     t.eq (3, 103) (old.area 3, new.area 3)
   ))
+
+-- A file may implement several interfaces. It loads as any one of them
+-- whose limits all it does fits: here, two that allow nothing.
+test "a file that implements two interfaces loads as either" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./both.wand;
+    FS.write_file!
+      f
+      "let shape = import %{shape_path ()}\nimplement shape.Label =\n  let label () = \"ints\"\nimplement Ord Int =\n  let max a b = if a > b then a else b;\n  let min a b = if a < b then a else b;\n  let clamp lo hi x = if x < lo then lo else if x > hi then hi else x;\n  let between? lo hi x = x >= lo && x <= hi\n";
+    t.eq ("ints", 3) (
+      (Wand.load! shape.Label.loader f).label (),
+      (Wand.load! Ord.loader f).max 2 3
+    )
+  ))
+
+-- A member takes the type its interface declares, effects and all, so a
+-- file that implements Shape performs Random and cannot load as Ord.
+test "a file loads only as an interface all of it fits" (fn t ->
+  with FS.temp_dir "wand_load_" as d -> (
+    let f = Path.join d ./shaped.wand;
+    FS.write_file!
+      f
+      "let shape = import %{shape_path ()}\nimplement shape.Shape =\n  let area n = n * 2\nimplement Ord Int =\n  let max a b = if a > b then a else b;\n  let min a b = if a < b then a else b;\n  let clamp lo hi x = if x < lo then lo else if x > hi then hi else x;\n  let between? lo hi x = x >= lo && x <= hi\n";
+    t.eq (true, false) (
+      Result.ok? (Wand.load shape.Shape.loader f),
+      Result.ok? (Wand.load Ord.loader f)
+    )
+  ))
