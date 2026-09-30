@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- **A record update uses the type of its own module.** With two modules
+  that each declare a type of one name, such as `type State`, an update in
+  one module could build the other module's type: a wrong value, or
+  `constructor 'State' has no field named ...` when the fields did not
+  match. Which one it built depended on the order of the imports (#50).
+
 ## [0.94.1] - 2026-09-30
 
 ### Fixed

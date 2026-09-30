@@ -152,6 +152,32 @@ let name c = match c with | Warm -> "warm" | Cool -> "cool"|} (fun path ->
       (run (Printf.sprintf {|let {name, Warm} = import %s
 name Warm|} path)))
 
+(* A record update names its type by the short name, as a construction does,
+   and means the type of its own module. It looked the name up in one table
+   for the whole program, where the module loaded last wins, so with two
+   modules that each declare `type State` an update in one built the
+   other's: a wrong value, or a failure when the fields did not match. *)
+let test_update_uses_its_own_module () =
+  with_named "upd_a" {|type State(pulls: Int = 0)
+let bump (s: State) = State(s, pulls = s.pulls + 1)
+let pulls (s: State) = s.pulls
+let start () = State()|} (fun a ->
+  with_named "upd_b" {|type State(name: String = "someone")
+let rename (s: State) = State(s, name = "Bo")
+let name (s: State) = s.name
+let start () = State()|} (fun b ->
+    let prog first second =
+      Printf.sprintf {|let %s = import %s
+let %s = import %s
+(upd_a.pulls (upd_a.bump (upd_a.start ())), upd_b.name (upd_b.rename (upd_b.start ())))|}
+        (Filename.remove_extension (Filename.basename first)) (Filename.remove_extension first)
+        (Filename.remove_extension (Filename.basename second)) (Filename.remove_extension second)
+    in
+    Alcotest.(check (result string string))
+      "a imported first" (Ok "(1, \"Bo\")") (run (prog a b));
+    Alcotest.(check (result string string))
+      "b imported first" (Ok "(1, \"Bo\")") (run (prog b a))))
+
 (* ── A module's alias, inside it and outside it ──────────────────── *)
 
 (* A module's types are keyed by the module, and the alias table was keyed
@@ -413,6 +439,7 @@ let () =
       Alcotest.test_case "transitive do not leak"   `Quick test_transitive_imports_do_not_leak;
       Alcotest.test_case "constructors cross"       `Quick test_imported_constructors_cross;
       Alcotest.test_case "constructors selected"    `Quick test_imported_constructors_selected;
+      Alcotest.test_case "an update uses its own module" `Quick test_update_uses_its_own_module;
     ];
     "analysis", [
       Alcotest.test_case "typecheck does not run imports" `Quick

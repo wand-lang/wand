@@ -2398,7 +2398,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      | other -> eval env other)
   | ConstrBare (name, ids) ->
     let named_fields =
-      match Hashtbl.find_opt constr_fields (ctor_named name) with
+      match Hashtbl.find_opt constr_fields (ctor_in_scope env name) with
       | Some fields -> List.exists (fun dn -> dn <> None) fields
       | None -> false
     in
@@ -2407,13 +2407,17 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     eval_constr_app env (ctor_in_scope env name) fields allow
   | ConstrUpdate (name, base, fields, allow) ->
     let replacements = List.map (fun (fname, e) -> (fname, eval env e)) fields in
-    (match eval env base, Hashtbl.find_opt constr_fields (ctor_named name) with
+    (* The constructor in scope, as a construction finds it. By name alone
+       the table answers with the type of whichever module declared that
+       name last, which in a program with two `type State`s is not always
+       the one the update was written against. *)
+    let c = ctor_in_scope env name in
+    (match eval env base, Hashtbl.find_opt constr_fields c with
      (* Updating a request answers a request, and the bound is the one on the
         file that wrote the update -- it is the file that chose the new
         URL. *)
      | VRequest (VConstr (_, values), _), Some field_names
      | VConstr (_, values), Some field_names ->
-       let c = ctor_named name in
        let built =
          VConstr (c, List.map2 (fun fname_opt v ->
            match fname_opt with
