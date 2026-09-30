@@ -112,3 +112,26 @@ test "it agrees with the match on get that it replaces" (fn t ->
   let by_hand_counted =
     List.fold_left (fn m w -> by_hand w m) Map.empty ["a", "b", "a", "c", "b", "a"];
   t.eq by_hand_counted counted)
+
+-- ── Order is how a map prints, not what it holds ─────────────────────────
+
+-- Two maps with the same keys and an equal value under each are equal,
+-- whatever order the keys arrived in. The order still decides how a map
+-- prints and writes.
+test "maps built in two orders are equal" (fn t -> t.eq {a = 1, b = 2} {b = 2, a = 1})
+test "and not unequal" (fn t -> t.not_ok ({a = 1, b = 2} != {b = 2, a = 1}))
+test "a key deleted and set again leaves an equal map" (fn t ->
+  let m = {a = 1, b = 2};
+  t.eq m (m |> Map.delete "a" |> Map.set "a" 1))
+test "a different value is still unequal" (fn t ->
+  t.not_ok ({a = 1, b = 2} == {b = 2, a = 9}))
+test "a missing key is still unequal" (fn t -> t.not_ok ({a = 1} == {a = 1, b = 2}))
+test "inside a list, a tuple and another map" (fn t ->
+  t.ok
+    ([{a = 1, b = 2}] == [{b = 2, a = 1}]
+    && ({a = 1, b = 2}, 1) == ({b = 2, a = 1}, 1)
+    && {x = {a = 1, b = 2}} == {x = {b = 2, a = 1}}))
+test "List.unique keeps one of two equal maps" (fn t ->
+  t.eq 1 (List.length (List.unique [{a = 1, b = 2}, {b = 2, a = 1}])))
+test "the order still decides the keys' order" (fn t ->
+  t.eq (["a", "b"], ["b", "a"]) (Map.keys {a = 1, b = 2}, Map.keys {b = 2, a = 1}))

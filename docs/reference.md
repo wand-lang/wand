@@ -1068,6 +1068,14 @@ Map.set "b" 99 {a = 1, b = 2, c = 3}   -- {a = 1, b = 99, c = 3}
 Map.merge {a = 1, b = 2} {b = 9}       -- {a = 1, b = 9}
 ```
 
+The order is how a map prints and writes, not what it holds. Two maps are
+equal when they have the same keys and an equal value under each, whatever
+order the keys arrived in:
+
+```ocaml
+{a = 1, b = 2} == {b = 2, a = 1}       -- true
+```
+
 A JSON document can name a key twice, but a `Map` cannot hold one twice.
 Each reader takes the later value: `JSON.field`, `Decode.field`, and the `Map`
 from `JSON.get_object`. So two readers of one document always agree.

@@ -494,6 +494,12 @@ let vmap_list m =
   |> List.sort (fun (i, _) (j, _) -> compare i j)
   |> List.map snd
 
+(* The entries sorted by key: what a map holds, whatever order its keys
+   arrived in. Equality and ordering read this; printing and writing read
+   `vmap_list`. *)
+let vmap_by_key m =
+  StrMap.bindings m.m_entries |> List.map (fun (k, (_, v)) -> (k, v))
+
 let vmap_get key m =
   match StrMap.find_opt key m.m_entries with
   | Some (_, v) -> Some v
@@ -1799,10 +1805,11 @@ let rec wand_equal a b =
   | VProc x, VProc y -> x == y
   | VConstr (n1, xs), VConstr (n2, ys) ->
     n1 = n2 && List.length xs = List.length ys && List.for_all2 wand_equal xs ys
-  (* Entry for entry in insertion order, which is what comparing the two
-     association lists did before the representation changed. *)
+  (* The same keys, and an equal value under each. The order the keys
+     arrived in is how a map prints and writes, not what it holds, so
+     `{a = 1, b = 2}` and `{b = 2, a = 1}` are equal. (#62) *)
   | VMap m1, VMap m2 ->
-    let kvs1 = vmap_list m1 and kvs2 = vmap_list m2 in
+    let kvs1 = vmap_by_key m1 and kvs2 = vmap_by_key m2 in
     List.length kvs1 = List.length kvs2
     && List.for_all2 (fun (k1, v1) (k2, v2) -> k1 = k2 && wand_equal v1 v2)
          kvs1 kvs2
@@ -1855,7 +1862,10 @@ let rec eq_key v =
   | VRequest (inner, _) -> eq_key inner
   | VConstr (n, xs) -> VConstr (n, List.map eq_key xs)
   | VRecord r       -> VRecord (vrecord_make (List.map (fun (k, x) -> (k, eq_key x)) r.r_fields))
-  | VMap m          -> VMap (vmap_map eq_key m)
+  (* By key, as `wand_equal` compares maps: the map keeps when each key
+     arrived, and two equal maps that differ only in that must share a key. *)
+  | VMap m ->
+    VList (List.map (fun (k, x) -> VTuple [VString k; eq_key x]) (vmap_by_key m))
   | v -> v
 
 
@@ -1885,7 +1895,9 @@ let rec wand_compare a b =
     let c = compare_ctor c1 c2 in
     if c <> 0 then c else compare_each xs1 xs2
   | VList xs, VList ys | VTuple xs, VTuple ys -> compare_each xs ys
-  | VMap m1, VMap m2 -> compare_pairs (vmap_list m1) (vmap_list m2)
+  (* By key, so two equal maps compare as 0 whatever order their keys
+     arrived in, and `List.sort` and `List.unique` agree with `==`. *)
+  | VMap m1, VMap m2 -> compare_pairs (vmap_by_key m1) (vmap_by_key m2)
   | VRecord r1, VRecord r2 ->
     compare_pairs r1.r_fields r2.r_fields
   | _ ->

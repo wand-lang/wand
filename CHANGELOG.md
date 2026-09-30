@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Two maps with the same keys and values are equal, whatever order the keys arrived in (#62).
+
 ## [0.95.0] - 2026-09-30
 
 ### Added
