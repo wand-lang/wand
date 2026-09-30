@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `State.decoder` and `State.encoder` use their own module's `State` (#64).
+
 ## [0.95.1] - 2026-09-30
 
 ### Fixed

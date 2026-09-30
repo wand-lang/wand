@@ -178,6 +178,32 @@ let %s = import %s
     Alcotest.(check (result string string))
       "b imported first" (Ok "(1, \"Bo\")") (run (prog b a))))
 
+(* `State.decoder` and `State.encoder` in the module that declares `State`
+   are that module's. They were looked up by the bare name, where the module
+   that declared it last wins, so with two modules that each declare
+   `type State` one decoded into the other's (#64). *)
+let test_derived_members_use_their_own_module () =
+  with_named "dec_a" {|import JSON
+type State(pulls: Int = 0)
+let load j = JSON.decode State.decoder j
+let dump s = JSON.stringify (State.encoder s)
+let two = State(pulls = 2)|} (fun a ->
+  with_named "dec_b" {|import JSON
+type State(name: String = "x")
+let load j = JSON.decode State.decoder j
+let dump s = JSON.stringify (State.encoder s)|} (fun b ->
+    let prog first second =
+      Printf.sprintf {|import JSON
+let %s = import %s
+let %s = import %s
+(dec_a.load (JSON.parse! "{\"pulls\": 2}"), dec_a.dump dec_a.two)|}
+        (Filename.remove_extension (Filename.basename first)) (Filename.remove_extension first)
+        (Filename.remove_extension (Filename.basename second)) (Filename.remove_extension second)
+    in
+    let want = Ok {|(Ok(State(2)), "{\"pulls\":2}")|} in
+    Alcotest.(check (result string string)) "a imported first" want (run (prog a b));
+    Alcotest.(check (result string string)) "b imported first" want (run (prog b a))))
+
 (* ── A module's alias, inside it and outside it ──────────────────── *)
 
 (* A module's types are keyed by the module, and the alias table was keyed
@@ -440,6 +466,7 @@ let () =
       Alcotest.test_case "constructors cross"       `Quick test_imported_constructors_cross;
       Alcotest.test_case "constructors selected"    `Quick test_imported_constructors_selected;
       Alcotest.test_case "an update uses its own module" `Quick test_update_uses_its_own_module;
+      Alcotest.test_case "derived members use their own module" `Quick test_derived_members_use_their_own_module;
     ];
     "analysis", [
       Alcotest.test_case "typecheck does not run imports" `Quick

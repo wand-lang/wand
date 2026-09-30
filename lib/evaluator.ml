@@ -2522,6 +2522,22 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
          | _ -> if known tname then Some tname else None)
       | _ -> None
     in
+    (* `State.decoder` in the module that declares `State`: the type of the
+       `State` constructor in scope, by its module. The bare name alone
+       reads a table where the module that declared the name last wins, so
+       with two modules that each declare `type State` one decoded into the
+       other's. (#64) *)
+    let own_key tname =
+      let known k = Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k in
+      match lookup_var tname env with
+      | Some (VConstr (c, _)) | Some (VPartialConstr (c, _, _)) ->
+        (match Ctor.modul c with
+         | Some path ->
+           let k = Module_types.canonical_type ~modul:path tname in
+           if known k then k else tname
+         | None -> tname)
+      | _ -> tname
+    in
     (match strip_located e, label with
      | Qualified (m, inner), ("decoder" | "encoder" | "usage" | "parser")
        when qualified_key m inner <> None ->
@@ -2533,14 +2549,14 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
         | _         -> !derive_parser k)
      | Constr tname, "decoder"
        when Hashtbl.mem derivable tname || Hashtbl.mem derivable_sums tname ->
-       !derive_decoder tname
+       !derive_decoder (own_key tname)
      | Constr tname, "encoder"
        when Hashtbl.mem derivable tname || Hashtbl.mem derivable_sums tname ->
-       !derive_encoder tname
+       !derive_encoder (own_key tname)
      | Constr tname, "usage" when Hashtbl.mem derivable tname ->
-       !derive_usage tname
+       !derive_usage (own_key tname)
      | Constr tname, "parser" when Hashtbl.mem derivable tname ->
-       !derive_parser tname
+       !derive_parser (own_key tname)
      | _ ->
     (* No VMap case: dot access on a Map is rejected by the typechecker.
        VRecord is how imported module namespaces are reached (FS.cwd). *)
