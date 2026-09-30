@@ -6987,6 +6987,8 @@ format!     : String -> String ! {Raise}
 check       : String -> Checked
 check_file  : Path -> Result String Checked ! {FS.Read}
 check_file! : Path -> Checked ! {FS.Read, Raise}
+check_at    : Path -> String -> Result String Checked ! {FS.Read}
+check_at!   : Path -> String -> Checked ! {FS.Read, Raise}
 version     : Version
 ```
 
@@ -7003,7 +7005,7 @@ does not parse.
 ```ocaml
 type Diagnostic(severity: String, code: String, file: String, line: Int, col: Int, message: String)
 type Hole(line: Int, col: Int, type: String)
-type Checked(diagnostics: List Diagnostic, holes: List Hole, type: Option String)
+type Checked(diagnostics: List Diagnostic, holes: List Hole, type: Option String, effects: List String)
 ```
 
 `diagnostics` holds the errors and the lint warnings, with the fields that
@@ -7016,6 +7018,17 @@ and `None` when the source has an error:
 -- [Hole(2, 16, "Int -> Int -> Int ! 'e")]
 ```
 
+`effects` is what the source performs, each label as a `uses` line writes
+it, and empty when the source has an error. It counts what a closure could
+do as well as what runs, as the manifest check does, so a program that
+checks code before it trusts it can read the answer rather than the text of
+an error:
+
+```ocaml
+(Wand.check "let x = $(git status)").effects
+-- ["Shell(git)"]
+```
+
 The source is read as a file is, so it imports what it uses. `check` reads
 no files, so it can import the standard library and nothing else. An import
 of a file is an `E-IMPORT` diagnostic. `check` cannot fail: a source with
@@ -7025,6 +7038,16 @@ errors is an answer, not a failure, so there is no `check!`.
 the file as `FS.read_file!` does, so a trace shows the read. A file that
 cannot be read raises, and `check_file` gives an `Error`. To check a
 directory, list its files, for example with `FS.glob`, and check each one.
+
+`check_at!` checks text that is not on disk, as the file at a path would
+be checked. What it imports is read from beside the path, and what the
+check finds names the path. An editor checks a buffer this way before it
+saves it, since a buffer's relative imports only resolve where it will
+live:
+
+```ocaml
+Wand.check_at! ./rooms/hall.wand buffer   -- `import ../std/room` resolves
+```
 
 These functions read source and give an answer. None of them runs the
 source. A `String` does not become a running program, as it does not become

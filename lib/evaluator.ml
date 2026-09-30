@@ -6572,6 +6572,20 @@ let stdlib_eval_env : env = [
        | VString src -> with_wand_tools (fun () -> !wand_check_file_hook p src)
        | _ -> raise (EvalError "Wand.check_file!: the read gave no text"))
     | _ -> raise (EvalError "Wand.check_file!: expected a Path")));
+  (* `Wand.check_at`: text that is not on disk, checked as the file at the
+     path would be -- its imports read from beside the path, and its
+     diagnostics naming it. An editor checks a buffer this way before it
+     saves it. (#59) *)
+  ("wand_check_at", VBuiltin (function
+    | (VPath p | VString p) -> VBuiltin (function
+        | VString src ->
+          (* The directory the imports are read from, asked through the
+             effect, so a trace shows where the check reads and a handler
+             or `--dry-run` sees it. *)
+          ignore (perform_wand ("FS!dir?", VPath (Filename.dirname p)));
+          with_wand_tools (fun () -> !wand_check_file_hook p src)
+        | _ -> raise (EvalError "Wand.check_at: expected a String"))
+    | _ -> raise (EvalError "Wand.check_at: expected a Path")));
   ("wand_version", VVersion Version.value);
   ("shell_in_dir", VBuiltin (fun d -> VBuiltin (fun c ->
     let dir = match d with

@@ -29,8 +29,15 @@ type Hole(line: Int, col: Int, type: String)
 
 -- What a check found. `type` is the type of the source when it checks: of
 -- its last expression, or `Unit`. It is `None` when the source has an
--- error.
-type Checked(diagnostics: List Diagnostic, holes: List Hole, type: Option String)
+-- error. `effects` is what the source performs, written as a `uses` line
+-- writes it, such as ["FS.Write", "Shell(git)"]: empty when it performs
+-- nothing, and when it has an error.
+type Checked(
+  diagnostics: List Diagnostic,
+  holes: List Hole,
+  type: Option String,
+  effects: List String = []
+)
 
 -- ── Format ─────────────────────────────────────────────────────────────
 
@@ -50,7 +57,7 @@ let format (src: String) = try format! src
 
 -- ── Check ──────────────────────────────────────────────────────────────
 
-let _checked (diagnostics, holes, t) =
+let _checked (diagnostics, holes, t, effects) =
   Checked(
     diagnostics =
       List.map
@@ -65,7 +72,8 @@ let _checked (diagnostics, holes, t) =
         diagnostics,
     holes =
       List.map (fn (line, col, shape) -> Hole(line = line, col = col, type = shape)) holes,
-    type = t
+    type = t,
+    effects = effects
   )
 
 -- Check wand source as `wand t` does: its errors, its lint warnings, the
@@ -79,6 +87,9 @@ let _checked (diagnostics, holes, t) =
 --
 -- >> (Wand.check "1 + 2").type
 -- Some("Int") : Option String
+--
+-- >> (Wand.check "import Random\nRandom.int 1 6").effects
+-- ["Random"] : List String
 --
 -- >> (Wand.check "1 + \"a\"").diagnostics
 -- [Diagnostic("error", "E-TYPE", "", 1, 1, "String and Int are not the same type")] : List Diagnostic
@@ -98,6 +109,23 @@ let check_file! (path: Path) = _checked (wand_check_file path)
 -- >> Result.ok? (Wand.check_file ./no-such-file.wand)
 -- false : Bool
 let check_file (path: Path) = try check_file! path
+
+-- Check `src` as the file at `path` would be checked, without it being
+-- there: what it imports is read from beside `path`, and what the check
+-- finds names `path`. An editor checks a buffer this way before it saves
+-- it, since the buffer's relative imports only resolve where it will live.
+--
+-- >> with FS.temp_dir "ex_" as d ->
+-- ..   (FS.write_file! (Path.join d ./room.wand) "let name = \"hall\"";
+-- ..    (Wand.check_at! (Path.join d ./door.wand) "let room = import ./room\nroom.name").type)
+-- Some("String") : Option String
+let check_at! (path: Path) (src: String) = _checked (wand_check_at path src)
+
+-- `check_at!`, giving an `Error` where it raises.
+--
+-- >> Result.ok? (Wand.check_at ./x.wand "1 + 1")
+-- true : Bool
+let check_at (path: Path) (src: String) = try check_at! path src
 
 -- ── Version ────────────────────────────────────────────────────────────
 

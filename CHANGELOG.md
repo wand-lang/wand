@@ -12,6 +12,13 @@
 
 - **`wand f` takes a directory**, and formats every `.wand` file under it,
   as `wand t` and `wand s` read one (#57).
+- **`Wand.check_at`: check text as the file it will be.** What the text
+  imports is read from beside the path, and what the check finds names the
+  path, so an editor can check a buffer before it saves it (#59).
+- **`Checked.effects`: what a source performs, as data.** Each label is
+  written as a `uses` line writes it, such as `["FS.Write", "Shell(git)"]`,
+  so a program that checks code before it trusts it reads the answer, not
+  the text of an error (#60).
 
 ### Documentation
 

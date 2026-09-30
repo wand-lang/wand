@@ -70,3 +70,31 @@ test "checks from several workers do not mix" (fn t ->
   t.eq (List.map (fn _ -> Ok "Int") srcs) types)
 
 test "the version is this wand's" (fn t -> t.ok (Wand.version >= 0.92.0))
+
+-- ── What a source performs ──────────────────────────────────────────────
+
+test "effects: nothing for pure source" (fn t -> t.eq [] (Wand.check "1 + 2").effects)
+test "effects: a label as a uses line writes it" (fn t ->
+  t.eq ["Shell(git)"] (Wand.check "let x = $(git status)").effects)
+test "effects: a closure that is only kept is counted" (fn t ->
+  t.eq
+    ["FS.Write"]
+    (Wand.check "import FS\nlet g = [fn () -> FS.write_file! ./x \"hi\"]").effects)
+test "effects: none when the source has an error" (fn t ->
+  t.eq [] (Wand.check "1 +").effects)
+
+-- ── Checking text as the file it will be ────────────────────────────────
+
+-- door.wand is never written: the text is checked as the file it will be.
+test "check_at reads imports from beside the path" (fn t ->
+  with FS.temp_dir "wand_check_at_" as d -> (
+    FS.write_file! (Path.join d ./room.wand) `let name = "hall"`;
+    let c = Wand.check_at! (Path.join d ./door.wand) "let room = import ./room\nroom.name";
+    t.eq (Some "String", []) (c.type, c.diagnostics)
+  ))
+test "check_at names the path in what it finds" (fn t ->
+  with FS.temp_dir "wand_check_at_" as d -> (
+    let door = Path.join d ./door.wand;
+    let c = Wand.check_at! door `1 + "a"`;
+    t.eq [Path.to_string door] (List.map (fn (x: Wand.Diagnostic) -> x.file) c.diagnostics)
+  ))

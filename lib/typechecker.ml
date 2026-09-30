@@ -4935,13 +4935,15 @@ let infer_expr (e : expr) : (typ, string) result =
 
 (* All primitives — used when typechecking stdlib modules *)
 (* What `wand_check` answers: each diagnostic as (severity, code, file,
-   line, col, message), each hole as (line, col, type), and the type of the
-   source when it checks. *)
+   line, col, message), each hole as (line, col, type), the type of the
+   source when it checks, and what it performs, as a `uses` line writes
+   each label. *)
 let wand_checked =
   TTuple [
     TList (TTuple [TString; TString; TString; TInt; TInt; TString]);
     TList (TTuple [TInt; TInt; TString]);
-    TApp (TName "Option", TString) ]
+    TApp (TName "Option", TString);
+    TList TString ]
 
 let stdlib_type_env : env = [
   ("io_print",   let a = fresh () in generalize [] (effs [Effect_set.IO] (a) (TUnit)));
@@ -5421,6 +5423,9 @@ let stdlib_type_env : env = [
   ("wand_check", generalize [] (TString @-> wand_checked));
   ("wand_check_file", generalize []
      (effs [Effect_set.FsRead; Effect_set.Raise] TPath wand_checked));
+  (* The text is given, and what it imports is read from beside the path. *)
+  ("wand_check_at", generalize []
+     (TPath @-> effs [Effect_set.FsRead; Effect_set.Raise] TString wand_checked));
   ("wand_version", generalize [] TVersion);
   (* A 404 is not a failure of this call: the exchange succeeded and the
      server said no. `Raise` is here for the transport failing -- DNS, a

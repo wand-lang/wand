@@ -4358,7 +4358,7 @@ let checked_value ~file (r : (source_check, Diag.t) result) : Evaluator.value =
   in
   let none = VConstr (Ctor.Builtin "None", []) in
   match r with
-  | Error d -> VTuple [VList (List.map diag (Diag.all d)); VList []; none]
+  | Error d -> VTuple [VList (List.map diag (Diag.all d)); VList []; none; VList []]
   | Ok sc ->
     let holes =
       List.mapi (fun i t ->
@@ -4372,7 +4372,10 @@ let checked_value ~file (r : (source_check, Diag.t) result) : Evaluator.value =
     VTuple [
       VList (List.map (fun f -> diag (Lint.to_diag ~strict:false f)) sc.sc_findings);
       VList holes;
-      VConstr (Ctor.Builtin "Some", [VString sc.sc_type]) ]
+      VConstr (Ctor.Builtin "Some", [VString sc.sc_type]);
+      (* What the source performs, as `wand t --effects` reports it and a
+         `uses` line writes it. (#60) *)
+      VList (List.map (fun e -> VString (Shell_scan.render_label e)) sc.sc_effects) ]
 
 (* `Wand.check`: the text alone. It reads no file, so an import of one is a
    diagnostic rather than a read -- the text has no directory for `./x` to
