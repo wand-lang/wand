@@ -1,6 +1,7 @@
-## 0.95.2 - 2026-09-30
+## 0.95.3 - 2026-09-30
 
 ### Fixed
 
-- `State.decoder` and `State.encoder` use their own module's `State` (#64).
-- A field read in a qualified constructor's arguments resolves in the caller's scope, and `m.T(base, f = v)` updates the module's `T` (#63).
+- A function in an `and` group can call a member defined after it, and a member that does not fit names its line (#65).
+- `Wand.check_at` follows `..` out of a directory that does not exist yet (#66).
+- V-BANG1 no longer warns about a function that only returns a function that can raise (#67).
