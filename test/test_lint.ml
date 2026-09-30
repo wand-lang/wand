@@ -159,6 +159,24 @@ let test_bang1_ignores_a_stored_raise () =
      let make (xs: List Int) = (let _ = List.head! xs in O(poke = fn () -> make xs))\n\
      make [1]" "V-BANG1"
 
+(* A function that hands back a raising function, inside an Option or a
+   pair, calls nothing: the raise comes when someone calls what it returned
+   (#67). A curried function's next arrow is still a call. *)
+let test_bang1_ignores_a_returned_raise () =
+  not_fired "an Option of a raising function"
+    "type T(f: Option (Int -> Int ! {Raise}) = None)\n\
+     let pick (t: T) = match t.f with\n  | Some f -> Some f\n  | None -> None\n\
+     pick (T())" "V-BANG1";
+  not_fired "a pair with one"
+    "import List\nlet both (n: Int) = (n, fn (xs: List Int) -> List.head! xs)\nboth 1" "V-BANG1";
+  fires "a curried raiser is still named"
+    "import List\nlet nth (n: Int) (xs: List Int) = List.get! n xs\nnth 0 [1]" "V-BANG1";
+  (* And the ! on such a function promises a raise it does not have. *)
+  fires "V-BANG2 on one named with a !"
+    "type T(f: Option (Int -> Int ! {Raise}) = None)\n\
+     let pick! (t: T) = t.f\n\
+     pick! (T())" "V-BANG2"
+
 (* A name takes one ending. `ok?!` and `ok!?` are both parse errors, so the
    advice for a predicate that raises cannot be to add the `!`, which is
    what it used to be -- a name the reader could not have written. *)
@@ -826,6 +844,8 @@ let () =
         test_bang1_ignores_a_demanded_raise;
       Alcotest.test_case "V-BANG1 ignores a stored raise" `Quick
         test_bang1_ignores_a_stored_raise;
+      Alcotest.test_case "V-BANG1 ignores a returned raise" `Quick
+        test_bang1_ignores_a_returned_raise;
       Alcotest.test_case "V-BANG1 reads a contract" `Quick
         test_bang1_reads_a_contract;
       Alcotest.test_case "V-OR1"    `Quick test_or1;

@@ -66,7 +66,12 @@ let rec informationless_error (t : Typechecker.typ) =
    for the same reason.
 
    The arrows of a single curried function still share one effect set, so it
-   still does not matter which of those is asked. *)
+   still does not matter which of those is asked.
+
+   What a function returns counts only as far as calling it goes: the next
+   arrow of a curried function, or a resource the caller enters. A function
+   inside a returned value -- `Some f`, a pair, a list -- raises when someone
+   calls it, later, and returning it raises nothing. (#67) *)
 (* `through_resource` is the difference between the two `!` rules, and the
    asymmetry is deliberate. A `Resource` carries what acquiring and
    releasing it perform, so `FS.lock!` raises when the bracket is entered
@@ -86,7 +91,10 @@ let rec type_raises ?(demanded = false) ?(through_resource = false)
   match Typechecker.repr t with
   | Typechecker.TFun (a, b, r) ->
     (not demanded && Effect_set.mem Effect_set.Raise r)
-    || self ~flip:true a || self b
+    || self ~flip:true a
+    || (match Typechecker.repr b with
+        | Typechecker.TFun _ | Typechecker.TResource _ -> self b
+        | _ -> false)
   | Typechecker.TTuple ts -> List.exists self ts
   | Typechecker.TList t | Typechecker.TMap t -> self t
   | Typechecker.TResult (e, t) -> self e || self t
