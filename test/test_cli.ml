@@ -931,6 +931,32 @@ let test_a_stored_function_is_charged_where_it_is_stored () =
     Alcotest.(check int) "and the effect is on its arrow" 1 code;
     Alcotest.(check bool) "naming it" true (contains_sub out "Shell"))
 
+(* An update that leaves the stored field alone stores nothing, and is
+   charged nothing for it. It was charged the field's shared row, so every
+   update of the type shared one effect: a list that put an update beside a
+   function that raises made the update raise, and a field nothing read
+   broke a check in other code (#79). An update that names the field is
+   still charged. *)
+let test_an_update_is_charged_only_for_what_it_stores () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "m.wand")
+      "type Cur(n: Int, dig: Option (String -> String) = None)\n\n\
+       let bump (w: Cur) = Cur(w, n = w.n + 1)\n";
+    write_file (Filename.concat d "main.wand")
+      "import Result\n\nlet M = import ./m\n\n\
+       let raising! (w: M.Cur) = if w.n > 3 then Result.get! (Error \"x\") else w\n\n\
+       let l = [M.bump, raising!]\n\n\
+       let pure_only (f: M.Cur -> M.Cur ! {}) = f\n\n\
+       let a = pure_only M.bump\n";
+    let (code, out) = wand_out ~dir:d ["t"; "main.wand"] in
+    Alcotest.(check (pair int string)) "it checks" (0, "") (code, out);
+    write_file (Filename.concat d "stores.wand")
+      "uses {Random}\n\nlet M = import ./m\n\n\
+       let w = M.Cur(M.Cur(n = 1), dig = Some (fn s -> $(echo %{s})))\n";
+    let (code, out) = wand_out ~dir:d ["t"; "stores.wand"] in
+    Alcotest.(check int) "an update that stores a function is refused" 1 code;
+    Alcotest.(check bool) "naming the effect" true (contains_sub out "Shell"))
+
 (* A module that did not claim the interface does not fit, however many of
    its members happen to line up. *)
 let test_a_module_must_have_claimed_it () =
@@ -1235,6 +1261,8 @@ let () =
       Alcotest.test_case "an interface travels with its types" `Quick test_an_interface_travels_with_its_types;
       Alcotest.test_case "a list of modules" `Quick test_a_list_of_modules_is_a_list_of_their_interface;
       Alcotest.test_case "a stored function is charged" `Quick test_a_stored_function_is_charged_where_it_is_stored;
+      Alcotest.test_case "an update is charged only for what it stores" `Quick
+        test_an_update_is_charged_only_for_what_it_stores;
       Alcotest.test_case "qualified constructor arguments" `Quick test_qualified_constructor_arguments_are_the_callers;
       Alcotest.test_case "a qualifier uses its import" `Quick test_a_qualified_interface_uses_its_import;
       Alcotest.test_case "wand t --effects" `Quick test_effects_of_one_file;

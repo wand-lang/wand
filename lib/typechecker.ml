@@ -1442,38 +1442,56 @@ let generalize (env : env) t =
    carry, and are left alone. *)
 
 (* The shared rows on the field arrows of a constructor's scheme: every
-   row with an effect variable the scheme does not quantify. The rows are
-   read as built, before anything bound them, so a row that has since
-   become `{Shell}` is still recognised by its variable. *)
-let stored_rows (sch : scheme) =
+   row with an effect variable the scheme does not quantify, one list for
+   each field, in the order they are declared. The rows are read as built,
+   before anything bound them, so a row that has since become `{Shell}` is
+   still recognised by its variable. *)
+let stored_rows_by_field (sch : scheme) =
   let (quantified, t) =
     match sch with
     | Poly (_, evs, t) -> (evs, t)
     | Mono t -> ([], t)
     | Namespace _ -> ([], TUnit)
   in
-  let acc = ref [] in
-  let rec walk t =
+  let rec walk acc t =
     match t with
     | TFun (a, b, (Effect_set.Set (_, Some v) as r))
       when not (List.mem v.Effect_set.id quantified) ->
-      acc := r :: !acc; walk a; walk b
-    | TFun (a, b, _) -> walk a; walk b
-    | TList x | TMap x | TShared x | TDecoder x -> walk x
-    | TTuple xs -> List.iter walk xs
-    | TResult (e, x) -> walk e; walk x
-    | TApp (f, x) -> walk f; walk x
-    | TResource (_, x) | TStream (_, x) -> walk x
-    | _ -> ()
+      walk (walk (r :: acc) a) b
+    | TFun (a, b, _) -> walk (walk acc a) b
+    | TList x | TMap x | TShared x | TDecoder x -> walk acc x
+    | TTuple xs -> List.fold_left walk acc xs
+    | TResult (e, x) -> walk (walk acc e) x
+    | TApp (f, x) -> walk (walk acc f) x
+    | TResource (_, x) | TStream (_, x) -> walk acc x
+    | _ -> acc
   in
   (* The constructor's own arrows are pure; the fields are their
      arguments. *)
   let rec fields = function
-    | TFun (a, b, _) -> walk a; fields b
-    | _ -> ()
+    | TFun (a, b, _) -> walk [] a :: fields b
+    | _ -> []
   in
-  fields t;
-  !acc
+  fields t
+
+let stored_rows sch = List.concat (stored_rows_by_field sch)
+
+(* The rows of the fields a construction names. A field it leaves out
+   stores no function: an update keeps what its base holds, which the code
+   that built the base answered for, and a default is a written value. A
+   row charged for a field nobody set was shared by every update of the
+   type, so two unrelated updates tied their effects together through it,
+   and an unused field broke a check elsewhere (#79). *)
+let stored_rows_named (sch : scheme) (ctor_fields : (string option * _) list) given =
+  let rows = stored_rows_by_field sch in
+  (* A scheme that does not line up with the declaration charges every
+     row, as a construction did before. *)
+  if List.length rows <> List.length ctor_fields then List.concat rows
+  else
+    List.concat (List.map2 (fun (dn, _) rs ->
+      match dn with
+      | Some n when List.mem n given -> rs
+      | _ -> []) ctor_fields rows)
 
 (* ── A function that calls itself inside a closure ────────────────────────
    A call adds the callee's effects to the calling scope and ties the
@@ -4038,8 +4056,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
           the result unapplied. *)
        let (arg_ts, result_t), stored =
          match List.assoc_opt name (tenv_to_ctor_env tenv) with
-         | Some sch -> (unwrap_ctor_type (instantiate sch), stored_rows sch)
-         | None -> (([], TName tname), [])
+         | Some sch -> (unwrap_ctor_type (instantiate sch), Some sch)
+         | None -> (([], TName tname), None)
        in
        let field_type fname =
          let rec index i = function
@@ -4085,7 +4103,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
            name
            (if List.length missing = 1 then "" else "s")
            (String.concat ", " (List.map (fun n -> "'" ^ n ^ "'") missing))));
-       perform_stored stored;
+       Option.iter (fun sch -> perform_stored (stored_rows_named sch ctor.fields given))
+         stored;
        result_t)
   (* `T(r, b = 3)`: `r` is a `T` already, so the fields not named keep what
      it holds. Only the named ones are checked, which is the whole
@@ -4103,8 +4122,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | Some (tname, ctor) ->
        let (arg_ts, result_t), stored =
          match List.assoc_opt name (tenv_to_ctor_env tenv) with
-         | Some sch -> (unwrap_ctor_type (instantiate sch), stored_rows sch)
-         | None -> (([], TName tname), [])
+         | Some sch -> (unwrap_ctor_type (instantiate sch), Some sch)
+         | None -> (([], TName tname), None)
        in
        let field_type fname =
          let rec index i = function
@@ -4154,7 +4173,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
            in
            infer_against tenv env e expected
        ) fields;
-       perform_stored stored;
+       Option.iter (fun sch ->
+         perform_stored (stored_rows_named sch ctor.fields (List.map fst fields)))
+         stored;
        result_t)
   (* `core.Blueprint.loader`, or `Blueprint.loader` in the module that
      declares it: what `Wand.load!` takes to load a file as a module of that

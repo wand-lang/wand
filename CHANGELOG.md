@@ -10,6 +10,7 @@
 
 - `wand p upgrade` finds a required package by the URL as `wand.pkg` writes it, with no scheme (#80).
 - `wand f` keeps `f None (x)` as written, and `f (None (x))` is one argument, an error that `wand t --fix` corrects (#78).
+- An update that leaves a function field alone is charged nothing for it, so an unused function field no longer breaks a check in other code (#79).
 
 ## [0.99.0] - 2026-09-30
 
