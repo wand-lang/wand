@@ -32,6 +32,7 @@ type id =
   | V_CLOCK1   (* two readings of the civil clock subtracted: a step spoils it *)
   | V_SHADOW1  (* a top-level name is bound twice, so its meaning depends on the line *)
   | A_BIND1    (* `let _ =` over a Unit value dismisses a failure that is not there *)
+  | V_MOD1     (* a module is bound to a name in lower case *)
 
 (* The prefix says what a finding will do to you, so a rule ID printed in a
    terminal answers that on its own -- the same reason a raising function is
@@ -173,6 +174,12 @@ let all = [
   { id = A_BIND1;  code = "A-BIND1";
     summary = "a `let _ =` binds a Unit value, so the binder says nothing";
     kind = Advisory };
+  (* A module is named as a type is, in upper case, so `Engine.step` reads
+     the same whether the module is the standard library's or the
+     program's. A file named in lower case is imported with `let`. *)
+  { id = V_MOD1;   code = "V-MOD1";
+    summary = "a module is bound to a name in lower case";
+    kind = Violation };
   { id = V_SHADOW1; code = "V-SHADOW1";
     summary = "a top-level name is bound twice in one file";
     kind = Violation };
@@ -215,6 +222,31 @@ let or1 ~name =
     "'%s' returns a Result whose error side is Unit, so a failure says only \
      that it happened; if there is no reason to report, this is an Option"
     name
+
+(* `json_parser` as a module is named: `JsonParser`. A leading `_`, which
+   makes a module private, stays. *)
+let module_name n =
+  let lead = ref 0 in
+  while !lead < String.length n && n.[!lead] = '_' do incr lead done;
+  let rest = String.sub n !lead (String.length n - !lead) in
+  String.make !lead '_'
+  ^ String.concat ""
+      (List.map String.capitalize_ascii
+         (List.filter (fun s -> s <> "") (String.split_on_char '_' rest)))
+
+let mod1 ~name ~what ~bare =
+  let upper = module_name name in
+  if bare then
+    Printf.sprintf
+      "`import %s` binds the module as '%s'; a module is named in upper case, \
+       as the standard library's are: write `let %s = import %s`, or name the \
+       file %s.wand"
+      what name upper what upper
+  else
+    Printf.sprintf
+      "'%s' names a module; a module is named in upper case, as the standard \
+       library's are: write `let %s = import %s`"
+      name upper what
 
 let name1 ~name ~params =
   Printf.sprintf

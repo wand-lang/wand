@@ -3,7 +3,7 @@ uses {IO}
 import IO
 import List
 
-import github.com/wand-lang/text-tools
+let TextTools = import github.com/wand-lang/text-tools
 
 -- A package that uses another one.
 --
@@ -12,12 +12,12 @@ import github.com/wand-lang/text-tools
 -- fetches the version named there with git, and checks it against the sum
 -- section that `wand p tidy` writes.
 --
--- The import has no scheme and binds `text_tools`: the hyphen becomes `_`.
+-- The import has no scheme, and a module is named in upper case: `TextTools`.
 
 let posts = ["Hello, World", "Packages in wand", "Fibers & services"]
 
 -- A post's title and the path it is served at.
-let entry post = (text_tools.title post, "/posts/%{text_tools.slug post}")
+let entry post = (TextTools.title post, "/posts/%{TextTools.slug post}")
 
 let main () =
   posts |> List.map entry |> List.each (fn (title, path) -> IO.println "%{path}  %{title}")

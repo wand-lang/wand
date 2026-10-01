@@ -83,6 +83,11 @@ call site, in the diff, without opening the callee.
 **A name means one thing.** `V-SHADOW1` reports a top-level name bound twice
 in one file. A reader scanning for a name finds one binding.
 
+**A module is named in upper case.** `Engine.step` reads as `List.map` does,
+whether the module is the standard library's or the program's. A file named
+`Engine.wand` is imported as `import ./Engine`; any other file is bound with
+`let Engine = import ./engine`. `V-MOD1` reports a module bound in lower case.
+
 **A hole asks the question.** Write the part you are sure of. Leave `?` for
 the part you are not. Then ask:
 

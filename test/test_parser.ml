@@ -205,7 +205,7 @@ let test_an_import_statement_ends_at_its_name () =
   refuses "a stdlib module says what it binds" "import S(1)\n"
     "it binds 'S', so 'S.member' reaches into it";
   refuses "a path says to bind it" "import ./p(1)\n"
-    "write 'let name = import ./p' to bind it";
+    "write 'let Name = import ./p' to bind it";
   refuses "an operator on the same line" "import N-1\n"
     "an import statement ends with the module name";
   (* A trailing comment is not something on the line. *)

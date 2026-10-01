@@ -5,19 +5,17 @@ let {test} = import Test
 -- a relative import resolved against this file's own directory, so those two
 -- cases live in test_imports.ml. Everything else is here.
 
-let mylib = import ./imports_fixture
+-- A module is named in upper case. A file named so is imported by its
+-- name; any file can be bound to a name with `let`.
+let MyLib = import ./ImportsFixture
 
-test "whole module bound to name" (fn t -> t.eq 42 mylib.answer)
-test "function call via bound name" (fn t -> t.eq 42 (mylib.double 21))
-test "multiple fields accessible" (fn t -> t.eq 3 (mylib.x + mylib.y))
+test "whole module bound to name" (fn t -> t.eq 42 MyLib.answer)
+test "function call via bound name" (fn t -> t.eq 42 (MyLib.double 21))
+test "multiple fields accessible" (fn t -> t.eq 3 (MyLib.x + MyLib.y))
 
-import ./imports_fixture
+import ./ImportsFixture
 
-test "bare import binds the file's name" (fn t -> t.eq 42 imports_fixture.answer)
-
-let Mylib = import ./imports_fixture
-
-test "capital name works" (fn t -> t.eq "hello" Mylib.greet)
+test "bare import binds the file's name" (fn t -> t.eq 42 ImportsFixture.answer)
 
 let L = import List
 let Strs = import String
@@ -25,14 +23,14 @@ let Strs = import String
 test "stdlib bound to custom name" (fn t -> t.eq 3 (L.length [1, 2, 3]))
 test "stdlib with different local name" (fn t -> t.eq "HELLO" (Strs.upper "hello"))
 
-let {foo = a, bar = b} = import ./imports_fixture
+let {foo = a, bar = b} = import ./ImportsFixture
 
 test "destructure two fields" (fn t -> t.eq 30 (a + b))
 
-let {double = dbl} = import ./imports_fixture
+let {double = dbl} = import ./ImportsFixture
 
 test "destructure function" (fn t -> t.eq 42 (dbl 21))
 
-let {answer, pi} = import ./imports_fixture
+let {answer, pi} = import ./ImportsFixture
 
 test "shorthand list destructure" (fn t -> t.eq 45 (answer + pi))

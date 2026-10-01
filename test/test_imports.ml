@@ -66,13 +66,13 @@ let test_bare_import_needs_a_name () =
     Alcotest.(check (result string string)) "a hyphen becomes _" (Ok "1")
       (run (Printf.sprintf "import %s\njson_parser.public" path)));
   with_named "2fast" {|let public = 1|} (fun path ->
-    err_says "not a name" "Write `let fast = import"
+    err_says "not a name" "Write `let Fast = import"
       (Printf.sprintf "import %s\n1" path))
 
 let test_two_imports_one_name () =
   err_says "stdlib then path" "`List` is already bound by `import List` (standard library) on line 1"
     "import List\nimport ./List\n1";
-  err_says "the fix" "Rename this one: `let my_list = import ./List`"
+  err_says "the fix" "Rename this one: `let MyList = import ./List`"
     "import List\nimport ./List\n1";
   err_says "destructured" "Rename this one: `{parse = my_parse}`"
     "let {parse} = import JSON\nlet {parse} = import TOML\n1";

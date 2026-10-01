@@ -784,6 +784,25 @@ and check_items ?source ~expression (prog : Ast.program) (item_locs : (Token.loc
               ~what:(import_display (Option.get (Module_types.import_kind_of body)))
               ~names)
      | _ -> ());
+    (* A module bound to a name in lower case. A leading `_` makes a module
+       private and is not part of the case. *)
+    (let lower n =
+       let rest = String.concat "" (String.split_on_char '_' n) in
+       rest <> "" && rest.[0] >= 'a' && rest.[0] <= 'z'
+     in
+     match item with
+     | Ast.TLImport k ->
+       let n = Module_types.namespace_name_of k in
+       if lower n then
+         add Lint_rules.V_MOD1 loc
+           (Lint_rules.mod1 ~name:n ~what:(import_display k) ~bare:true)
+     | Ast.TLLet (n, [], body) when Option.is_some (Module_types.import_kind_of body) ->
+       if lower n then
+         add Lint_rules.V_MOD1 loc
+           (Lint_rules.mod1 ~name:n
+              ~what:(import_display (Option.get (Module_types.import_kind_of body)))
+              ~bare:false)
+     | _ -> ());
     (* A name bound twice at the top level. *)
     (let rebinds =
        match item with

@@ -2156,31 +2156,31 @@ provide. It is what lets a parameter be a module.
 wand passes a module around as a value already:
 
 ```ocaml
-let m = import Int
-m.max 3 7            -- 7
+let Ints = import Int
+Ints.max 3 7         -- 7
 ```
 
 What was missing was a type to give a parameter that is one. An interface is
 that type.
 
 ```ocaml
--- ord.wand
+-- Ranking.wand
 interface Ranked 'a(top: 'a -> 'a -> 'a, bottom: 'a -> 'a -> 'a)
 
--- ints.wand
-import ./ord
+-- Ints.wand
+import ./Ranking
 
-implement ord.Ranked Int =
+implement Ranking.Ranked Int =
   let top a b = if a > b then a else b;
   let bottom a b = if a < b then a else b
 
 -- main.wand
-import ./ord
-import ./ints
+import ./Ranking
+import ./Ints
 
-let biggest (m: ord.Ranked Int) a b = m.top a b
+let biggest (m: Ranking.Ranked Int) a b = m.top a b
 
-biggest ints 3 7     -- 7
+biggest Ints 3 7     -- 7
 ```
 
 An interface is declared the way a type is — a name, its parameters, and a
@@ -2278,10 +2278,10 @@ Every interface has a derived member, `loader`, that names it:
 ```ocaml
 import Wand
 
-let shape = import ./shape     -- interface Shape(area: Int -> Int ! {Random})
+import ./Shapes                -- interface Shape(area: Int -> Int ! {Random})
 
-let m = Wand.load! shape.Shape.loader ./plugins/square.wand
-m.area 3                       -- m : shape.Shape
+let m = Wand.load! Shapes.Shape.loader ./plugins/square.wand
+m.area 3                       -- m : Shapes.Shape
 ```
 
 `Wand.load! : Loader 'a -> Path -> 'a ! {FS.Read, Raise}`. Nothing of the
@@ -3766,44 +3766,55 @@ name the import binds, on a line of its own:
 
 ```ocaml
 import List
-let conf = import ./config
+let Config = import ./config
 
-List.length conf.hosts
+List.length Config.hosts
 ```
 
 ### User modules
 
-An import by path binds the last segment of the path:
+A module is named in upper case, as the standard library's are, so
+`Utils.double` reads as `List.map` does. An import by path binds the last
+segment of the path. A file named in upper case is imported by its name;
+any other is bound to a name with `let`:
 
 ```ocaml
-import ./utils                           -- binds utils
-import ./lib/helpers.wand                -- binds helpers
-let h = import ./lib/helpers             -- binds h
+import ./Utils                           -- binds Utils
+import ./lib/Helpers.wand                -- binds Helpers
+let Config = import ./config             -- binds Config
 let {parse, encode} = import ./json      -- binds parse and encode
 ```
 
-The file extension is optional. `./utils` and `./utils.wand` mean the
-same, and `.wand` is not part of the name. A private module needs no `let`:
-`import ./_internal` binds `_internal`.
+`V-MOD1` reports an import that binds a module to a name in lower case, and
+gives both fixes: the `let` line, and the file's name in upper case.
 
-A `-` in the segment becomes `_`, so `import ./json-parser` binds
-`json_parser`, and `import github.com/wand-lang/pkg-fixture` binds
-`pkg_fixture`. When the segment is still not a name, as in `../` or
-`./2fast`, write the `let` form. The error gives the line to write:
+The file extension is optional. `./Utils` and `./Utils.wand` mean the
+same, and `.wand` is not part of the name. A private module's name starts
+with `_`: `import ./_Internal` binds `_Internal`.
+
+macOS and Windows ignore the case of a file's name, and Linux does not. On
+the first two, `import ./utils` finds `Utils.wand`, and on Linux it does
+not. Write the name as the file is named.
+
+A segment that is not a name is bound with `let`, as in `../` or
+`./2fast`. The error gives the line to write:
 
 ```ocaml
 import ./2fast
 -- error: `import ./2fast` has no name to bind, because `2fast`
---        is not a name. Write `let fast = import ./2fast`
+--        is not a name. Write `let Fast = import ./2fast`
 ```
+
+A `-` in the segment becomes `_`, so `import ./json-parser` binds
+`json_parser`: write `let JsonParser = import ./json-parser`.
 
 Access members via dot notation:
 
 ```ocaml
-import ./utils
+import ./Utils
 
-utils.my_function 42
-utils.greeting
+Utils.my_function 42
+Utils.greeting
 ```
 
 ### What an import runs
@@ -3889,8 +3900,8 @@ a file that imports one of these performs it too.
 Import specific names from a module by naming them in braces:
 
 ```ocaml
-let {foo = bar}            = import ./utils   -- bind utils.foo as bar
-let {foo = a, bar = b}     = import ./utils   -- and utils.bar as b
+let {foo = bar}            = import ./Utils   -- bind Utils.foo as bar
+let {foo = a, bar = b}     = import ./Utils   -- and Utils.bar as b
 ```
 
 The name on the left of the `=` belongs to the module. The name on the right
@@ -3900,7 +3911,7 @@ Or bind each name under its own name. A map pattern has the same
 shorthand:
 
 ```ocaml
-let {foo, bar} = import ./utils         -- bind foo and bar
+let {foo, bar} = import ./Utils         -- bind foo and bar
 ```
 
 Short entries and renamed entries mix freely. A map pattern behaves the same
@@ -3957,15 +3968,15 @@ L.length [1, 2, 3]    -- 3
 Names beginning with `_` are private — they cannot be accessed from outside the module:
 
 ```ocaml
--- utils.wand
+-- Utils.wand
 let _helper x = x * 2      -- private
 let double x = _helper x    -- public, calls private helper
 ```
 
 ```ocaml
-import ./utils
-utils.double 5       -- 10
-utils._helper 5      -- type error: _helper not found in module
+import ./Utils
+Utils.double 5       -- 10
+Utils._helper 5      -- type error: _helper not found in module
 ```
 
 ### One name, one import
@@ -3977,7 +3988,7 @@ message names the first, and gives the line that renames the second:
 import List
 import ./List
 -- error: `List` is already bound by `import List` (standard library) on line 1.
---        Rename this one: `let my_list = import ./List`
+--        Rename this one: `let MyList = import ./List`
 ```
 
 The same holds for an import and a top-level `let` of the same name, in
@@ -4035,8 +4046,8 @@ line and run `wand p tidy`.
 ### Importing a module by URL
 
 ```ocaml
-import github.com/mjstahl/json          -- json.wand at the module's root
-import github.com/mjstahl/json/decode   -- decode.wand in the module
+let Json = import github.com/mjstahl/json            -- json.wand at the module's root
+let Decode = import github.com/mjstahl/json/decode   -- decode.wand in the module
 ```
 
 The scheme is optional here and in `wand.pkg`: a URL without one is
@@ -4151,11 +4162,13 @@ in one package, give one of them a `name`, and import it by that name.
 ```
 
 ```ocaml
-import github.com/mjstahl/json   -- json, the 1.x entry
-import json2                             -- the 2.x entry
+let Json = import github.com/mjstahl/json   -- the 1.x entry
+let Json2 = import json2                    -- the 2.x entry
 ```
 
-A name is lowercase, so `import json2` is never a standard library module.
+A package's name is in lower case, so `import json2` is never a standard
+library module. Its module is named in upper case, with `let`, as a URL
+import's is.
 
 ### A local copy
 
@@ -7797,6 +7810,7 @@ punish the safer choice.
 | `V-DROP2` | a statement's value is a `TestOutcome` nothing reads, so the test cannot fail |
 | `V-DROP3` | a statement's value is a function nothing calls, so it does nothing |
 | `V-IMP2` | an import binds nothing the file mentions, so it does nothing — drop the line |
+| `V-MOD1` | an import binds a module to a name in lower case — a module is named in upper case, as the standard library's are: `let Utils = import ./utils`, or a file named `Utils.wand` |
 | `V-SHADOW1` | a top-level name is bound twice in one file, so which value the name means depends on the line it is read from — rename one of them |
 | `V-CLOCK1` | a length of time is measured by subtracting two readings of `Clock.now`, which a clock step spoils — wrap the work in `Clock.timed` |
 | `A-SHELL1` | a `$()` holds a shell pipeline of three or more operators |

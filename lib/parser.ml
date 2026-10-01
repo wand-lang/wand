@@ -47,6 +47,13 @@ let suggested_name text =
   let s = String.sub s i (String.length s - i) in
   if s = "" then "name" else s
 
+(* `suggested_name` as a module is named, in upper case: `json_parser`
+   gives `JsonParser`. A package alias stays in lower case. *)
+let suggested_module text =
+  String.concat ""
+    (List.map String.capitalize_ascii
+       (List.filter (( <> ) "") (String.split_on_char '_' (suggested_name text))))
+
 type binding_role = Value | Whole of Ast.import_kind | Picked of Ast.import_kind
 
 let import_text = function
@@ -74,7 +81,7 @@ let item_bindings loc item =
        fail_at loc (Printf.sprintf
          "`import %s` has no name to bind, because `%s` is not a name. \
           Write `let %s = import %s`"
-         p base (suggested_name base) p))
+         p base (suggested_module base) p))
   | Ast.TLLet (n, _, body) ->
     (match import_of body with
      | Some k ->
@@ -100,7 +107,7 @@ let check_bindings seen loc item =
          let fix = match role with
            | Whole k ->
              Printf.sprintf ": `let %s = import %s`"
-               ("my_" ^ String.lowercase_ascii n) (import_text k)
+               ("My" ^ String.capitalize_ascii n) (import_text k)
            | Picked _ -> Printf.sprintf ": `{%s = my_%s}`" n n
            | Value -> "."
          in
@@ -2833,14 +2840,14 @@ let parse_program_generic ~on_item tokens =
         | Token.Path path  ->
           items := !items @ [Ast.TLImport (Ast.UserPath path)];
           Printf.sprintf
-            "write 'let name = import %s' to bind it, then 'name.member'" path
+            "write 'let Name = import %s' to bind it, then 'Name.member'" path
         | Token.Ident name ->
           items := !items @ [Ast.TLImport (Ast.ModuleAlias name)];
           Printf.sprintf "it binds '%s', so '%s.member' reaches into it" name name
         | Token.URL url ->
           items := !items @ [Ast.TLImport (Ast.ModuleURL url)];
           Printf.sprintf
-            "write 'let name = import %s' to bind it, then 'name.member'" url
+            "write 'let Name = import %s' to bind it, then 'Name.member'" url
         | t -> fail (Format.asprintf
             "expected module name or path after import, got %a" Token.pp t)
       in

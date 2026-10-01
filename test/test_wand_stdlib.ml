@@ -29,7 +29,7 @@ let dir () =
 
 (* `find_test_files` is the same discovery `wand s` does, so the set gated
    here and the set a developer runs by hand cannot disagree. Helpers that
-   are not themselves tests (imports_fixture.wand) do not match `test_*` and
+   are not themselves tests (ImportsFixture.wand) do not match `test_*` and
    are correctly left out. *)
 let fixtures () =
   Runner.find_test_files (dir ())

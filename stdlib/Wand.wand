@@ -120,7 +120,7 @@ let check_file (path: Path) = try check_file! path
 --
 -- >> with FS.temp_dir "ex_" as d ->
 -- ..   (FS.write_file! (Path.join d ./room.wand) "let name = \"hall\"";
--- ..    (Wand.check_at! (Path.join d ./door.wand) "let room = import ./room\nroom.name").type)
+-- ..    (Wand.check_at! (Path.join d ./door.wand) "let Room = import ./room\nRoom.name").type)
 -- Some("String") : Option String
 let check_at! (path: Path) (src: String) = _checked (wand_check_at path src)
 

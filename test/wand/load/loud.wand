@@ -4,9 +4,9 @@ uses {IO, Random}
 
 import IO
 
-let shape = import ./shape
+let Shapes = import ./shape
 
 IO.println "loud.wand ran"
 
-implement shape.Shape =
+implement Shapes.Shape =
   let area n = n

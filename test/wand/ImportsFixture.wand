@@ -1,4 +1,4 @@
--- Fixture module for imports_test.wand/script_test.wand -- exercises
+-- Fixture module for test_imports.wand and test_script.wand -- exercises
 -- whole-module import, field access, function calls, and public/private
 -- symbol visibility.
 let answer = 42

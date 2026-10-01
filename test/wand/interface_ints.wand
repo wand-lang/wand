@@ -3,16 +3,16 @@
 -- of bindings, and each one lands where a top-level `let` would put it.
 import List
 
-let iface = import ./interface_fixture
+let Iface = import ./interface_fixture
 
-implement iface.Ranked Int =
+implement Iface.Ranked Int =
   let top a b = if a > b then a else b;
   let bottom a b = if a < b then a else b
 
-implement iface.Named =
+implement Iface.Named =
   let label () = "Int"
 
-implement iface.Mapper =
+implement Iface.Mapper =
   let each f xs = List.map f xs
 
 -- A binding outside every block, to say the blocks hold no monopoly on the

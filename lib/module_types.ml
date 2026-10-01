@@ -268,7 +268,7 @@ let namespace_name_of kind =
   | None ->
     let p = Parser.import_text kind in
     raise (ImportError (Printf.sprintf
-      "`import %s` has no name to bind; write `let name = import %s`" p p))
+      "`import %s` has no name to bind; write `let Name = import %s`" p p))
 
 let strip_located = Ast.strip_located
 

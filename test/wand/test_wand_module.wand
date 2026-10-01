@@ -47,8 +47,8 @@ test "check reads no file, so an import of one is a diagnostic" (fn t ->
 test "check_file checks a file with what it imports" (fn t ->
   with FS.temp_dir "wand_check_" as dir -> (
     FS.write_file! (Path.join dir ./lib.wand) "let double x = x * 2\n";
-    FS.write_file! (Path.join dir ./good.wand) "import ./lib\nlib.double 2\n";
-    FS.write_file! (Path.join dir ./bad.wand) "import ./lib\nlib.double \"a\"\n";
+    FS.write_file! (Path.join dir ./good.wand) "let Lib = import ./lib\nLib.double 2\n";
+    FS.write_file! (Path.join dir ./bad.wand) "let Lib = import ./lib\nLib.double \"a\"\n";
     let good = Wand.check_file! (Path.join dir ./good.wand);
     let bad = Wand.check_file! (Path.join dir ./bad.wand);
     t.eq (Some "Int", [], None, ["E-TYPE"]) (
@@ -89,7 +89,7 @@ test "effects: none when the source has an error" (fn t ->
 test "check_at reads imports from beside the path" (fn t ->
   with FS.temp_dir "wand_check_at_" as d -> (
     FS.write_file! (Path.join d ./room.wand) `let name = "hall"`;
-    let c = Wand.check_at! (Path.join d ./door.wand) "let room = import ./room\nroom.name";
+    let c = Wand.check_at! (Path.join d ./door.wand) "let Room = import ./room\nRoom.name";
     t.eq (Some "String", []) (c.type, c.diagnostics)
   ))
 -- The first file in a new directory is checked before the directory is
@@ -98,7 +98,7 @@ test "check_at follows .. out of a directory that does not exist yet" (fn t ->
   with FS.temp_dir "wand_check_at_" as d -> (
     FS.write_file! (Path.join d ./room.wand) `let name = "hall"`;
     let c =
-      Wand.check_at! (Path.join d ./new/door.wand) "let room = import ../room\nroom.name";
+      Wand.check_at! (Path.join d ./new/door.wand) "let Room = import ../room\nRoom.name";
     t.eq (Some "String", []) (c.type, c.diagnostics)
   ))
 test "check_at names the path in what it finds" (fn t ->

@@ -830,6 +830,25 @@ let test_shadow1_is_top_level_only () =
 
 (* `_` is the name for a value that is deliberately not read, so a file may
    have as many as it likes. *)
+(* A module is named in upper case, as the standard library's are, so a
+   program's modules read as List does. A leading `_` makes one private and
+   is not part of the case. *)
+let test_mod1 () =
+  fires "a module bound in lower case" "let lst = import List\nlst.length [1]" "V-MOD1";
+  silent "one bound in upper case" "let Lst = import List\nLst.length [1]";
+  silent "a standard module by its own name" "import List\nList.length [1]";
+  fires "a private one in lower case" "let _lst = import List\n_lst.length [1]" "V-MOD1";
+  silent "a private one in upper case" "let _Lst = import List\n_Lst.length [1]";
+  let msg =
+    match List.find_opt
+            (fun (f : Lint.finding) -> Lint_rules.code f.Lint.rule = "V-MOD1")
+            (findings "let my_list = import List\nmy_list.length [1]") with
+    | Some f -> f.Lint.text
+    | None -> Alcotest.fail "expected V-MOD1"
+  in
+  if not (Lint.contains msg "let MyList = import List") then
+    Alcotest.failf "expected the name in upper case in:\n%s" msg
+
 let test_shadow1_ignores_underscore () =
   not_fired "two discards" "let _ = 1\nlet _ = 2\n3" "V-SHADOW1"
 
@@ -854,6 +873,7 @@ let () =
       Alcotest.test_case "V-DROP2"  `Quick test_drop2;
       Alcotest.test_case "V-DROP3"  `Quick test_drop3;
       Alcotest.test_case "V-IMP2"   `Quick test_imp2;
+      Alcotest.test_case "V-MOD1"   `Quick test_mod1;
       Alcotest.test_case "V-CLOCK1" `Quick test_clock1;
       Alcotest.test_case "A-SHELL1" `Quick test_shell1;
       Alcotest.test_case "A-USES1"  `Quick test_uses1;

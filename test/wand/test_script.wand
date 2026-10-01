@@ -27,7 +27,7 @@ test "chained" (fn t -> t.eq 12 (quad 3))
 
 -- ── Imports ─────────────────────────────────────────────────────────────
 
-let Lib = import ./imports_fixture
+let Lib = import ./ImportsFixture
 
 test "import binding" (fn t -> t.eq 42 Lib.answer)
 test "import function" (fn t -> t.eq 42 (Lib.double 21))
