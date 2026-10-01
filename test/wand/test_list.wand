@@ -1,6 +1,6 @@
 uses {FS.Read, FS.Write}
 
-let {test} = import Test
+let {test, group} = import Test
 import FS
 import List
 import Map
@@ -213,3 +213,17 @@ test "tally of nothing is the empty map" (fn t -> t.eq Map.empty (List.tally [])
 test "tally agrees with Stream.tally" (fn t ->
   let xs = ["x", "y", "x", "z", "y"];
   t.eq (Map.to_list (List.tally xs)) (Stream.of_list xs |> Stream.tally |> Map.to_list))
+
+-- A count is often worked out, and one below 0 means none, as it does for
+-- Stream.take and Stream.drop: a negative count once took the whole list.
+group "take and drop with a count below 1" (fn () -> [
+  test "take 0 is empty" (fn t -> t.eq [] (List.take 0 [1, 2, 3])),
+  test "take below 0 is empty" (fn t -> t.eq [] (List.take (-2) [1, 2, 3])),
+  test "drop 0 keeps all" (fn t -> t.eq [1, 2, 3] (List.drop 0 [1, 2, 3])),
+  test "drop below 0 keeps all" (fn t -> t.eq [1, 2, 3] (List.drop (-2) [1, 2, 3])),
+  test "past the end" (fn t ->
+    t.eq ([1, 2, 3], []) (List.take 5 [1, 2, 3], List.drop 5 [1, 2, 3])),
+  test "the last n, with fewer than n" (fn t ->
+    let xs = [1, 2, 3];
+    t.eq [1, 2, 3] (List.drop (List.length xs - 20) xs))
+])

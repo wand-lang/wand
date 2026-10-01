@@ -8,10 +8,15 @@ external elapsed_ms : unit -> int = "wand_elapsed_ms"
 external poll_fds : Unix.file_descr array -> int array -> int -> bool array
   = "wand_poll"
 
+(* Set by one fiber to wake another that waits on it. A fiber waits on a
+   new signal each time, so one that has fired stays fired. *)
+type signal = { mutable fired : bool }
+
 type wait = {
   reads : Unix.file_descr list;
   writes : Unix.file_descr list;
   until : int option;  (* elapsed_ms *)
+  signals : signal list;
 }
 
 type _ Effect.t += Yield : unit Effect.t
@@ -92,9 +97,20 @@ let suspend w =
 
 let yield () = try Effect.perform Yield with Effect.Unhandled _ -> ()
 
-let wait_readable fd = suspend { reads = [fd]; writes = []; until = None }
-let wait_writable fd = suspend { reads = []; writes = [fd]; until = None }
-let sleep_until t = suspend { reads = []; writes = []; until = Some t }
+let wait_readable fd =
+  suspend { reads = [fd]; writes = []; until = None; signals = [] }
+let wait_writable fd =
+  suspend { reads = []; writes = [fd]; until = None; signals = [] }
+let sleep_until t =
+  suspend { reads = []; writes = []; until = Some t; signals = [] }
+
+let signal () = { fired = false }
+let fire s = s.fired <- true
+let fired w = List.exists (fun s -> s.fired) w.signals
+
+(* Wait until [s] fires. May return early; callers look again. *)
+let wait_signal s =
+  suspend { reads = []; writes = []; until = None; signals = [s] }
 
 (* Make every suspended fiber of the current scheduler runnable. Each one
    looks again at what it was waiting for. *)
@@ -111,7 +127,8 @@ let union ws =
     until = List.fold_left (fun acc w ->
       match acc, w.until with
       | None, u | u, None -> u
-      | Some a, Some b -> Some (min a b)) None ws }
+      | Some a, Some b -> Some (min a b)) None ws;
+    signals = List.concat_map (fun w -> w.signals) ws }
 
 (* An interrupt wakes every suspended fiber once. *)
 let take_interrupt s =
@@ -130,6 +147,9 @@ let take_interrupt s =
 let check_waiting s ~block =
   if not (take_interrupt s) then begin
     let all = union (List.map fst s.waiting) in
+    (* A signal fired since the last look is ready now: blocking would sit
+       out a slice for something that has already happened. *)
+    let block = block && not (fired all) in
     (* A scheduler inside a fiber waits by suspending that fiber. *)
     let ready =
       if not block then
@@ -142,7 +162,8 @@ let check_waiting s ~block =
     if not (take_interrupt s) then begin
       let now = elapsed_ms () in
       let still, woken =
-        List.partition (fun (w, _) -> not (due w now || touches w ready))
+        List.partition
+          (fun (w, _) -> not (due w now || touches w ready || fired w))
           s.waiting
       in
       s.waiting <- still;
@@ -236,7 +257,7 @@ let pause ms =
 let select reads writes timeout_ms =
   let until = if timeout_ms < 0 then None
               else Some (elapsed_ms () + timeout_ms) in
-  let w = { reads; writes; until } in
+  let w = { reads; writes; until; signals = [] } in
   let fds, evs = events_of w in
   let rec go () =
     let wait_ms =
@@ -272,7 +293,8 @@ let same_place (a : place) (b : place) =
 (* A place for a fiber to wait until another wakes it. *)
 type parking = wait
 
-let parking () : parking = { reads = []; writes = []; until = None }
+let parking () : parking =
+  { reads = []; writes = []; until = None; signals = [] }
 
 (* Wait at [p] until [unpark p]. May return early; callers look again. *)
 let park (p : parking) = suspend p

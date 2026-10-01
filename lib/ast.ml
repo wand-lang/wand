@@ -450,12 +450,15 @@ let rec is_written_value (e : expr) : bool =
   | MapLit kvs -> List.for_all (fun (_, v) -> is_written_value v) kvs
   | ConstrApp (_, kvs, _) -> List.for_all (fun (_, v) -> is_written_value v) kvs
   | ConstrBare (_, _) -> true
+  (* `A.P(x = 1)` and `A.Red`: a constructor reached through a module. *)
+  | Qualified (_, e) -> is_written_value e
   | App (f, a) -> is_constr_head f && is_written_value a
   | _ -> false
 
 and is_constr_head (e : expr) : bool =
   match e with
   | Constr _ -> true
+  | Qualified (_, e) -> is_constr_head e
   | Located (_, e) -> is_constr_head e
   | App (f, a) -> is_constr_head f && is_written_value a
   | _ -> false

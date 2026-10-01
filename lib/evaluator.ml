@@ -405,10 +405,13 @@ and proc = {
   mutable p_done : bool;
 }
 
+(* `s_waiting` holds a signal for each fiber in `Shared.wait` on this cell.
+   An update fires them all, and each fiber tests its value again. *)
 and shared_cell = {
   mutable s_value : value;
   mutable s_open : bool;
   mutable s_busy : bool;
+  mutable s_waiting : Sched.signal list;
 }
 
 (* `m_entries` maps a key to when it was first added and what it holds;
@@ -550,7 +553,8 @@ let vmap_of_list pairs =
 (* The key an index entry is filed under. Not a legal identifier, so no
    program can name it and no lookup can collide with it. *)
 (* A default is a value written out, so the only names it can hold are
-   constructors. This is those, as an environment to read one in: rebuilt
+   constructors, and the modules it reaches them through. This is the
+   constructors, as an environment to read one in: rebuilt
    when a declaration is registered rather than at each use, since a default
    is read every time a construction leaves its field out. *)
 let ctor_env_cache : (string * value) list option ref = ref None
@@ -571,6 +575,20 @@ let ctor_env () =
         (Ctor.name c, v) :: acc) constr_fields []
     in
     ctor_env_cache := Some e; e
+
+(* The scope of the file that declared a constructor, for its defaults: a
+   default may name a constructor through a module, as `A.P(x = 1)`, and
+   the module is a name in that file. *)
+let constr_default_env : (Ctor.t, (string * value) list) Hashtbl.t =
+  Hashtbl.create 16
+
+(* Where a default of [c] is read: the declaring file's scope, then every
+   constructor. A default is a value written out, so it reads the same at
+   every site that leaves its field out. *)
+let default_scope c =
+  match Hashtbl.find_opt constr_default_env c with
+  | Some e -> e @ ctor_env ()
+  | None -> ctor_env ()
 
 (* A regex literal is a constant, and `Re.compile` is a pure function of its
    pattern and flags -- but it ran on every evaluation of the expression,
@@ -2980,7 +2998,7 @@ and eval_constr_app env c fields allow =
                a value written out, so it reads in an empty environment and
                the same way at every site that omits the field. *)
             (match List.assoc_opt fn (defaults_of c) with
-             | Some d -> eval (ctor_env ()) d
+             | Some d -> eval (default_scope c) d
              | None -> raise (EvalError (Printf.sprintf
                  "constructor '%s' missing field '%s'" name fn))))
      ) field_names in
@@ -3245,6 +3263,11 @@ let random_below n =
   random_ready ();
   if n < 1 then 0 else Stdlib.Random.int n
 
+(* Wake every fiber waiting on [c], to test its value again. *)
+let wake_waiters c =
+  List.iter Sched.fire c.s_waiting;
+  c.s_waiting <- []
+
 let shared_open c =
   if not c.s_open then
     raise (EvalError
@@ -3279,8 +3302,36 @@ let () = Hashtbl.replace direct_impl "Shared!update" (function
         c.s_busy <- false)
     in
     c.s_value <- v;
+    wake_waiters c;
     old
   | _ -> raise (EvalError "Shared.update: expected a Shared and a function"))
+
+(* Answer the value once `pred` holds for it. A fiber waits for the next
+   update and tests again; it is a cancellation point, as a socket wait is.
+   Outside a fiber nothing else can make the update, so a test that fails
+   raises rather than waiting forever. *)
+let () = Hashtbl.replace direct_impl "Shared!wait" (function
+  | VTuple [VShared c; pred] ->
+    let rec go () =
+      shared_open c;
+      let v = c.s_value in
+      match apply pred v with
+      | VBool true -> v
+      | VBool false ->
+        if not (Sched.active ()) then
+          raise (EvalError
+            "Shared.wait: the test does not hold, and nothing else is running \
+             that could change the value, so it would wait forever. Wait inside \
+             Par, beside the work that updates it");
+        let s = Sched.signal () in
+        c.s_waiting <- s :: c.s_waiting;
+        Sched.wait_signal s;
+        check_interrupt ();
+        go ()
+      | _ -> raise (EvalError "Shared.wait: the test must answer a Bool")
+    in
+    go ()
+  | _ -> raise (EvalError "Shared.wait: expected a Shared and a function"))
 
 (* ── Serving ───────────────────────────────────────────────────────────── *)
 
@@ -4686,7 +4737,7 @@ and par_go_pool ~limit ~(cancels : bool ref array) ~(stopped : unit -> bool)
     let rec go () =
       if List.exists Pool.waiting tickets then begin
         Sched.suspend { Sched.reads = [pipe_r]; writes = [];
-                        until = Some (Sched.elapsed_ms () + 1) };
+                        until = Some (Sched.elapsed_ms () + 1); signals = [] };
         take_back spawn
       end else Sched.wait_readable pipe_r;
       (try while Unix.read pipe_r buf 0 64 > 0 do () done
@@ -5414,15 +5465,18 @@ let stdlib_eval_env : env = [
      answers is not in the program, so a caller has to be told, and a
      handler can answer it instead. *)
   ("shared_new", VBuiltin (fun v ->
-    VShared { s_value = v; s_open = true; s_busy = false }));
+    VShared { s_value = v; s_open = true; s_busy = false; s_waiting = [] }));
+  (* A fiber still waiting on it wakes, and finds it closed. *)
   ("shared_close", VBuiltin (function
-    | VShared c -> c.s_open <- false; VUnit
+    | VShared c -> c.s_open <- false; wake_waiters c; VUnit
     | _ -> raise (EvalError "Shared: expected a Shared")));
   ("shared_get", performing "Shared!get" (function
     | VShared c -> shared_open c; c.s_value
     | _ -> raise (EvalError "Shared.get: expected a Shared")));
   ("shared_update", VBuiltin (fun sh -> VBuiltin (fun f ->
     perform_wand ("Shared!update", VTuple [sh; f]))));
+  ("shared_wait", VBuiltin (fun sh -> VBuiltin (fun f ->
+    perform_wand ("Shared!wait", VTuple [sh; f]))));
   ("net_listen", VBuiltin (function
     | VPort p -> VStream { s_source = SListen p; s_stages = [] }
     | _ -> raise (EvalError "Net.listen: expected a Port")));
@@ -7579,7 +7633,7 @@ and derived_decoder ?(by_name = false) tname arg_decoders j path =
       | (fname, te) :: rest ->
         let name = match fname with Some n -> n | None -> "" in
         let key = if by_name then name else doc_key ctor name in
-        (match read_field venv ~defaults ~name key te j path with
+        (match read_field venv ~defaults ~scope:(default_scope ctor) ~name key te j path with
          | Ok v      -> go (v :: acc) rest
          | Error msg -> Error msg)
     in
@@ -7594,14 +7648,15 @@ and derived_decoder ?(by_name = false) tname arg_decoders j path =
    value. A document has null where the language has nothing, and
    `Decode.optional` already reads absent and null alike, so a default
    answers for both. *)
-and read_field venv ?(defaults = []) ?name key te j path =
+and read_field venv ?(defaults = []) ?scope ?name key te j path =
   let kvs = match j with `Assoc kvs -> kvs | _ -> [] in
   (* A default belongs to the field, so it is found by the field's name,
      which the key of a document need not be. *)
   let name = Option.value name ~default:key in
   let absent () =
     match List.assoc_opt name defaults with
-    | Some d -> Some (eval (ctor_env ()) d)
+    | Some d ->
+      Some (eval (match scope with Some s -> s | None -> ctor_env ()) d)
     | None -> None
   in
   match te with
@@ -8229,7 +8284,7 @@ let rec usage_value tname =
          | _ ->
            (match default with
             | Some d ->
-              Printf.sprintf "[--%s %s]" name (to_text (eval (ctor_env ()) d))
+              Printf.sprintf "[--%s %s]" name (to_text (eval (default_scope ctor) d))
             | None -> Printf.sprintf "--%s <%s>" name (usage_type_name te)))
     in
     VString (String.concat " " (List.filter (fun p -> p <> "")

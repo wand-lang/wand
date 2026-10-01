@@ -605,6 +605,11 @@ let operations : operation list =
         let a = fresh () in
         Some (TTuple [TShared a; TFun (a, a, Effect_set.pure)], a));
       op_performers = ["Shared.update"] };
+    { op_name = "Shared!wait"; op_effect = Shared;
+      op_types = (fun () ->
+        let a = fresh () in
+        Some (TTuple [TShared a; TFun (a, TBool, Effect_set.pure)], a));
+      op_performers = ["Shared.wait"] };
   ]
 
 let operation_index : (string, operation) Hashtbl.t = Hashtbl.create 64
@@ -704,6 +709,33 @@ let short_type_name n =
   | Some i -> String.sub n (i + 1) (String.length n - i - 1)
   | None -> n
 
+(* What a type name written in a file means. A type declared in a module is
+   keyed by the module as well as by its name, so two modules that each
+   declare `Status` declare two types. A file writes a short name -- its own,
+   one it selected from an import, or `Foo.Status` -- and this says which
+   canonical name that is.
+
+   Set around inference alongside `known_type_names`, and empty where there
+   is no file, in which case a name means itself. *)
+let type_name_map : (string * string) list ref = ref []
+
+(* A type as the file being checked writes it: `M.P` for a type of a module
+   it imports as `M`, found from the canonical name the type is held under.
+   The shortest spelling wins, so a type the file selected by name reads as
+   just that name. Without a spelling, the type's own short name. *)
+let type_display n =
+  if not (Module_types.is_canonical n) then n
+  else
+    let written =
+      List.filter_map (fun (k, c) ->
+        if c = n && not (Module_types.is_canonical k) then Some k else None)
+        !type_name_map
+    in
+    match List.sort (fun a b ->
+            compare (String.length a, a) (String.length b, b)) written with
+    | k :: _ -> k
+    | [] -> short_type_name n
+
 (* An interface as a message shows it: by a name this file wrote for it, such
    as `ord.Ranked`, found from the canonical name it is held under. Both
    names hold the one declaration. *)
@@ -796,7 +828,7 @@ let string_of_typ t =
     | TJson     -> "JSON"
     | TToml     -> "TOML"
     | TYaml     -> "YAML"
-    | TName n   -> short_type_name n
+    | TName n   -> type_display n
     (* A constrained variable is named like any other, and carries its
        constraint where it is first met: `'a: Ord -> 'a -> 'a` says the three
        are one type, which `Ord -> Ord -> Ord` could not, and says it about
@@ -1125,9 +1157,20 @@ let from_module t =
          (Package.describe_file (String.sub n 0 i)))
   | _ -> None
 
-(* Two types that print the same, told apart by the module each came from. *)
+(* Two types that print the same, told apart by the module each came from.
+   Two types of one name from two versions of a package are told apart by
+   the versions even when the file spells them differently: `json2.Value`
+   and `json.Value` say less than the two versions do. *)
 let disambiguate a b =
   let (sa, sb) = (string_of_typ a, string_of_typ b) in
+  let one_name =
+    match repr a, repr b with
+    | TName x, TName y -> x <> y && short_type_name x = short_type_name y
+    | _ -> false
+  in
+  match (if one_name then (from_module a, from_module b) else (None, None)) with
+  | Some da, Some db when da <> db -> (da, db)
+  | _ ->
   if sa <> sb then (sa, sb)
   else
     let (qa, qb) = (qualified_display a, qualified_display b) in
@@ -1695,15 +1738,6 @@ let builtin_type_arity = function
   | n when builtin_type_name n            -> Some 0
   | _                                     -> None
 
-(* What a type name written in a file means. A type declared in a module is
-   keyed by the module as well as by its name, so two modules that each
-   declare `Status` declare two types. A file writes a short name -- its own,
-   one it selected from an import, or `Foo.Status` -- and this says which
-   canonical name that is.
-
-   Set around inference alongside `known_type_names`, and empty where there
-   is no file, in which case a name means itself. *)
-let type_name_map : (string * string) list ref = ref []
 
 let canonical_type_name n =
   match List.assoc_opt n !type_name_map with
@@ -3932,8 +3966,20 @@ let rec infer tenv (env : env) (e : expr) : typ =
          no file can write. (#63) *)
       let counter = ref 0 in
       let env_args = ref env in
+      (* A lambda cannot be inferred first: its parameters take their types
+         from the field it is given for. It stands in as its declared type,
+         and its body is checked here, in the caller's scope, once the
+         construction has pinned that type. *)
+      let waiting = ref [] in
       let hold e =
-        let t = infer tenv env e in
+        let t =
+          match strip_located e with
+          | Fn (params, body) when params <> [] ->
+            let (t, check) = lambda_waiting tenv env params body in
+            waiting := check :: !waiting;
+            t
+          | _ -> infer tenv env e
+        in
         let n = Printf.sprintf "\000arg%d" !counter in
         incr counter;
         env_args := (n, Mono t) :: !env_args;
@@ -3953,7 +3999,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
         | other -> other
       in
       let inner' = held inner in
-      with_visible (List.map fst own) (fun () -> infer tenv' !env_args inner')
+      let t = with_visible (List.map fst own) (fun () -> infer tenv' !env_args inner') in
+      List.iter (fun check -> check ()) (List.rev !waiting);
+      t
     end
   | ConstrBare (name, ids) ->
     let name = expr_ctor_name tenv name in
@@ -4014,7 +4062,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
               let expected =
                 match field_type fname with Some t -> t | None -> type_of_te te
               in
-              unify (infer tenv env e) expected)
+              infer_against tenv env e expected)
        ) fields;
        (* The loop above checks that each field given is declared. The other
           direction was checked only when the value was built, so a
@@ -4104,7 +4152,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
            let expected =
              match field_type fname with Some t -> t | None -> type_of_te te
            in
-           unify (infer tenv env e) expected
+           infer_against tenv env e expected
        ) fields;
        perform_stored stored;
        result_t)
@@ -4292,13 +4340,13 @@ let rec infer tenv (env : env) (e : expr) : typ =
                 let names =
                   List.concat_map (fun c -> List.map fst (named c)) ctors in
                 raise (TypeError (Printf.sprintf "type '%s' has no field '%s'%s"
-                  tname label (Util.hint label names)))
+                  (type_display tname) label (Util.hint label names)))
               | _, (_ :: _) ->
                 raise (TypeError (Printf.sprintf
                   "field '%s' is not on every constructor of '%s': %s %s it, \
                    so which constructor a value holds decides whether '%s' \
                    is there. Match on the constructor instead"
-                  label tname
+                  label (type_display tname)
                   (String.concat ", " (List.map (fun c -> c.name) lacks))
                   (if List.length lacks = 1 then "does not have" else "do not have")
                   label))
@@ -4348,7 +4396,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
                       (string_of_typ t) c.name))) rest;
                 t0)
            | _ -> raise (TypeError (Printf.sprintf
-               "cannot access field '%s' on type '%s'" label tname)))
+               "cannot access field '%s' on type '%s'" label (type_display tname))))
         (* Dot access is checked field access: `p.x` on a named type is
            verified to exist. Key presence in a Map is a runtime question, so
            the same syntax cannot carry the same guarantee -- Map.get returns
@@ -4373,7 +4421,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
                       when List.exists (fun c ->
                              List.exists (fun (f, _) -> f = Some label)
                                c.fields) ctors ->
-                      Some (short_type_name tname)
+                      Some (type_display tname)
                     | _ -> None) tenv)
              in
              (* A name can carry its type where it stands. Anything else has
@@ -4756,6 +4804,52 @@ and check_app_shape tenv (env : env) f x =
    standing after them have pinned whatever they are going to pin. A lambda
    whose parameter is still open then is one nothing in the call determines,
    which is what it was before. *)
+(* A value given for a field: checked against the field's type. A lambda
+   takes its parameter types from the field before its body is read, as a
+   lambda given to a function does, so `run = fn p -> p.rest` reads
+   `p.rest` knowing what `p` is. *)
+and infer_against tenv (env : env) e expected =
+  match strip_located e with
+  | Fn (params, body) when params <> [] ->
+    let (t, check) = lambda_waiting tenv env params body in
+    unify t expected;
+    check ()
+  | _ -> unify (infer tenv env e) expected
+
+(* A lambda whose parameter types are to come from where it is given: its
+   type, built from what it declares, and the check of its body, to run once
+   that type has met the one it is given for. *)
+and lambda_waiting tenv (env : env) params body =
+  let param_ts = List.map (fun _ -> fresh ()) params in
+  let body_result_t = fresh () in
+  let arg_effects = Effect_set.unknown () in
+  let rec build = function
+    | []      -> body_result_t
+    | [t]     -> TFun (t, body_result_t, arg_effects)
+    | t :: tl -> TFun (t, build tl, Effect_set.unknown ())
+  in
+  let check () =
+    let env' =
+      List.fold_left2 (fun env p t -> infer_pat tenv p t env) env params param_ts in
+    incr lambda_depth;
+    let (body_t, body_effects) =
+      Fun.protect ~finally:(fun () -> decr lambda_depth)
+        (fun () -> scoped_eff (fun () -> infer tenv env' body)) in
+    let body_effects =
+      if List.exists (pat_is_refutable tenv) params
+      then Effect_set.add Effect_set.Raise body_effects
+      else body_effects
+    in
+    unify body_t body_result_t;
+    (try Effect_set.unify arg_effects body_effects
+     with
+     | Effect_set.Mismatch msg -> raise (TypeError msg)
+     | Effect_set.Conflict (a, b) ->
+       raise (TypeError (effects_conflict_message
+                           ~expected:"the field" ~got:"the function given" a b)))
+  in
+  (build param_ts, check)
+
 and infer_app_spine ?extra tenv (env : env) head args =
   (* Errors inside the spine are promoted to the application node that
      supplies the argument, which is where walking down would have left
@@ -5079,6 +5173,10 @@ let stdlib_type_env : env = [
    let a = fresh () in
    generalize []
      (TShared a @-> effs [Effect_set.Shared] (TFun (a, a, Effect_set.pure)) a));
+  ("shared_wait",
+   let a = fresh () in
+   generalize []
+     (TShared a @-> effs [Effect_set.Shared] (TFun (a, TBool, Effect_set.pure)) a));
   ("option_get_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TUnit) (a)));
   ("fail_exn", let a = fresh () in generalize [] (effs [Effect_set.Raise] (TString) (a)));
   (* A file is named by a Path, like every other filesystem operation. These

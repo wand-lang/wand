@@ -443,8 +443,59 @@ let back = match JSON.decode apps.Container.decoder (JSON.parse! out) with
 
 (* ── Suite ───────────────────────────────────────────────────────────────── *)
 
+(* ── A message names an imported type as the file writes it ───────────── *)
+
+let test_message_names_imported_type () =
+  with_named "Shapes" {|type P(rest: String)
+type V(run: P -> String)|} (fun path ->
+    err_says "the hint to annotate a parameter" "write '(p: S.P)'"
+      (Printf.sprintf "let S = import %s\nlet f = fn p -> p.rest\nf" path);
+    err_says "a mismatch" "expected Int, got S.P"
+      (Printf.sprintf "let S = import %s\nlet (x: S.P) = 1\nx" path))
+
+(* A field default may be a constructor reached through a module: it is a
+   value written out as much as one in the same file is. *)
+let test_default_through_a_module () =
+  with_named "Points" {|type P(x: Int = 1)
+type Color = Red | Green|} (fun path ->
+    Alcotest.(check (result string string))
+      "built and left out"
+      (Ok "Q(P(7), Green)")
+      (run (Printf.sprintf
+        "let Pt = import %s\ntype Q(p: Pt.P = Pt.P(x = 7), c: Pt.Color = Pt.Green)\nQ()" path));
+    Alcotest.(check (result string string))
+      "read by a decoder"
+      (Ok "Ok(Q(P(7)))")
+      (run (Printf.sprintf
+        "let Pt = import %s\nimport JSON\ntype Q(p: Pt.P = Pt.P(x = 7))\nJSON.decode Q.decoder (JSON.parse! \"{}\")" path)))
+
+(* A lambda given for a field takes its parameter types from the field, so
+   it can read the parameter's fields with no annotation. *)
+let test_field_lambda_knows_its_parameter () =
+  with_named "Shapes" {|type P(rest: String)
+type V(run: P -> String)|} (fun path ->
+    Alcotest.(check (result string string))
+      "through a module"
+      (Ok "a!")
+      (run (Printf.sprintf
+        "let S = import %s\nlet v = S.V(run = fn p -> p.rest ++ \"!\")\nv.run S.P(rest = \"a\")" path));
+    Alcotest.(check (result string string))
+      "in the same file"
+      (Ok "1")
+      (run "type P(n: Int)\ntype V(run: P -> Int)\nlet v = V(run = fn p -> p.n)\nv.run P(n = 1)");
+    err_says "a field the parameter lacks" "type 'S.P' has no field 'nope'"
+      (Printf.sprintf "let S = import %s\nlet v = S.V(run = fn p -> p.nope)\nv" path))
+
 let () =
   Alcotest.run "Imports" [
+    "messages", [
+      Alcotest.test_case "an imported type is named with its module" `Quick
+        test_message_names_imported_type;
+      Alcotest.test_case "a lambda for a field knows its parameter" `Quick
+        test_field_lambda_knows_its_parameter;
+      Alcotest.test_case "a default through a module" `Quick
+        test_default_through_a_module;
+    ];
     "private", [
       Alcotest.test_case "private symbols" `Quick test_private_symbols;
     ];

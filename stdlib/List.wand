@@ -124,21 +124,31 @@ let zip [] _ = []
 let zip _ [] = []
 let zip [a :: t] [b :: u] = (a, b) :: zip t u
 
--- Take the first n elements.
+-- Take the first n elements. A count of 0 or less takes none, as
+-- `Stream.take` does.
 --
 -- >> List.take 2 [1, 2, 3]
 -- [1, 2] : List Int
-let take 0 _ = []
-let take _ [] = []
-let take n [h :: t] = h :: take (n - 1) t
+--
+-- >> List.take (-1) [1, 2, 3]
+-- [] : List Int
+let take n xs =
+  match xs with
+  | [h :: t] when n > 0 -> h :: take (n - 1) t
+  | _ -> []
 
--- Drop the first n elements.
+-- Drop the first n elements. A count of 0 or less drops none, as
+-- `Stream.drop` does.
 --
 -- >> List.drop 2 [1, 2, 3]
 -- [3] : List Int
-let drop 0 xs = xs
-let drop _ [] = []
-let drop n [_ :: t] = drop (n - 1) t
+--
+-- >> List.drop (-1) [1, 2, 3]
+-- [1, 2, 3] : List Int
+let drop n xs =
+  match xs with
+  | [_ :: t] when n > 0 -> drop (n - 1) t
+  | _ -> xs
 
 -- Take elements while the predicate holds, stopping at the first miss.
 --

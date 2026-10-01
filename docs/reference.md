@@ -2087,7 +2087,7 @@ there is nothing extra to remember.
 | `Proc` | `exit` |
 | `Clock` | `sleep`, `now`, `timed` |
 | `Random` | `int`, `float`, `seed` |
-| `Shared` | `get`, `update` |
+| `Shared` | `get`, `update`, `wait` |
 
 The family is usually the effect's own name, and `Hash` is the exception:
 `Hash.file` reads a file, so it carries `FS.Read` and is intercepted as
@@ -3283,7 +3283,8 @@ error as before. Where every field has a default, `Conf()` builds a value
 from them.
 
 A default is a value written out. Write a literal, or a constructor applied
-to literals. wand reads a default with nothing in scope. A default therefore
+to literals, which may be reached through a module, as `Geo.Point(x = 0)`.
+wand reads a default with nothing else in scope. A default therefore
 holds the same value at every construction that omits the field. It performs
 no effect, so a construction declares none. It also prints back as written.
 `port : Port = pick ()` is a type error that says this.
@@ -3666,6 +3667,14 @@ until the rest of them have been read. So `pods` has already said what `p`
 is by the time `p.status.restarts` is looked up, whether it stands after
 the lambda or arrives from a pipe. A parameter that nothing in the call
 pins is still refused, and still takes an annotation.
+
+A lambda given for a field is the same: the field says what the parameter
+is, so a record of functions needs no annotation inside it.
+
+```ocaml
+let Core = import ./core
+let greet = Core.Verb(names = ["greet"], run = fn ctx p -> Core.tell ctx p.rest)
+```
 
 The annotation works in each place a pattern does: a `let`, a `fn`, an arm
 of a `match`, a `with ... as`, and inside a constructor's payload — which
@@ -6440,6 +6449,7 @@ the computing in its own `Par` call, before or after the effects.
 make   : 'a -> Resource {..} (Shared 'a)
 get    : Shared 'a -> 'a ! {Shared}
 update : Shared 'a -> ('a -> 'a) -> 'a ! {Shared}
+wait   : Shared 'a -> ('a -> Bool) -> 'a ! {Shared}
 ```
 
 State that changes. A `Shared` holds one value, and the only way to change
@@ -6503,6 +6513,28 @@ handle Shared.get counts with
 
 All updates to one `Shared` wait for each other, even when they touch
 different parts of it. Where that is too slow, use several `Shared` values.
+
+**`wait` blocks until the value passes a test**, and answers it. A fiber
+that waits for work wakes the moment another fiber's update gives it
+some, with no polling:
+
+```ocaml
+let rec writer outbox conn =
+  let _ = Shared.wait outbox (fn lines -> lines != []);
+  List.each (fn l -> Net.write! conn l) (Shared.update outbox (fn _ -> []));
+  writer outbox conn
+```
+
+It answers at once when the test holds now. Otherwise every update of the
+`Shared` tests the value again, in each fiber that waits on it, wherever
+that fiber is: inside another `Par` as well. The test is pure. The wait is
+a cancellation point, so `Par.timeout` and a stopped `Par` end it. It is the
+operation `Shared!wait`, so a handler can answer it.
+
+Something else has to make the update, so a wait belongs inside `Par`,
+beside the work that changes the value. Outside `Par`, a test that does not
+hold raises: nothing could ever make it hold, and a wait that cannot end is
+a hang.
 
 ### `Shell`
 

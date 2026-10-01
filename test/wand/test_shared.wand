@@ -83,3 +83,54 @@ group "update answers the old value" (fn () -> [
           Result.to_option
           (Par.map 16 (fn _ -> Shared.update next (fn c -> c + 1)) (List.range 1 50)))))
 ])
+
+-- A wait for a fiber that answers as soon as another fiber's update makes
+-- its test hold, and never polls.
+group "wait" (fn () -> [
+  test "answers at once when the test holds" (fn t ->
+    t.eq 3 (with Shared.make 3 as n -> Shared.wait n (fn x -> x > 2))),
+  test "answers the value from the update that made it hold" (fn t ->
+    t.eq
+      [Ok 3, Ok 0]
+      (with Shared.make 0 as n ->
+      Par.map 2 (fn role -> if role == "wait" then Shared.wait n (fn x -> x >= 3)
+        else (
+          List.each
+            (fn _ -> (Clock.sleep 1ms; Shared.update n (fn x -> x + 1)))
+            (List.range 1 3);
+          0
+        )
+      ) ["wait", "update"])),
+  -- The waiter is a fiber of a Par inside a Par item, and the update comes
+  -- from the outer one: the wake has to reach a scheduler that is itself
+  -- waiting.
+  test "a waiter in a Par inside a Par wakes" (fn t ->
+    t.eq
+      [Ok [Ok "go"], Ok []]
+      (with Shared.make "" as word ->
+      Par.map 2 (fn role -> if role == "wait" then Par.map 1 (fn _ -> Shared.wait word (fn w -> w != "")) [0]
+        else (Clock.sleep 5ms; Shared.update word (fn _ -> "go"); [])
+      ) ["wait", "update"])),
+  test "every waiter wakes" (fn t ->
+    t.eq
+      [Ok true, Ok true, Ok true, Ok false]
+      (with Shared.make false as open ->
+      Par.map
+        4
+        (fn i -> if i < 3 then Shared.wait open (fn o -> o)
+          else (Clock.sleep 5ms; Shared.update open (fn _ -> true)))
+        (List.range 0 3))),
+  test "is a cancellation point" (fn t ->
+    t.ok
+      (Result.error?
+        (with Shared.make 0 as n -> Par.timeout 20ms (fn () -> Shared.wait n (fn x -> x > 0))))),
+  test "outside Par, a test that does not hold raises rather than hanging" (fn t ->
+    t.raises (fn () -> with Shared.make 0 as n -> Shared.wait n (fn x -> x > 0))),
+  test "a handler answers a wait" (fn t ->
+    t.eq
+      9
+      (with Shared.make 0 as n ->
+      handle Shared.wait n (fn x -> x > 5) with
+      | Shared!wait _ k -> k 9
+      ))
+])

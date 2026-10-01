@@ -51,3 +51,20 @@ let get s = shared_get s
 -- >> with Shared.make 1 as n -> (Shared.update n (fn x -> x + 1), Shared.get n)
 -- (1, 2) : (Int, Int)
 let update s f = shared_update s f
+
+-- Wait until `pred` holds for the value, and answer it.
+--
+-- It answers at once when `pred` holds now. Otherwise it waits: every
+-- update of this `Shared` tests the value again, so a fiber that waits
+-- for work wakes the moment another fiber gives it some, with no polling.
+-- `pred` is pure. The wait is a cancellation point, as a socket read is.
+--
+-- Something else has to make the update, so a wait belongs inside `Par`,
+-- beside the work that changes the value. Outside it, a test that does not
+-- hold raises rather than waiting forever.
+--
+-- >> with Shared.make [] as inbox ->
+-- ..   Par.map 2 (fn role -> if role == "wait" then Shared.wait inbox (fn xs -> xs != [])
+-- ..     else (Shared.update inbox (fn _ -> ["hello"]); [])) ["wait", "send"]
+-- [Ok(["hello"]), Ok([])] : List (Result String (List String))
+let wait s pred = shared_wait s pred
