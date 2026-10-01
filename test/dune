@@ -222,3 +222,7 @@
 (test
  (name test_package)
  (libraries wand alcotest unix))
+
+(test
+ (name test_first_operation)
+ (libraries wand alcotest unix))

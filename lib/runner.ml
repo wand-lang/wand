@@ -569,7 +569,13 @@ let shell_result stdout stderr code =
 
 (* ── Rehearsal and tracing ────────────────────────────────────────────────── *)
 
-type mode = Normal | Trace | DryRun
+(* `FirstOperation` runs a program until the first operation it does not
+   handle itself, and carries that out no further: what the fuzzer uses to
+   ask whether a program does anything its type does not say. *)
+type mode = Normal | Trace | DryRun | FirstOperation
+
+(* The operation a `FirstOperation` run stopped at. *)
+exception Reached_operation of string
 
 (* The mode a program is running under. Workers spawned by Par install the
    same handlers on their own domain: an effect performed on one domain does
@@ -3206,6 +3212,21 @@ let run_in_mode mode (thunk : unit -> value) : value =
   rehearsal := (if mode = DryRun then Some (new_overlay ()) else None);
   match mode with
   | Normal -> run_with_default_handler thunk
+  | FirstOperation ->
+    (* An observer too, so Par sends a worker's operations back here rather
+       than carrying them out on its own domain. *)
+    Evaluator.observed (fun () ->
+    run_with_default_handler (fun () ->
+      Effect.Deep.match_with thunk ()
+        { Effect.Deep.
+            retc = (fun v -> v);
+            exnc = raise;
+            effc = fun (type a) (eff : a Effect.t) ->
+              match eff with
+              | WandEffect (name, _) ->
+                Some (fun (_ : (a, value) Effect.Deep.continuation) ->
+                  raise (Reached_operation name))
+              | _ -> None }))
   | Trace | DryRun ->
     (* A rehearsal or trace is an observer, so Par sends its workers' effects
        back here to be reported rather than letting them run on their own. *)
@@ -3385,6 +3406,21 @@ let run_string src =
   | (Lexer.LexError _ | Parser.ParseError _ | Module_types.ImportError _
     | Module_types.ImportErrorAt _ | Failure _) as e ->
     Error (legacy_of_exn e)
+
+(* The first operation `src` reaches that it does not handle itself, with
+   nothing carried out: `Some` its name, `None` when the program ends
+   without one, or `Error` when it does not run. *)
+let first_operation src : (string option, string) result =
+  match
+    let tokens = Lexer.tokenize src in
+    let prog = Parser.parse_program tokens in
+    run_program ~mode:FirstOperation ~base_dir:(Sys.getcwd ()) prog
+  with
+  | Ok _ -> Ok None
+  | Error m -> Error m
+  | exception Reached_operation name -> Ok (Some name)
+  | exception EvalError m -> Error m
+  | exception e -> Error (Printexc.to_string e)
 
 (* ── Stopping ─────────────────────────────────────────────────────────────── *)
 

@@ -99,7 +99,15 @@ jobs:
           digits "$SHARD" shard
           SEED=$(( BASE + SHARD ))
           echo "seed=$SEED" >> "$GITHUB_OUTPUT"
+          # Half the shards run what they check, too: a formatting that
+          # changes what a program does, and a program that reaches an
+          # effect its type does not name -- the property the effect gate
+          # rests on. Running is slower, so the other half keep to the
+          # faster checks and cover more inputs.
+          EVAL=()
+          if [ "$SHARD" -ge 2 ]; then EVAL=(--eval); fi
           _build/default/test/fuzz/fuzz.exe \
+            "${EVAL[@]}" \
             --seed "$SEED" \
             --iterations 100000000 \
             --seconds $(( MINUTES * 60 )) \

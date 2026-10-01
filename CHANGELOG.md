@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `fuzz --eval` checks that a program performs only the effects its type names, and the scheduled fuzz job runs it (#73).
+
 ## [0.98.0] - 2026-09-30
 
 ### Added

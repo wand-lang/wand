@@ -34,6 +34,9 @@ type verdict =
   | FmtRetyped   of string       (* it means something else afterwards *)
   | FmtRevalued  of string       (* it *runs* to something else afterwards *)
   | FmtCrash     of string * string
+  (* ── The effect gate ──────────────────────────────────────────────────── *)
+  | Unstated     of string * string  (* it reached this operation, whose
+                                        effect its type does not name *)
   (* A verdict reached in another process, carried back whole. The child has
      already computed the signature and the description, so nothing here has
      to reconstruct a verdict from its own output -- which was a parser for
@@ -48,6 +51,7 @@ let is_finding = function
   | Internal _ | Crash _ | Overflow | Timeout | Died _ -> true
   | FmtUnparses _ | FmtUnstable | FmtLostComment | FmtRetyped _ | FmtRevalued _
   | FmtCrash _ -> true
+  | Unstated _ -> true
   (* A child reports whatever it reached, pass or finding. An empty
      signature is how it says "nothing wrong", so that is what decides. *)
   | Reported r -> r.sg <> ""
@@ -136,6 +140,9 @@ let signature = function
      keying on that would file one issue per arithmetic result. *)
   | FmtRevalued _ -> Some "format:revalued"
   | FmtCrash (sg, _) -> Some ("format:crash:" ^ sg)
+  (* Keyed on the effect and not the operation: one gap in the checker lets
+     every operation of that effect through. *)
+  | Unstated (_, eff) -> Some ("effect:unstated:" ^ eff)
   | Reported r -> if r.sg = "" then None else Some r.sg
   | Internal msg -> Some ("internal:" ^ normalise msg)
   | Crash (sg, _) -> Some ("crash:" ^ sg)
@@ -153,6 +160,9 @@ let describe = function
   | FmtRetyped what -> "wand f changed what the file means: " ^ what
   | FmtRevalued what -> "wand f changed what the file does: " ^ what
   | FmtCrash (sg, _) -> "wand f raised: " ^ sg
+  | Unstated (op, eff) ->
+    Printf.sprintf "it reaches %s, which performs %s, and its type does not say so"
+      op eff
   | Reported r -> r.desc
   | Internal msg -> "E-FAIL: " ^ normalise msg
   | Crash (sg, _) -> "escaped: " ^ sg
@@ -408,6 +418,82 @@ let outcomes_in_child ~path src once =
       | [a; b] when a <> "<not run>" && b <> "<not run>" -> Some (a, b)
       | _ -> None
 
+(* ── The effect gate ────────────────────────────────────────────────────── *)
+
+(* What a program performs is among the effects its type says it performs:
+   the property the effect gate rests on. A mudlib file the gate admits
+   with `Random` must not reach the disk, and if the checker ever let an
+   operation through that it did not count, the gate would admit it.
+
+   Any program that typechecks can be asked this, effects or not, because
+   nothing it does is carried out: it runs until the first operation it does
+   not handle itself, and stops there (`Runner.first_operation`). So a
+   mutant that would delete files only names the deletion. In a process of
+   its own, with the same budget as a run, for the same reasons.
+
+   The answer is the operation and its effect when the type leaves that
+   effect out, and nothing otherwise -- including when the program ends
+   without an operation, does not run, or runs out of its budget. *)
+let unstated_in_child ~path src =
+  flush stdout;
+  flush stderr;
+  let (r, w) = Unix.pipe ~cloexec:false () in
+  match Unix.fork () with
+  | 0 ->
+    Unix.close r;
+    bound_memory ();
+    let answer =
+      try
+        match Runner.typecheck_source ~path src with
+        | Ok sc ->
+          (match Runner.first_operation src with
+           | Ok (Some op) ->
+             (match Typechecker.effect_of_operation op with
+              | Some eff ->
+                let name = Effect_set.name_of eff in
+                if List.mem_assoc name sc.Runner.sc_effects then ""
+                else op ^ "\x1e" ^ name
+              | None -> "")
+           | _ -> "")
+        | Error _ -> ""
+      with _ -> ""
+    in
+    let b = Bytes.of_string answer in
+    (try ignore (Unix.write w b 0 (Bytes.length b)) with _ -> ());
+    Unix.close w;
+    Stdlib.exit 0
+  | child ->
+    Unix.close w;
+    let until = Unix.gettimeofday () +. eval_budget in
+    let buf = Buffer.create 256 in
+    let chunk = Bytes.create 256 in
+    let killed = ref false in
+    let rec drain () =
+      let left = until -. Unix.gettimeofday () in
+      if left <= 0. then begin
+        killed := true;
+        (try Unix.kill child Sys.sigkill with _ -> ())
+      end else
+        match Unix.select [r] [] [] left with
+        | ([], _, _) ->
+          killed := true;
+          (try Unix.kill child Sys.sigkill with _ -> ())
+        | _ ->
+          (match Unix.read r chunk 0 256 with
+           | 0 -> ()
+           | n -> Buffer.add_subbytes buf chunk 0 n; drain ()
+           | exception Unix.Unix_error (Unix.EINTR, _, _) -> drain ())
+        | exception Unix.Unix_error (Unix.EINTR, _, _) -> drain ()
+    in
+    drain ();
+    Unix.close r;
+    ignore (try Unix.waitpid [] child with _ -> (0, Unix.WEXITED 0));
+    if !killed then None
+    else
+      match String.split_on_char '\x1e' (Buffer.contents buf) with
+      | [op; eff] -> Some (op, eff)
+      | _ -> None
+
 let check_format ?(timeout = 10.0) ?(eval = false) ~width ~path ~before src =
   (* Source that does not parse is the other oracle's business. *)
   if not (parses src) then Skipped
@@ -502,6 +588,14 @@ let check_all ?(timeout = 10.0) ?(eval = false) ~width ~path src =
   let v = check ~timeout ~path src in
   if is_finding v then v
   else
+    let unstated =
+      match v with
+      | Typed _ when eval -> unstated_in_child ~path src
+      | _ -> None
+    in
+    match unstated with
+    | Some (op, eff) -> Unstated (op, eff)
+    | None ->
     match check_format ~timeout ~eval ~width ~path ~before:v src with
     (* The formatter had nothing to say, so the input is still whatever the
        typecheck made of it. Returning `Skipped` here threw that away and

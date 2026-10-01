@@ -41,6 +41,10 @@ fuzz: build
 # here asks about. Only programs the typechecker says reach nothing outside
 # themselves are run, each in a process of its own with a budget of its own.
 #
+# It also runs every program that typechecks up to its first effect, which is
+# stopped and not carried out, and reports one its type does not name: the
+# property the effect gate rests on.
+#
 # Slower than `fuzz` by a little over half, so it covers less ground in the
 # same time. Which of the two is worth more depends on what changed.
 fuzz-eval: build
