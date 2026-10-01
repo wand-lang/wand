@@ -4,7 +4,7 @@
 
 ### Added
 
-- `fuzz --eval` checks that a program performs only the effects its type names, and the scheduled fuzz job runs it (#73).
+- `fuzz --eval` runs each program it generates, and checks that it performs only the effects its type names; the scheduled fuzz job runs it (#73).
 - `Shared.wait`: wait until a `Shared`'s value passes a test, woken by the update that makes it pass (#77).
 - A lambda given for a field takes its parameter types from the field (#76).
 
