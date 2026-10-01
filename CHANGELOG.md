@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `wand p upgrade <url>@<version>` moves a 0.x requirement to another minor in place, and a bare `wand p upgrade` says when a newer minor is released (#81).
+
+### Fixed
+
+- `wand p upgrade` finds a required package by the URL as `wand.pkg` writes it, with no scheme (#80).
+
 ## [0.99.0] - 2026-09-30
 
 ### Added

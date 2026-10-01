@@ -72,6 +72,11 @@ let main! () =
       "p add %{fixture}/words"
       "is already required at 0.1.0";
     expect app "upgrade within the major" "p upgrade" "0.1.0 -> 0.1.1";
+    expect
+      app
+      "upgrade by the URL as wand.pkg writes it, and the next minor named"
+      "p upgrade %{fixture}"
+      "upgrade stays at 0.1";
     expect app "the upgraded version" "main.wand" "0.1.1 HELLO X";
     expect
       app

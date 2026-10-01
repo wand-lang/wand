@@ -4158,7 +4158,16 @@ print the same, the error names the module and version of each:
 expected a `Value` from https://github.com/mjstahl/json 2.1.0, got a `Value` from https://github.com/mjstahl/json 1.4.0
 ```
 
-`wand p upgrade` does not move a dependency to a new major. To use two majors
+`wand p upgrade` does not move a dependency to a new major. Before 1.0 there
+is one exception: asked for a version, it moves the entry to that minor in
+place, with the same imports. A bare `wand p upgrade` stays in the minor, and
+says when a newer one is released:
+
+```
+github.com/mjstahl/json 0.3.0 is released. Before 1.0 a new minor can break code, so upgrade stays at 0.2. To move to it, run `wand p upgrade github.com/mjstahl/json@0.3.0`
+```
+
+To use two majors
 in one package, give one of them a `name`, and import it by that name.
 `wand p add github.com/mjstahl/json@2.1.0 --name json2` writes the entry:
 

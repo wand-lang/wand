@@ -722,6 +722,35 @@ let test_add () =
         (run_in app "main.wand"
            "import x.dev/me/json\nimport json2\n\"%{json.version} %{json2.version}\""))
 
+(* `upgrade` takes the URL as wand.pkg writes it, and moves a 0.x entry to
+   another minor only when it is asked for that version. *)
+let test_upgrade_a_zero_minor () =
+  with_repos [
+    ("json", [("0.1.0", json_at "0.1.0"); ("0.1.1", json_at "0.1.1"); ("0.2.0", json_at "0.2.0")]) ]
+    (fun ~app ->
+      Package_cmd.init ~dir:app (Some "x.dev/me/app");
+      write (Filename.concat app "main.wand") "import x.dev/me/json\njson.version";
+      Package_cmd.add ~dir:app "x.dev/me/json@0.1.0" ~name:None;
+      let refused label needle f =
+        match f () with
+        | exception Package_cmd.Failed msg ->
+          if not (contains msg needle) then Alcotest.failf "%s: expected %S in %s" label needle msg
+        | () -> Alcotest.failf "%s: expected a refusal" label
+      in
+      Package_cmd.upgrade ~dir:app (Some "x.dev/me/json");
+      Alcotest.(check (result string string)) "a bare upgrade stays in the minor" (Ok "0.1.1")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      refused "add names the upgrade too" "run `wand p upgrade x.dev/me/json@0.2.0`"
+        (fun () -> Package_cmd.add ~dir:app "x.dev/me/json@0.2.0" ~name:None);
+      Package_cmd.upgrade ~dir:app (Some "x.dev/me/json@0.2.0");
+      Alcotest.(check (result string string)) "asked for, it moves in place" (Ok "0.2.0")
+        (Runner.run_file (Filename.concat app "main.wand"));
+      Alcotest.(check bool) "one entry" true
+        (contains (Package.read_sections app).record
+           "[ { path = x.dev/me/json, version = 0.2.0 }\n    ]");
+      refused "a package that is not required" "x.dev/me/text is not in the `require` list"
+        (fun () -> Package_cmd.upgrade ~dir:app (Some "x.dev/me/text")))
+
 let test_init_from_origin () =
   List.iter (fun (remote, want) ->
     Alcotest.(check (option string)) remote want (Package_cmd.url_of_remote remote))
@@ -788,6 +817,8 @@ let () =
         (fun () -> if git_present then test_add () else Alcotest.skip ());
       Alcotest.test_case "init, tidy, upgrade" `Quick
         (fun () -> if git_present then test_init_tidy_upgrade () else Alcotest.skip ());
+      Alcotest.test_case "upgrade a 0.x minor" `Quick
+        (fun () -> if git_present then test_upgrade_a_zero_minor () else Alcotest.skip ());
       Alcotest.test_case "add, tidy and upgrade pass over what this wand cannot use" `Quick
         (fun () -> if git_present then test_upgrade_skips_what_this_wand_cannot_use ()
           else Alcotest.skip ());

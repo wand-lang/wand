@@ -328,33 +328,65 @@ let tidy ~dir = repairing @@ fun () ->
   rewrite pkg kept;
   report !say
 
+(* Before 1.0 each minor is a major to the build, so two minors can be
+   required side by side. `upgrade` moves an entry across them only when it
+   is asked for the version, since a new minor there can break code; a bare
+   upgrade stays in the minor and says that a newer one is out. *)
 let upgrade ~dir target =
   let pkg = package_here dir in
   let (only, pinned) = match target with
     | None -> (None, None)
     | Some t ->
-      (match String.index_opt t '@' with
-       | Some i -> (Some (String.sub t 0 i), Some (String.sub t (i + 1) (String.length t - i - 1)))
-       | None -> (Some t, None))
+      let (u, v) = match String.index_opt t '@' with
+        | Some i -> (String.sub t 0 i, Some (String.sub t (i + 1) (String.length t - i - 1)))
+        | None -> (t, None)
+      in
+      (Some (Package.normalize_url u), v)
   in
   (match only with
    | Some u when not (List.exists (fun (r : Package.require) -> r.path = u) pkg.require) ->
-     fail (Printf.sprintf "%s is not in the `require` list of %s" u pkg.file)
+     fail (Printf.sprintf "%s is not in the `require` list of %s" (short u) pkg.file)
    | _ -> ());
-  let say = ref [] in
+  (match pinned with
+   | Some v when not (is_version v) ->
+     fail (Printf.sprintf "%s is not a version, such as 1.2.0" v)
+   | _ -> ());
+  let zero v = Semver.version_number v 0 = 0 in
+  let same_path (r : Package.require) =
+    List.filter (fun (o : Package.require) -> o.path = r.path) pkg.require in
+  (* The entry a pinned version moves: the one at its major, else the only
+     0.x entry when the version is 0.x too. *)
+  let pinned_entry u v =
+    let entries = List.filter (fun (r : Package.require) -> r.path = u) pkg.require in
+    match List.find_opt (fun (r : Package.require) -> Package.major r.version = Package.major v) entries with
+    | Some r -> r
+    | None ->
+      (match List.filter (fun (r : Package.require) -> zero v && zero r.version) entries with
+       | [r] -> r
+       | r :: _ :: _ ->
+         fail (Printf.sprintf
+           "%s is required at more than one 0.x minor, so upgrade cannot tell which \
+            one to move to %s. Change the version in %s"
+           (short u) v pkg.file)
+       | [] ->
+         let r = List.hd entries in
+         fail (Printf.sprintf
+           "%s %s is a different major from %s, and so a different module. \
+            Require it as its own entry, with a `name`, and change the \
+            imports that should use it"
+           (short u) v r.version))
+  in
+  let moved = match only, pinned with
+    | Some u, Some v -> Some (pinned_entry u v)
+    | _ -> None
+  in
+  let say = ref [] and notes = ref [] in
   let require = List.map (fun (r : Package.require) ->
     if (match only with Some u -> u <> r.path | None -> false) then r
+    else if (match moved with Some m -> m != r | None -> false) then r
     else
       let target_version = match pinned with
         | Some v ->
-          if not (is_version v) then
-            fail (Printf.sprintf "%s is not a version, such as 1.2.0" v);
-          if Package.major v <> Package.major r.version then
-            fail (Printf.sprintf
-              "%s %s is a different major from %s, and so a different module. \
-               Require it as its own entry, with a `name`, and change the \
-               imports that should use it"
-              r.path v r.version);
           (match unusable r.path v with
            | Some why -> fail why
            | None -> Some v)
@@ -369,6 +401,19 @@ let upgrade ~dir target =
               | Some why, None -> say := Printf.sprintf "%s; keeping %s" why r.version :: !say
               | Some why, Some _ -> say := why :: !say
               | None, _ -> ());
+             (if zero r.version then
+                let held = List.map (fun (o : Package.require) -> Package.major o.version)
+                    (same_path r) in
+                let later = List.filter (fun v ->
+                    zero v && Semver.compare_versions v r.version > 0
+                    && not (List.mem (Package.major v) held)) vs in
+                match latest later with
+                | Some v ->
+                  notes := Printf.sprintf
+                      "%s %s is released. Before 1.0 a new minor can break code, so \
+                       upgrade stays at %s. To move to it, run `wand p upgrade %s@%s`"
+                      (short r.path) v (Package.major r.version) (short r.path) v :: !notes
+                | None -> ());
              chosen)
       in
       match target_version with
@@ -377,7 +422,7 @@ let upgrade ~dir target =
         { r with version = v }
       | _ -> r) pkg.require in
   rewrite pkg require;
-  report !say
+  report (!notes @ !say)
 
 (* ── The interface section ──────────────────────────────────────────────────────── *)
 
@@ -704,12 +749,17 @@ let add ~dir target ~name =
        path r.version (short path) version)
    | None -> ());
   let suggested = Package.alias_for path version in
-  (match name, List.exists (fun (r : Package.require) -> r.name = None) same_path with
-   | None, true ->
+  (match name, List.find_opt (fun (r : Package.require) -> r.name = None) same_path with
+   | None, Some r ->
+     let zero v = Semver.version_number v 0 = 0 in
      fail (Printf.sprintf
        "%s is already required at another major. Give this one a name, and \
-        import it by that name: `wand p add %s@%s --name %s`"
-       path (short path) version suggested)
+        import it by that name: `wand p add %s@%s --name %s`%s"
+       path (short path) version suggested
+       (if zero version && zero r.version then
+          Printf.sprintf ". To move %s to it instead, run `wand p upgrade %s@%s`"
+            r.version (short path) version
+        else ""))
    | _ -> ());
   (match name with
    | Some n ->
