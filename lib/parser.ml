@@ -1309,7 +1309,12 @@ and atom_base_ s =
         let first = Located (span_to_here s e_loc, e) in
         let e = Seq (first, paren_seq s) in
         expect s Token.RParen; e
-      end else (expect s Token.RParen; e)
+      end else begin
+        expect s Token.RParen;
+        (* `(None (x))` is one argument, where `None (x)` alone hands its
+           bracket back to the call; see `Ast.is_constr_payload`. *)
+        if Ast.is_constr_payload e then Located (span_to_here s loc, e) else e
+      end
       end
     end
   | Token.LBracket -> list_ s
@@ -1456,6 +1461,7 @@ and constr_body_ s name =
     expect s Token.RParen;
     ConstrBare (name, !ids)
   end else if takes_a_bracket then begin
+    let bracket_loc = peek_loc s in
     ignore (advance s); (* consume LParen *)
     (* `M()` is a construction naming no fields where `M` has fields, all of
        which must then have defaults, and a constructor applied to unit
@@ -1515,6 +1521,10 @@ and constr_body_ s name =
          but Option's own. *)
       match !args with
       | (_ :: _ :: _ as es) -> App (constr, Tuple es)
+      (* `Ok (Some x)`: the payload is one argument, marked as the plain
+         bracket marks it; see `Ast.is_constr_payload`. *)
+      | [arg] when Ast.is_constr_payload arg ->
+        App (constr, Located (span_to_here s bracket_loc, arg))
       | args ->
         List.fold_left (fun acc arg -> App (acc, arg)) constr args
       end

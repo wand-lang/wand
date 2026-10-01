@@ -276,6 +276,21 @@ let rec strip_located = function
   | Located (_, e) -> strip_located e
   | e -> e
 
+(* A constructor holding the bracket written after it: `C (x)`, or
+   `M.C(x)`. The parser builds one without reading arity, so as an argument
+   `f None (x)` is `f` applied to `None (x)`, and a nullary constructor
+   hands the bracket back to the call. Written inside brackets of its own,
+   `f (None (x))`, it is one argument, and the parser marks that with a
+   `Located` around it: an argument is not `Located` otherwise. So this
+   asks of the node itself and does not step through a `Located`. *)
+let is_constr_payload e =
+  let is_constr f = match strip_located f with Constr _ -> true | _ -> false in
+  match e with
+  | App (f, _) -> is_constr f
+  | Qualified (_, inner) ->
+    (match inner with App (f, _) -> is_constr f | _ -> false)
+  | _ -> false
+
 let rec show_pat : pat -> string = function
   | Int n      -> string_of_int n
   | Float f    -> string_of_float f

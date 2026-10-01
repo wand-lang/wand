@@ -273,7 +273,7 @@ test "word agrees with words at every index" (fn t ->
     (List.map (fn i -> List.get i ws) [0, 1, 2, 3])
     (List.map (fn i -> String.word i s) [0, 1, 2, 3]))
 
-test "word is None past the end" (fn t -> t.eq (None (String.word 9 "a b")))
+test "word is None past the end" (fn t -> t.eq None (String.word 9 "a b"))
 
 test "word! raises past the end" (fn t -> t.raises (fn () -> String.word! 9 "a b"))
 

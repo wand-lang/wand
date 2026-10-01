@@ -4727,7 +4727,11 @@ and nullary_payload tenv x =
     | App (f, arg) when nullary_ctor tenv f -> Some (wrap f, arg)
     | _ -> None
   in
-  unpack tenv (fun c -> c) x
+  match x with
+  (* Written in brackets of its own, `f (None (x))`: one argument, which
+     `check_app_shape` reports. *)
+  | Located (_, inner) when Ast.is_constr_payload inner -> None
+  | _ -> unpack tenv (fun c -> c) x
 
 (* The shapes that are a parse away from what was meant, checked before the
    application itself. Each fires only when the head of the spine is a bare
@@ -4737,6 +4741,27 @@ and check_app_shape tenv (env : env) f x =
     (* `Rect (3, 4)` reads naturally but means "apply Rect to a tuple", and
        Rect takes two arguments. The constructor's arity is known here even
        when it was declared in another file, so say what to write. *)
+    (* `f (None (x))`: brackets around a nullary constructor and its
+       bracket make them one argument, which cannot be. `wand f` wrote
+       `f None (x)` this way before 1.0, so the correction moves the outer
+       bracket onto the payload, `f None ((x))`, which means what that
+       file meant. It is built from the positions alone, and `--fix`
+       applies it only where the text is what it says. *)
+    (match x with
+     | Located (l, (App (Located (lc, Constr name), _) as inner))
+       when Ast.is_constr_payload inner && nullary_ctor tenv (Constr name) ->
+       if l.Token.line = lc.Token.line && lc.Token.col = l.Token.col + 1 then
+         pending_fix := Some (Diag.Replace
+           { from_ = "(" ^ name ^ " ("; to_ = name ^ " ((" });
+       let at = { l with Token.end_line = l.Token.line;
+                         end_col = lc.Token.end_col + 2;
+                         end_offset = lc.Token.end_offset + 2 } in
+       raise (TypeErrorAt (at, Printf.sprintf
+         "'%s' takes no arguments, and the brackets around `%s (...)` make \
+          it one argument. Remove them, and the bracket after `%s` is the \
+          next argument of the call"
+         name name name))
+     | _ -> ());
     (match strip_located f, strip_located x with
      (* Parentheses after a constructor are its payload, so a nullary one
         has swallowed an argument meant for the call: `t.eq None (usage row)`

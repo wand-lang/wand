@@ -46,7 +46,7 @@ test "hashes the bytes of a multi-byte character" (fn t -> t.eq (String.length "
 test "café hashes as its five bytes" (fn t ->
   t.eq
     (Digest.hex (Hash.string Sha256 "café"))
-    (Digest.hex (Hash.string (Sha256 ("caf" ++ String.slice 3 5 "café")))))
+    (Digest.hex (Hash.string Sha256 ("caf" ++ String.slice 3 5 "café"))))
 
 -- ── Hash.hmac ───────────────────────────────────────────────────────────
 
@@ -133,7 +133,7 @@ test "name" (fn t ->
     Digest.name Md5
   ])
 test "algorithm comes back" (fn t ->
-  t.eq (Sha512 (Digest.algorithm (Hash.string Sha512 "abc"))))
+  t.eq Sha512 (Digest.algorithm (Hash.string Sha512 "abc")))
 test "base64 of the sha256 of abc" (fn t ->
   t.eq
     "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
@@ -141,11 +141,11 @@ test "base64 of the sha256 of abc" (fn t ->
 
 test "of_hex round-trips a digest" (fn t ->
   let d = Hash.string Sha256 "abc";
-  t.eq (Ok d) (Digest.of_hex (Sha256 (Digest.hex d))))
+  t.eq (Ok d) (Digest.of_hex Sha256 (Digest.hex d)))
 test "of_hex accepts uppercase" (fn t ->
   t.eq
     (Ok (Hash.string Md5 "abc"))
-    (Digest.of_hex (Md5 (String.upper (Digest.hex (Hash.string Md5 "abc"))))))
+    (Digest.of_hex Md5 (String.upper (Digest.hex (Hash.string Md5 "abc")))))
 test "of_hex refuses the wrong length" (fn t ->
   t.eq
     (Error "a Sha256 digest is 64 hex digits, and this is 32")

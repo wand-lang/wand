@@ -2386,7 +2386,11 @@ and nullary_payload env x =
     | App (f, arg) when is_nullary qual f -> Some (wrap f, arg)
     | _ -> None
   in
-  unpack None (fun c -> c) x
+  match x with
+  (* Written in brackets of its own, `f (None (x))`: one argument, as the
+     checker reads it. *)
+  | Located (_, inner) when Ast.is_constr_payload inner -> None
+  | _ -> unpack None (fun c -> c) x
 
 and eval_at (tail : bool) (env : env) (e : expr) : value =
   check_interrupt ();

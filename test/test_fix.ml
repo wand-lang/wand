@@ -154,6 +154,17 @@ let test_payload_with_no_call () =
   Alcotest.(check bool) "says the one thing there is to say" true
     (Lint.contains (Diag.legacy d) "with nothing after it")
 
+(* In brackets of its own, `f (Nothing (1))` is one argument, and a
+   constructor with no payload cannot take the bracket after it there. The
+   correction moves the outer bracket onto the payload, which is what
+   `wand f` wrote `f Nothing (1)` as before it kept the spelling (#78). *)
+let test_bracketed_payload_is_one_argument () =
+  let (fixed, applied) =
+    fix "type Opt = Nothing | Just Int\nlet f a b = b\nlet r = f (Nothing (1))\n" in
+  Alcotest.(check string) "the bracket moves onto the payload"
+    "type Opt = Nothing | Just Int\nlet f a b = b\nlet r = f Nothing ((1))\n" fixed;
+  Alcotest.(check (list string)) "reported as a type error" ["E-TYPE"] (codes applied)
+
 (* A drift correction names its substitution in prose rather than spanning
    it, so it declines the same test and nothing is written on its behalf. *)
 let test_drift_still_declines () =
@@ -305,6 +316,8 @@ let () =
       Alcotest.test_case "qualified too"  `Quick
         test_qualified_constructor_needs_no_fix;
       Alcotest.test_case "no call to take it" `Quick test_payload_with_no_call;
+      Alcotest.test_case "in brackets of its own" `Quick
+        test_bracketed_payload_is_one_argument;
       Alcotest.test_case "drift declines" `Quick test_drift_still_declines;
     ];
     "refusals", [

@@ -507,6 +507,19 @@ let ok_after_format label src expected =
 let fmt_eq label src expected =
   Alcotest.(check string) label (expected ^ "\n") (fmt src)
 
+(* A constructor takes the bracket written after it, so `f None (x)` and
+   `f (None (x))` are one tree to a reader that does not mark the second's
+   brackets, and the formatter wrote the first as the second (#78). Both
+   are kept as written now. *)
+let test_a_constructor_and_its_bracket_are_kept () =
+  List.iter (fun src -> fmt_eq src src src)
+    [ "same None (pick false)";
+      "f (Some (g 1))";
+      "f Some (g 1)";
+      "f Some (1, 2)";
+      "let h = Ok (Some true)";
+      "let k = Ok Some (true)" ]
+
 (* The lines under a backtick are the string's own content. A value given a
    line of its own moves them one line down the page, and the backtick left
    above them says nothing the `=` did not. So a multi-line backtick string
@@ -2281,5 +2294,7 @@ let () =
       Alcotest.test_case "a qualified construction is measured where it starts" `Quick
         test_a_qualified_construction_is_measured_where_it_starts;
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
+      Alcotest.test_case "a constructor and its bracket are kept" `Quick
+        test_a_constructor_and_its_bracket_are_kept;
     ];
   ]

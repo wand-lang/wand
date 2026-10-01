@@ -1141,7 +1141,19 @@ and guard_spine head head_s args rendered following =
   in
   head_s :: guarded
 
-and emit_arg ?(followed = false) indent e = emit_atom ~followed indent e
+and emit_arg ?(followed = false) indent e =
+  match e with
+  (* `f None (x)`, as written. In brackets, `f (None (x))`, it is one
+     argument rather than two, and the parser marks those brackets, so they
+     are never added here; see `Ast.is_constr_payload`. The payload keeps
+     its own, which are what make it the constructor's. *)
+  | App (f, arg) when Ast.is_constr_payload e ->
+    let payload = match strip_located arg with
+      | Tuple _ -> emit_expr indent arg
+      | _ -> Doc.text "(" ^^ emit_expr indent arg ^^ Doc.text ")"
+    in
+    emit_expr indent f ^^ Doc.text " " ^^ payload
+  | _ -> emit_atom ~followed indent e
 
 and emit_expr_inner ?col ?(stmt = false) indent e =
   let col = match col with Some c -> c | None -> indent in

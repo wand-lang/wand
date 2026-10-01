@@ -36,7 +36,7 @@ test "set then get" (fn t -> (
 let () = Env.set "WAND_TEST_CLEAR" "before"
 test "clear takes the name out" (fn t -> (
   Env.clear "WAND_TEST_CLEAR";
-  t.eq (None (Env.get "WAND_TEST_CLEAR"))
+  t.eq None (Env.get "WAND_TEST_CLEAR")
 ))
 test "and it is gone from all ()" (fn t -> (
   Env.set "WAND_TEST_CLEAR2" "before";

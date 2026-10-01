@@ -3163,16 +3163,17 @@ type Wrap = Wrap (List Int)     -- one field, type List Int
 type Pair = Pair (Int, Int)     -- one field, tuple type (Int, Int)
 ```
 
-That rule holds for a constructor with no fields too, so parentheses right
-after one are read as a payload it cannot take. Bracket the constructor
-where it is not the last argument:
+A constructor with no fields cannot take the parentheses after it, so they
+go to the call around it, as the next argument:
 
 ```ocaml
-t.eq (None) (usage row)     -- t.eq None (usage row) is t.eq (None (usage row))
+t.eq None (usage row)       -- two arguments: None, and usage row
+t.eq (None (usage row))     -- an error: the brackets make it one argument
 ```
 
-`wand f` writes that bracket for you, and the checker names the constructor
-when it is missing.
+`wand f` keeps each spelling as written. An older `wand f` wrote the first
+as the second, and the second then meant the first. `wand t --fix` changes
+that form back.
 
 ### Constructors that share a name
 
