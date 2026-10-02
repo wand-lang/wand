@@ -444,6 +444,24 @@ let entry_for pkg url =
       | Some b when List.length (segments b.path) >= List.length (segments r.path) -> best
       | _ -> Some r) None (List.filter (fun r -> r.name = None) pkg.require)
 
+(* What follows the package's own URL in `url`, when `url` is that URL or a
+   file under it and no `require` entry names it more closely. Code in a
+   package imports its own files by the URL other packages use, as a Go
+   module does, so one import line works in both places. *)
+let own_rest pkg url =
+  let own = segments pkg.url and u = segments url in
+  let rec strip a b = match a, b with
+    | [], rest -> Some rest
+    | x :: a, y :: b when x = y -> strip a b
+    | _ -> None
+  in
+  match strip own u with
+  | None -> None
+  | Some rest ->
+    match entry_for pkg url with
+    | Some r when List.length (segments r.path) > List.length own -> None
+    | _ -> Some rest
+
 exception Unresolved of string
 
 let absolute dir =
@@ -686,14 +704,22 @@ let file_in main r rest =
 let resolve_url ~base_dir url =
   let url = normalize_url url in
   let pkg = in_package ~base_dir url in
-  let r = match entry_for pkg url with
-    | Some r -> r
-    | None ->
-      raise (Unresolved (Printf.sprintf
-        "%s is not in the `require` list of %s. Run `wand p tidy`" url pkg.file))
-  in
-  let rest = List.filteri (fun i _ -> i >= List.length (segments r.path)) (segments url) in
-  file_in (Option.value !main ~default:pkg) r rest
+  match own_rest pkg url with
+  | Some rest ->
+    let file = match rest with
+      | [] -> last_segment pkg.url
+      | _ -> String.concat Filename.dir_sep rest
+    in
+    Filename.concat pkg.root (file ^ ".wand")
+  | None ->
+    let r = match entry_for pkg url with
+      | Some r -> r
+      | None ->
+        raise (Unresolved (Printf.sprintf
+          "%s is not in the `require` list of %s. Run `wand p tidy`" url pkg.file))
+    in
+    let rest = List.filteri (fun i _ -> i >= List.length (segments r.path)) (segments url) in
+    file_in (Option.value !main ~default:pkg) r rest
 
 let resolve_alias ~base_dir name =
   let pkg = in_package ~base_dir name in

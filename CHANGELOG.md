@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- A package imports its own files by its own URL, as `import github.com/you/tool/report` in `github.com/you/tool`.
+
 ## [0.100.0] - 2026-10-01
 
 ### Changed

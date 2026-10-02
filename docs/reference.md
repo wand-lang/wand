@@ -4093,6 +4093,17 @@ The longest `require` path that is a prefix of the import's URL, segment by
 segment, names the module. The rest of the URL names a file in it, and the
 module's root file is named for the last segment of its path.
 
+A package imports its own files by its own URL too, as a Go module does.
+In the package `github.com/you/tool`, `import github.com/you/tool/report`
+is `report.wand` at the package's root, read from the directory and never
+fetched, and `import github.com/you/tool` is `tool.wand`. So a file that
+other packages also write against, such as a template they copy, has one
+import line that works in both places. The package needs no `require`
+entry for itself, and `wand p tidy` adds none. A `_` directory is the
+package's own, so its files are importable this way as by a path. A file
+reached by its URL and by a relative path is one module, with the same
+types.
+
 An import that `wand.pkg` does not name is an error that tells you to run
 `wand p tidy`. Only the `wand p` commands change `wand.pkg`. You can edit it
 by hand to pin a version or to use a local copy. The file is data: literals,

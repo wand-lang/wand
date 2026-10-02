@@ -198,6 +198,33 @@ let test_url_imports () =
     error_says "a private file" "`_internal` is private to https://x.dev/me/json"
       (run_in app "priv.wand" "import https://x.dev/me/json/_internal/p\np.x"))
 
+(* A package imports its own files by its own URL, as other packages do,
+   and a file reached by the URL and by a path is one module. *)
+let test_own_url_imports () =
+  with_two_packages (fun ~app:_ ~json ->
+    write (Filename.concat json "kind.wand")
+      "type Kind = Kind Int\nlet unwrap (k: Kind) = match k with | Kind n -> n";
+    Alcotest.(check (result string string)) "the root and a file below it"
+      (Ok "parsed x")
+      (run_in json "own.wand"
+         "import https://x.dev/me/json\nimport https://x.dev/me/json/decode\njson.parse (decode.decode \"x\")");
+    Alcotest.(check (result string string)) "one module by URL and by path"
+      (Ok "3")
+      (run_in json "both.wand"
+         "let A = import ./kind\nlet B = import https://x.dev/me/json/kind\nA.unwrap (B.Kind 3)");
+    Alcotest.(check (result string string)) "its own private files" (Ok "1")
+      (run_in json "priv.wand" "import https://x.dev/me/json/_internal/p\np.x"))
+
+let test_tidy_adds_no_entry_for_the_package () =
+  let root = fresh_dir () in
+  write (Filename.concat root "wand.pkg")
+    (Printf.sprintf "{ package = x.dev/me/a, wand = %s }" Version.value);
+  write (Filename.concat root "b.wand") "let x = 1";
+  write (Filename.concat root "a.wand") "import x.dev/me/a/b\nlet f = b.x";
+  Package_cmd.tidy ~dir:root;
+  let sections = Package.read_sections root in
+  Alcotest.(check bool) "no require entry" false (contains sections.record "require")
+
 let test_url_import_outside_a_package () =
   let dir = fresh_dir () in
   error_says "no wand.pkg" "this file is in no package"
@@ -793,6 +820,8 @@ let () =
     "imports", [
       Alcotest.test_case "by URL"              `Quick test_url_imports;
       Alcotest.test_case "by URL, no package"  `Quick test_url_import_outside_a_package;
+      Alcotest.test_case "by its own URL"      `Quick test_own_url_imports;
+      Alcotest.test_case "tidy and its own URL" `Quick test_tidy_adds_no_entry_for_the_package;
       Alcotest.test_case "private by path"     `Quick test_private_by_path;
       Alcotest.test_case "without a scheme"    `Quick test_schemeless_urls;
     ];

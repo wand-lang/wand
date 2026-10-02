@@ -303,7 +303,10 @@ let tidy ~dir = repairing @@ fun () ->
   let require = ref pkg.require in
   List.iter (function
     | Url u ->
-      if Package.entry_for { pkg with require = !require } u = None then begin
+      (* An import of the package's own URL needs no entry: it names a file
+         in the package. *)
+      if Package.own_rest { pkg with require = !require } u = None
+         && Package.entry_for { pkg with require = !require } u = None then begin
         let (path, version) = find_module u in
         say := Printf.sprintf "added %s %s" path version :: !say;
         require := !require @ [{ Package.path; version; name = None; local = None }]
