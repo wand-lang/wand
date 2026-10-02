@@ -754,7 +754,10 @@ let iface_display n =
        | k :: _ -> k
        | [] -> short_type_name n)
 
-let string_of_typ t =
+(* `expand_aliases:false` shows an alias by its name alone: a signature line
+   is read whole, and `ObjId (= String)` there is twice the words for one
+   argument. A message keeps the expansion, which is where it earns it. *)
+let string_of_typ_with ~expand_aliases t =
   let counter = ref 0 in
   let names : (int, string) Hashtbl.t = Hashtbl.create 4 in
   let name_of id =
@@ -809,9 +812,10 @@ let string_of_typ t =
     match t with
     | TAlias (n, args, u) ->
       let applied =
-        if args = [] then n
-        else n ^ " " ^ String.concat " " (map_lr go args) in
-      Printf.sprintf "%s (= %s)" applied (go u)
+        if args = [] then type_display n
+        else type_display n ^ " " ^ String.concat " " (map_lr go args) in
+      if expand_aliases then Printf.sprintf "%s (= %s)" applied (go u)
+      else applied
     | _ ->
     match repr t with
     | TAlias (_, _, u) -> go u   (* `repr` strips it; here for the compiler *)
@@ -928,6 +932,8 @@ let string_of_typ t =
              else iface_display n ^ " " ^ String.concat " " (List.map go args)) claims)
   in
   go t
+
+let string_of_typ t = string_of_typ_with ~expand_aliases:true t
 
 (* ── Occurs check ─────────────────────────────────────────────────────────── *)
 
@@ -7137,6 +7143,10 @@ let infer_program_env ?(init_tenv=[]) ?(init_env=[]) ?init_ifaces
 
 let string_of_scheme = function
   | Mono t | Poly (_, _, t) -> string_of_typ t
+  | Namespace _           -> "<namespace>"
+
+let string_of_scheme_brief = function
+  | Mono t | Poly (_, _, t) -> string_of_typ_with ~expand_aliases:false t
   | Namespace _           -> "<namespace>"
 
 (* The Error side is (position, message, correction): everything the raise

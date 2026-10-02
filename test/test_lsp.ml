@@ -339,6 +339,27 @@ let test_code_lens_types_each_member () =
     [(3, "Int -> Int -> Int"); (4, "Int -> Int -> Int")]
     (lens_titles (response_for 22 outs))
 
+(* An alias from an import shows by the name the file can write, not by the
+   canonical key it is held under -- which carries the imported file's path
+   -- and without its expansion: a signature line is read whole, and the
+   expansion doubles it. *)
+let test_code_lens_names_an_imported_alias () =
+  let dir = Filename.concat (Filename.get_temp_dir_name ())
+      (Printf.sprintf "wand_lsp_alias_%d" (Unix.getpid ())) in
+  (try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  let oc = open_out (Filename.concat dir "ids.wand") in
+  output_string oc
+    "type ObjId = String\ninterface Maker(make: ObjId -> Int)\n";
+  close_out oc;
+  let main_uri = "file://" ^ Filename.concat dir "main.wand" in
+  let text = "let Ids = import ./ids\n\nimplement Ids.Maker =\n  let make _ = 1\n" in
+  let (_, outs) =
+    session [did_open main_uri text; at_position 23 "textDocument/codeLens" main_uri 0 0]
+  in
+  Alcotest.(check (list (pair int string))) "the short name, no path, no expansion"
+    [(3, "ObjId -> Int")]
+    (lens_titles (response_for 23 outs))
+
 let items_of result = match result with
   | `List items -> items
   | _ -> Alcotest.fail "expected a completion list"
@@ -491,6 +512,36 @@ let test_definition_bare_module () =
       (s (m "uri" result));
     Alcotest.(check int) "at the top" 0
       (int_of (m "line" (m "start" (m "range" result))))
+
+(* A namespace a file imports goes into that file, to the member: the way
+   a standard library module's does. It went to the `let` that binds the
+   namespace, which says where the module is and not what is in it. *)
+let test_definition_imported_member () =
+  let dir = Filename.concat (Filename.get_temp_dir_name ())
+      (Printf.sprintf "wand_lsp_def_%d" (Unix.getpid ())) in
+  (try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
+  let target = Filename.concat dir "shapes.wand" in
+  let oc = open_out target in
+  output_string oc "let unit = 1\n\ntype Shape = Circle Int\n";
+  close_out oc;
+  let main_uri = "file://" ^ Filename.concat dir "main.wand" in
+  let text = "let Shapes = import ./shapes\nlet c = Shapes.Circle 2\nc\n" in
+  let (_, outs) =
+    session [did_open main_uri text;
+             at_position 27 "textDocument/definition" main_uri 1 17;
+             at_position 28 "textDocument/definition" main_uri 0 6]
+  in
+  let check id what line =
+    match response_for id outs with
+    | `Null -> Alcotest.fail "expected a definition"
+    | result ->
+      Alcotest.(check string) (what ^ ": the imported file")
+        ("file://" ^ target) (s (m "uri" result));
+      Alcotest.(check int) (what ^ ": the line") line
+        (int_of (m "line" (m "start" (m "range" result))))
+  in
+  check 27 "member" 2;
+  check 28 "namespace" 0
 
 let test_stdlib_source_request () =
   let (_, outs) =
@@ -687,6 +738,7 @@ let () =
       Alcotest.test_case "types definitions" `Quick test_code_lens_types_the_definitions;
       Alcotest.test_case "types each member" `Quick test_code_lens_types_each_member;
       Alcotest.test_case "shared line"       `Quick test_code_lens_names_a_shared_line;
+      Alcotest.test_case "imported alias"    `Quick test_code_lens_names_an_imported_alias;
     ];
     "completion", [
       Alcotest.test_case "in scope"        `Quick test_completion_in_scope;
@@ -704,6 +756,7 @@ let () =
       Alcotest.test_case "same file"      `Quick test_definition_same_file;
       Alcotest.test_case "stdlib member"  `Quick test_definition_stdlib_member;
       Alcotest.test_case "bare module"    `Quick test_definition_bare_module;
+      Alcotest.test_case "imported member" `Quick test_definition_imported_member;
       Alcotest.test_case "stdlib source"  `Quick test_stdlib_source_request;
     ];
     "auto-edits", [

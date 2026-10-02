@@ -2807,6 +2807,37 @@ let defs_of_program (prog : Ast.program)
        List.map (fun n -> (n, loc)) names)
        prog.Ast.items)
 
+(* Each namespace a program's imports bind, and the module it resolves to.
+   An import that does not resolve is left out: the check has already said
+   so, and a jump has nowhere to go. *)
+let imports_of_program ~base_dir (prog : Ast.program)
+    : (string * Module_types.source) list =
+  List.filter_map (fun (item : Ast.top_item) ->
+    let bound = match item with
+      | Ast.TLLet (name, [], e) ->
+        Option.map (fun k -> (name, k)) (Module_types.import_kind_of e)
+      | Ast.TLImport k ->
+        Option.map (fun n -> (n, k)) (Parser.import_name k)
+      | _ -> None
+    in
+    Option.bind bound (fun (name, k) ->
+      match Module_types.resolve_import base_dir k with
+      | src -> Some (name, src)
+      | exception _ -> None))
+    prog.Ast.items
+
+(* A module file's definition sites, read from disk on each ask: unlike the
+   standard library, the file can change while the editor is open. *)
+let file_defs path : (string * Token.loc) list =
+  match
+    let src = Module_types.read_source (Module_types.File path) in
+    let (prog, item_locs) =
+      Parser.parse_program_with_locs (Lexer.tokenize src) in
+    defs_of_program prog item_locs
+  with
+  | defs -> defs
+  | exception _ -> []
+
 (* A standard library module's source text and definition sites, for the
    editor's go-to-definition: the jump target is a virtual document served
    from these same bytes, so the two cannot disagree. Parse only -- no
@@ -4247,6 +4278,9 @@ type source_check = {
   sc_scope    : Typechecker.env;         (* everything in scope: own, imports, base *)
   sc_docs     : (string * string) list;  (* name -> doc string *)
   sc_defs     : (string * Token.loc) list;  (* name -> its definition site *)
+  sc_imports  : (string * Module_types.source) list;
+  (* each namespace an import binds, and the module it resolves to: where a
+     jump to `Driver.Init` goes to find `Init`. *)
   sc_locals   : (Token.loc * (string * string) list) list;
   (* per top-level item: its extent and the local binders typed inside it
      (parameters, `let ... in` names, pattern variables) -- what a hover
@@ -4367,6 +4401,7 @@ let typecheck_source ?(set_main = true) ~path (src : string)
            sc_scope    = full_type_env;
            sc_docs     = prog.Ast.docs @ imp_docs;
            sc_defs     = defs_of_program prog item_locs;
+           sc_imports  = imports_of_program ~base_dir prog;
            sc_locals   =
              (let all = !Typechecker.local_binders in
               List.mapi (fun i (start_loc, end_loc) ->

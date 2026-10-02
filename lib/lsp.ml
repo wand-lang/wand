@@ -498,29 +498,70 @@ let location target_uri (loc : Token.loc) : J.t =
   let l = max 0 (loc.Token.line - 1) and c = max 0 (loc.Token.col - 1) in
   `Assoc [("uri", `String target_uri); ("range", range0 l c l c)]
 
+(* A path as a file URI. Bytes outside the unreserved set are
+   percent-encoded, so a path with a space comes back the way
+   `path_of_uri` reads it. *)
+let uri_of_path path =
+  let buf = Buffer.create (String.length path + 8) in
+  Buffer.add_string buf "file://";
+  String.iter (fun c ->
+    match c with
+    | 'A'..'Z' | 'a'..'z' | '0'..'9' | '-' | '_' | '.' | '~' | '/' ->
+      Buffer.add_char buf c
+    | c -> Buffer.add_string buf (Printf.sprintf "%%%02X" (Char.code c)))
+    path;
+  Buffer.contents buf
+
 (* Where the name under the cursor is defined: the buffer's own definition
-   sites first; a qualified name whose namespace is a standard library
-   module jumps into its virtual document (to the member, or to the top
-   when the member is not a definition -- a label, say); a bare module name
-   jumps to the module. A namespace bound by a user import falls back to
-   the binding line, which is where the path is written. *)
+   sites first. A qualified name goes into the module its namespace
+   imports -- a file on disk, or a standard library module's virtual
+   document -- to the member, or to the top when the member is not a
+   definition there (a label, say). `m.Type.Ctor` goes to the constructor.
+   A bare namespace goes to the top of its module. *)
 let definition_of (d : doc) uri word : J.t option =
-  let defs = match d.d_check with Some sc -> sc.Runner.sc_defs | None -> [] in
+  let (defs, imports) = match d.d_check with
+    | Some sc -> (sc.Runner.sc_defs, sc.Runner.sc_imports)
+    | None -> ([], [])
+  in
+  let top = Token.point 1 1 0 in
+  (* The module a namespace names: what the file imported under it, or, for
+     a namespace the file did not bind, the standard library module of that
+     name. *)
+  let module_of ns =
+    match List.assoc_opt ns imports with
+    | Some (Module_types.File path) ->
+      (* `import ./x` resolves to `dir/./x.wand`, and an editor that opens
+         that keeps a second tab for a file it already has open. *)
+      Some (uri_of_path (Module_types.lexical_normalize path),
+            Runner.file_defs path)
+    | Some (Module_types.Embedded name) ->
+      Option.map (fun (_, mdefs) -> (stdlib_uri name, mdefs))
+        (Runner.stdlib_module_source_and_defs name)
+    | None ->
+      Option.map (fun (_, mdefs) -> (stdlib_uri ns, mdefs))
+        (Runner.stdlib_module_source_and_defs ns)
+  in
+  let member ns m =
+    match module_of ns with
+    | Some (target, mdefs) ->
+      Some (location target
+              (Option.value ~default:top (List.assoc_opt m mdefs)))
+    | None -> Option.map (location uri) (List.assoc_opt ns defs)
+  in
   match String.split_on_char '.' word with
-  | [ns; m] when m <> "" ->
-    (match Runner.stdlib_module_source_and_defs ns with
-     | Some (_, mdefs) ->
-       (match List.assoc_opt m mdefs with
-        | Some loc -> Some (location (stdlib_uri ns) loc)
-        | None -> Some (location (stdlib_uri ns) (Token.point 1 1 0)))
-     | None -> Option.map (location uri) (List.assoc_opt ns defs))
+  | [ns; m] when m <> "" -> member ns m
+  | [ns; _; c] when c <> "" -> member ns c
   | [plain] when plain <> "" ->
-    (match List.assoc_opt plain defs with
-     | Some loc -> Some (location uri loc)
+    (match List.assoc_opt plain imports with
+     | Some _ ->
+       Option.map (fun (target, _) -> location target top) (module_of plain)
      | None ->
-       if List.mem_assoc plain Stdlib_embed.table
-       then Some (location (stdlib_uri plain) (Token.point 1 1 0))
-       else None)
+       match List.assoc_opt plain defs with
+       | Some loc -> Some (location uri loc)
+       | None ->
+         if List.mem_assoc plain Stdlib_embed.table
+         then Some (location (stdlib_uri plain) top)
+         else None)
   | _ -> None
 
 (* ── Code lenses ─────────────────────────────────────────────────────────── *)
@@ -551,7 +592,7 @@ let code_lenses (d : doc) : J.t list =
       List.filter_map (fun (name, (loc : Token.loc)) ->
         if not (is_value name) then None
         else Option.map (fun sch ->
-               (loc.Token.line, name, Typechecker.string_of_scheme sch))
+               (loc.Token.line, name, Typechecker.string_of_scheme_brief sch))
                (List.assoc_opt name sc.Runner.sc_env))
         sc.Runner.sc_defs
     in
