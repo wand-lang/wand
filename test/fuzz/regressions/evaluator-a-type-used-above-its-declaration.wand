@@ -1,0 +1,3 @@
+let{test}=import Test
+type Only(t:Port=:0,e:Bool=false)
+test""(fn t->t.eq Line.usage Line.parser.usage)type Line(f:Only,t:String)

@@ -366,3 +366,15 @@ test "and read back from itself" (fn t ->
   t.eq
     (Ok Condition(type = "Ready", status = "False", when = "then"))
     (JSON.decode Condition.decoder doc))
+
+-- ── A type used above its declaration ───────────────────────────────────
+
+-- The typechecker reads every declaration first, so a run does too: these
+-- tests run before the `type` line below them.
+test "a constructor above its type" (fn t -> t.eq 2 Later(n = 2).n)
+test "a derived member above its type" (fn t ->
+  t.eq (Ok Later(n = 3)) (JSON.decode Later.decoder (JSON.parse! `{"n":3}`)))
+test "an alias above its type" (fn t -> t.eq Later(n = 4) Soon(n = 4))
+
+type Soon = Later
+type Later(n: Int)

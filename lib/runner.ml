@@ -2209,6 +2209,20 @@ let ctor_bindings_of ?modul tenv =
         in
         [(ctor.Ast.name, v); (k, v)]) ctors) tenv
 
+(* A file's types, ahead of everything else it does. The typechecker reads
+   every declaration before any item, so a constructor or `T.usage` above
+   its `type` line typechecks; run in source order, the same use found no
+   constructor and the run failed with "unknown constructor". The variants
+   go ahead of the aliases, since an alias binds its target's constructor.
+   A type declares no value that another item computes, so nothing a type
+   needs is moved behind it. *)
+let hoist_types items =
+  let (variants, rest) = List.partition (function
+    | Ast.TLType (Ast.Variants _, _) -> true | _ -> false) items in
+  let (aliases, rest) = List.partition (function
+    | Ast.TLType (Ast.Alias _, _) -> true | _ -> false) rest in
+  variants @ aliases @ rest
+
 (* Run top-level items, dropping a fresh index in every so often: a file's
    own definitions accumulate in front of the base, and without this a name
    defined early is walked past by everything defined later. *)
@@ -2656,7 +2670,7 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
            let out = ref base in
            ignore (run_with_default_handler (fun () ->
              with_file_bounds prog.Ast.manifest (fun () ->
-               out := fold_items (run_item ~modul:path) base prog.Ast.items);
+               out := fold_items (run_item ~modul:path) base (hoist_types prog.Ast.items));
              VUnit));
            !out
        in
@@ -3414,7 +3428,8 @@ let run_program ?(mode = Normal) ~base_dir prog =
             walks past everything defined early. *)
          if since >= Evaluator.index_every then ((Evaluator.index_env env, last), 0)
          else ((env, last), since + 1)
-       ) ((index_env (base_eval_env @ imp.eval_env), VUnit), 0) prog.Ast.items
+       ) ((index_env (base_eval_env @ imp.eval_env), VUnit), 0)
+         (hoist_types prog.Ast.items)
        in last)
      ) in
      (* A request that arrived with nothing left to evaluate would otherwise
@@ -3617,7 +3632,8 @@ let run_test_program ~base_dir ?(item_locs = []) prog
            | Error m -> outcomes := !outcomes @ [TError m]);
           env
         | _ -> run_item env item
-      ) (index_env (base_eval_env @ imp.eval_env)) prog.Ast.items));
+      ) (index_env (base_eval_env @ imp.eval_env))
+        (hoist_types prog.Ast.items)));
       VUnit
     ));
     Ok !outcomes

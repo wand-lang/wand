@@ -1,0 +1,17 @@
+found:     fuzz.yml, seed 37076525109, iteration 8433, 2026-10-03 (#82)
+reported:  format:revalued -- was Pass, now Fail: unknown constructor 'Line'
+fixed in:  lib/runner.ml, hoist_types
+
+`test "" (fn t -> t.eq Line.usage Line.parser.usage)` runs its body at
+once, and `type Line(...)` is on a line below it. The typechecker reads
+every declaration before any item, so the file typechecked; the evaluator
+ran the items in source order, so the body found no `Line` and the run
+failed. `let x = Line(f = 1)` above `type Line(f: Int)` did the same with
+no test in it.
+
+The formatter was not at fault. The evaluator's tables of types live for
+the whole process, so the second run in the oracle's child found the
+`Line` the first run had registered, and passed: one source, two answers.
+
+Fixed by running a file's `type` items ahead of everything else, variants
+before aliases, which is the order the typechecker already reads them in.
