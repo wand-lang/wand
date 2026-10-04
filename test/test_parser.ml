@@ -178,6 +178,18 @@ let test_brace_import_destructure () =
   | [TLLetPat (PMap [("test", PVar "test")], _); TLExpr _] -> ()
   | _ -> Alcotest.fail "expected a TLLetPat with a punned PMap"
 
+(* A literal binder makes a top-level item, as `_` does, with or without
+   brackets. Without them it used to be a `let` taking the rest of the file
+   as its body, and `wand f`, which drops the brackets, moved a file from
+   the one to the other. Found by test/fuzz (#83). *)
+let test_a_literal_binder_is_a_top_level_item () =
+  List.iter (fun src ->
+    match (parse_program src).items with
+    | [TLLetPat _; TLLet ("x", [], _)] -> ()
+    | _ -> Alcotest.failf "expected two items from %S" src)
+    ["let 0 = 0\nlet x = 1\n"; "let (0) = 0\nlet x = 1\n";
+     "let \"a\" = \"a\"\nlet x = 1\n"; "let true = true\nlet x = 1\n"]
+
 (* An import statement is the keyword and the name, and the line ends there.
    What followed on the same line used to become a second top-level item:
    `import S(import S)` parsed as two imports where one application was
@@ -1257,6 +1269,8 @@ let () =
       Alcotest.test_case "brace map literal" `Quick test_brace_map_literal;
       Alcotest.test_case "brace map pattern" `Quick test_brace_map_pattern;
       Alcotest.test_case "brace import destructure" `Quick test_brace_import_destructure;
+      Alcotest.test_case "a literal binder is a top-level item" `Quick
+        test_a_literal_binder_is_a_top_level_item;
       Alcotest.test_case "an import ends at its name" `Quick
         test_an_import_statement_ends_at_its_name;
       Alcotest.test_case "a stray in names its binding" `Quick

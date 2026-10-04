@@ -1,0 +1,16 @@
+found:     test/fuzz, seed 37158308258, iteration 507697, 2026-10-03 (#83)
+reported:  format:unstable
+fixed in:  lib/parser.ml, the top-level `let`'s pattern branch
+
+A top-level binding whose binder is a literal in brackets:
+
+  let(0)=0
+
+The top level took a binding as an item of its own when the binder began
+with a bracket, a brace or `_`, and as a name otherwise. A literal was
+neither, so `let 0 = 0` fell through to the expression parser and became a
+`let` with no body. The brackets kept `let (0) = 0` an item; the formatter
+drops brackets around a literal, and the next pass read the result as an
+expression and wrote `(let 0 = 0; ())`. The two passes disagreed.
+
+A literal now opens the pattern branch, as `_` does.

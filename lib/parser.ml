@@ -2724,8 +2724,14 @@ let parse_program_generic ~on_item tokens =
           wrote them back as a single parenthesized block, and the rule that
           reports a `let _ =` binding Unit never saw one, because it looks at
           a file's items. A named binder was never affected: only `_` missed
-          this branch. *)
-       | Token.LBracket | Token.LParen | Token.LBrace | Token.Underscore ->
+          this branch. A literal is a binder too, for the same reason:
+          `let (0) = 0` was an item and `let 0 = 0` a `let` taking the rest
+          of the file as its body, so `wand f`, which drops the brackets
+          around a literal, turned the one into the other. Found by
+          test/fuzz. *)
+       | Token.LBracket | Token.LParen | Token.LBrace | Token.Underscore
+       | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _
+       | Token.Bool _ ->
          (* Top-level pattern destructuring: let <pat> = <expr> *)
          let p = pat_ s in
          expect s Token.Eq;
