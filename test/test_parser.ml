@@ -726,6 +726,19 @@ let test_if () =
     "if x then f ()\ng ()"
     (If (Var "x", App (Var "f", Unit), Unit))
 
+(* `unless` reads as `if` does, and keeps its branches in the order they
+   were written: the first runs when the condition is false. *)
+let test_unless () =
+  e "basic"
+    "unless x then 1 else 0"
+    (Unless (Var "x", Int 1, Int 0));
+  e "one-armed"
+    "unless x then f y"
+    (Unless (Var "x", App (Var "f", Var "y"), Unit));
+  e "in an if's else"
+    "if a then 1 else unless b then 2 else 3"
+    (If (Var "a", Int 1, Unless (Var "b", Int 2, Int 3)))
+
 (* ── Match ───────────────────────────────────────────────────────────────── *)
 
 let test_match () =
@@ -1301,6 +1314,7 @@ let () =
       Alcotest.test_case "annotated payload" `Quick test_annotated_payload_pattern;
       Alcotest.test_case "local multi-equation" `Quick test_local_multi_equation;
       Alcotest.test_case "if"           `Quick test_if;
+      Alcotest.test_case "unless"       `Quick test_unless;
       Alcotest.test_case "match"        `Quick test_match;
       Alcotest.test_case "constr pats"       `Quick test_constr_pats;
       Alcotest.test_case "constr named pats" `Quick test_constr_named_pats;

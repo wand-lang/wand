@@ -533,7 +533,7 @@ let peek_field_after_comma s =
   end
 
 let keywords = [
-  "let"; "in"; "match"; "with"; "if"; "then"; "else"; "fn"; "fun";
+  "let"; "in"; "match"; "with"; "if"; "unless"; "then"; "else"; "fn"; "fun";
   "type"; "import"; "when"; "and"; "or";
   "handle"; "return"
 ]
@@ -652,7 +652,7 @@ let is_atom_start = function
    by one fell through to the file, and the formatter wrote that shape from
    a program that meant the other. Found by the daily fuzzer. *)
 let is_expr_start = function
-  | Token.Let | Token.If | Token.Match | Token.Fn | Token.With
+  | Token.Let | Token.If | Token.Unless | Token.Match | Token.Fn | Token.With
   | Token.Minus | Token.Bang -> true
   | t -> is_atom_start t
 
@@ -1321,6 +1321,7 @@ and atom_base_ s =
   | Token.LBrace   -> brace_map_ s
   | Token.Let      -> let_ s
   | Token.If       -> if_ s
+  | Token.Unless   -> unless_ s
   | Token.Match    -> match_ s
   | Token.Fn       -> fn_ s
   | Token.Import   ->
@@ -1900,7 +1901,17 @@ and let_ ?(block = false) s =
     Let (p, e1, e2, style)
 
 and if_ s =
-  (* if already consumed *)
+  let (cond, then_, else_) = conditional s in
+  If (cond, then_, else_)
+
+and unless_ s =
+  let (cond, then_, else_) = conditional s in
+  Unless (cond, then_, else_)
+
+(* What follows `if` or `unless`: the two read the same, and only which
+   branch the condition picks differs. *)
+and conditional s =
+  (* the keyword already consumed *)
   let cond  = locate s (fun () -> expr_ 0 s) in
   expect s Token.Then;
   let then_ = locate s (fun () -> expr_ 0 s) in
@@ -1909,11 +1920,11 @@ and if_ s =
      and writing the empty branch out adds a line that says nothing. The
      branch still has to be `Unit`, because the two arms of an `if` are one
      expression and the missing one can only be `()`. *)
-  if peek s <> Token.Else then If (cond, then_, Unit)
+  if peek s <> Token.Else then (cond, then_, Unit)
   else begin
     ignore (advance s);
     let else_ = locate s (fun () -> expr_ 0 s) in
-    If (cond, then_, else_)
+    (cond, then_, else_)
   end
 
 and match_ s =

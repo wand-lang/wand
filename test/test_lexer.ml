@@ -76,6 +76,7 @@ let test_keywords () =
     "match",    Match;
     "with",     With;
     "if",       If;
+    "unless",   Unless;
     "then",     Then;
     "else",     Else;
     "type",     Type;

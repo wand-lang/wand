@@ -672,6 +672,23 @@ if ready then 1
 `wand f` removes an empty `else`: `if c then f () else ()` comes back as
 `if c then f ()`.
 
+### `unless`
+
+`unless` is `if` with the condition the other way. The `then` branch runs
+when the condition is false:
+
+```ocaml
+unless FS.exists? src then Proc.exit 2
+unless n > 100 then "small" else "big"
+```
+
+All the rules of `if` apply. An `unless` with no `else` does nothing when
+the condition is true, so its branch must be `Unit`. Use it where the
+alternative is `if !(...)`: a reader can miss a `!`, but not a word.
+
+A `match` that has only the arms `true` and `false` is an `if` written
+longer. `A-IF1` reports one, and says whether `if` or `unless` fits.
+
 ---
 
 ## Pipeline
@@ -7873,6 +7890,7 @@ punish the safer choice.
 | `V-SHELL3` | `Shell.inspect` runs a command known to change things, such as `kubectl apply` or `rm`, which a rehearsal would run for real — run it with `$(...)` |
 | `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
 | `V-CTOR1` | a `match` arm names bare a constructor that another type in scope shares — write the type, as in `PullPolicy.Always`; `wand t --fix` writes it |
+| `A-IF1` | a `match` has only the arms `true` and `false` — write `if`, or `unless` where the `true` arm is `()` |
 | `A-BIND1` | a `let _ =` binds a value that is `Unit`, so the binder dismisses a failure that is not there — write the statement on its own, sequenced with `;` where it sits in a body |
 | `A-USES1` | a manifest permits an effect the file does not use, or a binary no command runs |
 | `V-USES2` | a file performs effects and declares no manifest |

@@ -86,12 +86,9 @@ let get url = request Request(url = url)
 --
 -- >> Test.with_http [] (fn () -> (HTTP.get! https://example.com/).status)
 -- 200 : Int
-let get! url = (
+let get! url =
   let r = request! Request(url = url);
-  match ok? r with
-  | true -> r
-  | false -> fail_exn "http: %{url} answered %{r.status}"
-)
+  if ok? r then r else fail_exn "http: %{url} answered %{r.status}"
 
 -- Send a body to a URL. Raises if the exchange did not happen; a status the
 -- caller has to read is on the response.

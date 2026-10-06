@@ -3862,7 +3862,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
       ) bindings) in
     let env' = List.map (fun (name, t) -> (name, generalize env t)) inferred @ env in
     infer tenv env' e2
-  | If (cond, then_, else_) ->
+  | If (cond, then_, else_) | Unless (cond, then_, else_) ->
+    let word = match e with Unless _ -> "unless" | _ -> "if" in
+    let when_ = match e with Unless _ -> "true" | _ -> "false" in
     unify_expected ~expected:TBool ~got:(infer tenv env cond);
     let tt = infer tenv env then_ in
     (* An `if` the parser completed for us -- one written without an `else` --
@@ -3875,7 +3877,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        (try unify tt TUnit with
         | TypeError _ ->
           raise (TypeError (Printf.sprintf
-            "an `if` with no `else` does nothing when the condition is false, so its branch must be Unit -- this one is %s" (string_of_typ tt))))
+            "an `%s` with no `else` does nothing when the condition is %s, so its branch must be Unit -- this one is %s" word when_ (string_of_typ tt))))
      | _ -> unify_expected ~expected:tt ~got:(infer tenv env else_));
     tt
   | Match (scrutinee, cases) ->
@@ -6189,7 +6191,7 @@ let shell_sites (prog : program) : (Token.loc * Ast.expr) list =
       go loc a
     | Let (_, a, b, _) -> go loc a; go loc b
     | LetRec (bs, b, _) -> List.iter (fun (_, _, e) -> go loc e) bs; go loc b
-    | If (c, t, e) -> go loc c; go loc t; go loc e
+    | If (c, t, e) | Unless (c, t, e) -> go loc c; go loc t; go loc e
     | Match (s, cases) ->
       go loc s;
       List.iter (fun (_, g, b) ->

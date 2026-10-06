@@ -504,8 +504,8 @@ let bin_prec = function
 let bin_right_assoc = function "::" -> true | _ -> false
 
 let is_control_expr e = match strip_located e with
-  | Let _ | LetRec _ | If _ | Match _ | Fn _ | Handle _ | Try _ | Contract _
-  | With _ -> true
+  | Let _ | LetRec _ | If _ | Unless _ | Match _ | Fn _ | Handle _ | Try _
+  | Contract _ | With _ -> true
   | _ -> false
 
 let is_binop_or_unop e = match strip_located e with
@@ -689,7 +689,7 @@ let rec ends_in_an_arm e =
   match strip_located e with
   | Match _ | Handle _ -> true
   | Fn (_, body) -> ends_in_an_arm body
-  | If (_, _, els) -> ends_in_an_arm els
+  | If (_, _, els) | Unless (_, _, els) -> ends_in_an_arm els
   | Let (_, _, body, _) | LetRec (_, body, _) -> ends_in_an_arm body
   | With (_, _, body) -> ends_in_an_arm body
   | Annot (_, inner) -> ends_in_an_arm inner
@@ -1222,7 +1222,8 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
     emit_block ~col ~bare:stmt indent e
   | Let (p, e1, e2, LetIn) -> emit_let ~col indent p e1 e2
   | LetRec (bindings, e2, LetIn) -> emit_letrec indent bindings e2
-  | If (c, t, el) -> emit_if ~col indent c t el
+  | If (c, t, el) -> emit_if ~col ~word:"if" indent c t el
+  | Unless (c, t, el) -> emit_if ~col ~word:"unless" indent c t el
   | Match (scr, cases) -> emit_match ~col indent scr cases
   | BinOp (op, a, b) -> emit_binop ~col indent op a b
   | UnOp (op, e) ->
@@ -1791,7 +1792,7 @@ and emit_chain op indent a b =
      stage that wraps closes its brackets in line with the ones it opened. *)
   let piece ?(at = indent) side e =
     match strip_located e with
-    | (Try _ | Handle _ | Contract _ | Fn _ | If _ | Match _
+    | (Try _ | Handle _ | Contract _ | Fn _ | If _ | Unless _ | Match _
       | Let _ | LetRec _ | With _) as inner -> bracket (emit_expr at inner)
     (* A stage that is an operator of its own keeps the brackets `emit_binop`
        would have given it, and did not: the stages are read back as one
@@ -1833,7 +1834,7 @@ and emit_binop ?col indent op a b =
     (* These extend as far to the right as they can, so an operand needs
        parentheses or the operator is swallowed into it: `(try e) == x`
        printed bare re-parses as `try (e == x)`. *)
-    | (Try _ | Handle _ | Contract _ | Fn _ | If _ | Match _
+    | (Try _ | Handle _ | Contract _ | Fn _ | If _ | Unless _ | Match _
       | Let _ | LetRec _) as inner -> bracket (emit_expr indent inner)
     (* An operand that wrapped ends at its first line, so the rest of it
        reads as something new -- the operator having said nothing about how
@@ -2223,7 +2224,7 @@ and emit_letrec indent bindings e2 =
   emit_letrec_bindings indent bindings ^^ Doc.text "\n" ^^ ind ^^ Doc.text "in "
   ^^ bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2)
 
-and emit_if ?col indent c t el =
+and emit_if ?col ~word indent c t el =
   let col = match col with Some c -> c | None -> indent in
   (* The condition gets the same treatment the branches get, and did not.
      `then` has to follow it, and an application that wrapped is over by the
@@ -2237,10 +2238,10 @@ and emit_if ?col indent c t el =
     let one_line =
       if Doc.has_newline cs then None
       else
-        match stands_in (!max_width - col - Doc.width cs - 9) t with
+        match stands_in (!max_width - col - Doc.width cs - String.length word - 7) t with
         | None -> None
         | Some td ->
-          let oneline = Doc.text "if " ^^ cs ^^ Doc.text " then " ^^ td in
+          let oneline = Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then " ^^ td in
           if fits col oneline then Some oneline else None
     in
     (match one_line with
@@ -2249,21 +2250,21 @@ and emit_if ?col indent c t el =
         it does after `=`. Put below, its `(` stood alone and its statements
         at the column of the bracket. *)
      | None when is_block t && not (Doc.has_newline cs) ->
-       let head = Doc.text "if " ^^ cs ^^ Doc.text " then " in
+       let head = Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then " in
        head ^^ emit_block ~col:(col + Doc.width head) indent t
      | None ->
        let ts = emit_expr indent t in
-       Doc.text "if " ^^ cs ^^ Doc.text " then\n" ^^ Doc.spaces (indent + 2)
+       Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then\n" ^^ Doc.spaces (indent + 2)
        ^^ bracket_if_wrapped_app_at ~anchor:indent t ts)
   | _ ->
     let one_line =
       if Doc.has_newline cs then None
       else
-        let room = !max_width - col - Doc.width cs - 15 in
+        let room = !max_width - col - Doc.width cs - String.length word - 13 in
         match stands_in room t, stands_in room el with
         | Some td, Some ed ->
           let oneline =
-            Doc.text "if " ^^ cs ^^ Doc.text " then " ^^ td
+            Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then " ^^ td
             ^^ Doc.text " else " ^^ ed in
           if fits col oneline then Some oneline else None
         | _ -> None
@@ -2280,10 +2281,10 @@ and emit_if ?col indent c t el =
       let ind = Doc.spaces cont in
       (* A branch that wrapped ends at its first line, so what is left of it
          below reads as continuing whatever the `if` belongs to. *)
-      let rec ladder c t el =
+      let rec ladder word c t el =
         let clause =
           let head =
-            Doc.text "if "
+            Doc.text (word ^ " ")
             ^^ bracket_if_wrapped_app_at ~anchor:cont c (emit_expr cont c)
             ^^ Doc.text " then" in
           let prefix = head ^^ Doc.text " " in
@@ -2310,7 +2311,10 @@ and emit_if ?col indent c t el =
         match strip_located el with
         | Unit -> ([clause], None)
         | If (c2, t2, el2) ->
-          let (clauses, last) = ladder c2 t2 el2 in
+          let (clauses, last) = ladder "if" c2 t2 el2 in
+          (clause :: clauses, last)
+        | Unless (c2, t2, el2) ->
+          let (clauses, last) = ladder "unless" c2 t2 el2 in
           (clause :: clauses, last)
         | _ ->
           let last =
@@ -2321,7 +2325,7 @@ and emit_if ?col indent c t el =
           in
           ([clause], Some last)
       in
-      let (clauses, last) = ladder c t el in
+      let (clauses, last) = ladder word c t el in
       let else_ = Doc.text "\n" ^^ ind ^^ Doc.text "else" in
       Doc.concat (else_ ^^ Doc.text " ") clauses
       ^^ (match last with Some d -> else_ ^^ d | None -> Doc.empty)
@@ -2355,8 +2359,8 @@ and case_body_tail e = match strip_located e with
   | LetRec (_, e2, _)     -> case_body_tail e2
   | With (_, _, body)     -> case_body_tail body
   | Fn (_, body)          -> case_body_tail body
-  | If (_, then_, Unit)   -> case_body_tail then_
-  | If (_, _, els)        -> case_body_tail els
+  | If (_, then_, Unit) | Unless (_, then_, Unit) -> case_body_tail then_
+  | If (_, _, els) | Unless (_, _, els) -> case_body_tail els
   | e -> e
 
 (* A value written after text that opens its line -- an arm's `-> `, an

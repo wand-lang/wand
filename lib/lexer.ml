@@ -110,6 +110,7 @@ let keyword_or_ident word = match word with
   | "let"      -> Let      | "in"       -> In
   | "match"    -> Match    | "with"     -> With
   | "if"       -> If       | "then"     -> Then
+  | "unless"   -> Unless
   | "else"     -> Else     | "type"     -> Type
   | "import"   -> Import
   | "interface" -> Interface

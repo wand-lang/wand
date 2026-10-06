@@ -266,6 +266,26 @@ let rec command_under (e : Ast.expr) =
      | _ -> e)
   | _ -> e
 
+(* The two arms of a `match` that only asks whether a Bool is true, as the
+   branch for `true` and the branch for `false`. A guard, a third arm or a
+   pattern that binds a name makes it something an `if` does not say. A
+   group of equations, as `let f true = ...`, matches over names the parser
+   made, and is left alone: its author wrote equations, not a `match`. *)
+let bool_match_arms (scrutinee : Ast.expr) (cases : Ast.case list) =
+  let synthetic = match strip_located scrutinee with
+    | Ast.Var v -> v = "_p0"
+    | _ -> false
+  in
+  if synthetic then None
+  else
+    match cases with
+    | [(p1, None, b1); (p2, None, b2)] ->
+      (match p1, p2 with
+       | Ast.Bool true, (Ast.Bool false | Ast.Wild) -> Some (b1, b2)
+       | Ast.Bool false, (Ast.Bool true | Ast.Wild) -> Some (b2, b1)
+       | _ -> None)
+    | _ -> None
+
 let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
   let acc = ref [] in
   let here = ref start_loc in
@@ -425,8 +445,19 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
        | _ -> ());
       go ~spine b
     | Ast.LetRec (bs, b, _) -> List.iter (fun (_, _, x) -> go x) bs; go b
-    | Ast.If (c, t, f) -> go c; go t; go f
+    | Ast.If (c, t, f) | Ast.Unless (c, t, f) -> go c; go t; go f
     | Ast.Match (s, cases) ->
+      (match bool_match_arms s cases with
+       | Some (on_true, on_false) ->
+         let empty =
+           match strip_located on_true, strip_located on_false with
+           | Ast.Unit, _ -> `True
+           | _, Ast.Unit -> `False
+           | _ -> `Neither
+         in
+         acc := { rule = Lint_rules.A_IF1; loc = !here;
+                  text = Lint_rules.if1 ~empty; fix = None } :: !acc
+       | None -> ());
       go s;
       List.iter (fun (_, g, b) ->
         (match g with Some g -> go g | None -> ()); go b) cases
@@ -477,7 +508,7 @@ let rec names_of_expr (e : Ast.expr) : string list =
     List.concat_map (fun (_, ps, x) ->
       List.concat_map names_of_pat ps @ names_of_expr x) bs
     @ names_of_expr b
-  | Ast.If (c, t, f) -> of_list [c; t; f]
+  | Ast.If (c, t, f) | Ast.Unless (c, t, f) -> of_list [c; t; f]
   | Ast.Match (s, cases) ->
     names_of_expr s
     @ List.concat_map (fun (p, g, b) ->
@@ -577,7 +608,8 @@ let names_of_item_types (item : Ast.top_item) : string list =
     | Ast.LetRec (bs, b, _) ->
       List.concat_map (fun (_, ps, x) -> List.concat_map te_of_pat ps @ te_of_expr x) bs
       @ te_of_expr b
-    | Ast.If (c, t, f) -> te_of_expr c @ te_of_expr t @ te_of_expr f
+    | Ast.If (c, t, f) | Ast.Unless (c, t, f) ->
+      te_of_expr c @ te_of_expr t @ te_of_expr f
     | Ast.Match (s, cases) ->
       te_of_expr s
       @ List.concat_map (fun (p, g, b) ->

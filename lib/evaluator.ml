@@ -2481,6 +2481,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      | VBool true  -> eval_at tail env then_
      | VBool false -> eval_at tail env else_
      | _           -> raise (EvalError "if condition must be a bool"))
+  | Unless (cond, then_, else_) ->
+    (match eval env cond with
+     | VBool false -> eval_at tail env then_
+     | VBool true  -> eval_at tail env else_
+     | _           -> raise (EvalError "unless condition must be a bool"))
   | Match (scrutinee, cases) ->
     let sv = eval env scrutinee in
     eval_match tail env sv cases

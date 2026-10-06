@@ -132,6 +132,11 @@ type expr =
   | LetRec   of (string * pat list * expr) list * expr * let_style
       (* mutually-recursive function group: let f ... = ... and g ... = ... *)
   | If       of expr * expr * expr
+  (* `unless c then a else b`: `if` with the condition the other way up.
+     Kept apart from `If` so the formatter can give back the word that was
+     written; the branches are in the order they were written, so `a` runs
+     when `c` is false. *)
+  | Unless   of expr * expr * expr
   | Match    of expr * case list
   | BinOp    of string * expr * expr
   | UnOp     of string * expr
@@ -357,6 +362,7 @@ let rec show : expr -> string = function
       (match st with LetIn -> " in" | LetBlock -> ";")
       (show e2)
   | If (c, t, e)    -> Printf.sprintf "(if %s %s %s)" (show c) (show t) (show e)
+  | Unless (c, t, e) -> Printf.sprintf "(unless %s %s %s)" (show c) (show t) (show e)
   | Match (e, cs)   -> Printf.sprintf "(match %s %s)" (show e) (show_cases cs)
   | BinOp (op,a,b)  -> Printf.sprintf "(%s %s %s)" (show a) op (show b)
   | UnOp (op, e)    -> Printf.sprintf "(%s%s)" op (show e)

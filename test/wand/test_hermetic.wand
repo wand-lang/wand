@@ -58,12 +58,9 @@ test "the config was never written" (fn t ->
 -- handlers answer it: `with_shell` supplies its output at exit zero, and
 -- `with_shell_results` supplies a whole result, which is how a failure is
 -- rehearsed.
-let gate () = (
+let gate () =
   let r = $?(dune build);
-  match Shell.ok? r with
-  | true -> "built %{r.stdout}"
-  | false -> "failed %{r.code}: %{r.stderr}"
-)
+  if Shell.ok? r then "built %{r.stdout}" else "failed %{r.code}: %{r.stderr}"
 
 test "a capture reads the same table" (fn t ->
   t.eq "built ok" (Test.with_shell [("dune build", "ok")] gate))

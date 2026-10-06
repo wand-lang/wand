@@ -832,6 +832,22 @@ let test_one_armed_if () =
     "let f c = if c then 1 else 2\n"
     (fmt "let f c = if c then 1 else 2")
 
+(* `unless` comes back as `unless`, in every layout `if` has. *)
+let test_unless_keeps_its_word () =
+  Alcotest.(check string) "one-armed, with its empty else dropped"
+    "let f c = unless c then g ()\n"
+    (fmt "let f c = unless c then g () else ()");
+  Alcotest.(check string) "two-armed"
+    "let f c = unless c then 1 else 2\n"
+    (fmt "let f c = unless c then 1 else 2");
+  Alcotest.(check string) "on an else ladder"
+    "let f a b = if a then 1 else unless b then 2 else 3\n"
+    (fmt "let f a b = if a then 1 else unless b then 2 else 3");
+  formats_and_parses "a ladder too wide for one line" 40
+    "let f a b = if a then \"one\" else unless b then \"two\" else \"three\"";
+  formats_and_parses "a block branch" 30
+    "let f c = unless c then (g (); h ()) else ()"
+
 (* A `Map` is keyed by arbitrary strings, and the parser takes a key quoted
    when it is not an identifier. Printing one bare produced source that does
    not lex -- so every map with a real-world key was destroyed by running the
@@ -2208,6 +2224,7 @@ let () =
       Alcotest.test_case "float literal type" `Quick test_float_literal_type_preserved;
       Alcotest.test_case "constructor argument parens" `Quick test_constructor_argument_keeps_its_parens;
       Alcotest.test_case "one-armed if" `Quick test_one_armed_if;
+      Alcotest.test_case "unless" `Quick test_unless_keeps_its_word;
       Alcotest.test_case "map keys needing quotes" `Quick test_map_keys_that_are_not_identifiers;
       Alcotest.test_case "width from the start column" `Quick test_width_is_measured_from_the_start_column;
       Alcotest.test_case "mid-line breaks step in" `Quick test_midline_breaks_step_in;

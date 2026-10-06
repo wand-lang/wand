@@ -175,7 +175,7 @@
         {
           "comment": "`return` names a handler's return case. `for`, `do`, `end`, `class` and `of` are not wand's, and painting them as keywords says they are.",
           "name": "keyword.control.wand",
-          "match": "\\b(if|then|else|match|with|when|try|handle|return)\\b"
+          "match": "\\b(if|unless|then|else|match|with|when|try|handle|return)\\b"
         },
         {
           "comment": "`and` joins mutually recursive bindings; it is not the boolean operator, which is `&&`.",

@@ -42,7 +42,7 @@ let children (e : Ast.expr) : Ast.expr list =
   | Located (_, a) | Qualified (_, a)
   | RunCmd (a, _) | RunQuery (a, _) | MkCommand (a, _) -> [a]
   | LetRec (bs, b, _) -> List.map (fun (_, _, e) -> e) bs @ [b]
-  | If (c, t, e) -> [c; t; e]
+  | If (c, t, e) | Unless (c, t, e) -> [c; t; e]
   | Match (s, cases) ->
     s :: List.concat_map (fun (_, g, b) -> Option.to_list g @ [b]) cases
   | Tuple es | List es -> es

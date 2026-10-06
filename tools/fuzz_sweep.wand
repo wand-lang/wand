@@ -76,30 +76,25 @@ let archive_dir = Path.of_string "%{wand_root}/_fuzz-findings/sweep"
 -- body, so a pin made inside one is deleted before the first seed runs.
 let pin! () = (
   let src = Path.of_string fuzz_exe;
-  match FS.exists? src with
-  | false -> (
+  unless FS.exists? src then (
     IO.println_err "no fuzzer at %{fuzz_exe} -- set FUZZ_EXE, or build it";
     Proc.exit 2
-  )
-  | true -> ();
+  );
   let pinned = Path.join archive_dir (Path.of_string "fuzz.exe");
   FS.copy! src pinned;
   -- Compared, not assumed. A copy that failed and was not checked is the
   -- whole reason this file exists.
   let same = FS.read_file! (Path.of_string fuzz_exe) == FS.read_file! pinned;
-  match same with
-  | false -> (IO.println_err "the pinned copy differs from %{fuzz_exe}"; Proc.exit 2)
-  | true -> ();
+  unless same then (IO.println_err "the pinned copy differs from %{fuzz_exe}"; Proc.exit 2);
   -- The copy has to be runnable, and a copy does not have to carry the
   -- execute bit. Asked here, where the answer is one line, rather than as
   -- "No such file or directory" once per seed.
   let ok = $?(test -x %{Path.to_string pinned});
-  match Shell.ok? ok with
-  | false -> (
+  unless Shell.ok? ok then (
     IO.println_err "the pinned copy is not executable: %{Path.to_string pinned}";
     Proc.exit 2
   )
-  | true -> pinned
+  else pinned
 )
 
 -- Where one seed's findings go. `--out` gives each seed a directory of its
@@ -115,11 +110,7 @@ let run_seed pinned (seed: Int) =
   let out = out_of seed;
   let r =
     $?(%{Path.to_string pinned} --seed %{seed} --iterations 100000000 --seconds %{seconds} --timeout 20 --shrink 2000 --out %{Path.to_string out});
-  let found =
-    match FS.exists? out with
-    | true -> FS.glob_in **.wand out
-    | false -> []
-  in
+  let found = if FS.exists? out then FS.glob_in **.wand out else [];
   (seed, r.code, String.trim "%{r.stdout}%{r.stderr}", found)
 
 -- One seed's line in the log, in seed order, once every seed is done.
@@ -129,19 +120,16 @@ let report_seed (seed, code, output, found) = (
   -- The fuzzer exits 0 with nothing to say and 1 when it found something.
   -- Anything else means it did not run, and a sweep that could not start
   -- must not report a quiet night.
-  match code > 1 with
-  | true -> (IO.println_err "seed %{seed} did not run (exit %{code})"; Proc.exit 2)
-  | false -> ();
+  if code > 1 then (IO.println_err "seed %{seed} did not run (exit %{code})"; Proc.exit 2);
   -- The fuzzer says it found something by exiting 1, and shows what by
   -- writing the input and its notes. If the two disagree, the sweep cannot
   -- say what happened, and saying "no new findings" would be the worst of
   -- the answers available.
-  match code == 1 && found == [] with
-  | true -> (
+  if code == 1 && found == [] then (
     IO.println_err "seed %{seed} reported a finding and wrote no file";
     Proc.exit 2
   )
-  | false -> found
+  else found
 )
 
 let report kept = (
@@ -155,9 +143,7 @@ let report kept = (
 )
 
 let main! () = (
-  match FS.exists? archive_dir with
-  | true -> FS.delete_tree! archive_dir
-  | false -> ();
+  if FS.exists? archive_dir then FS.delete_tree! archive_dir;
   FS.mkdir! archive_dir;
   let pinned = pin! ();
   IO.println "pinned %{fuzz_exe}, %{seeds} seeds of %{seconds}s, %{workers} at a time";

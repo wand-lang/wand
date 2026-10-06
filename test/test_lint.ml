@@ -573,7 +573,10 @@ let expected_findings =
        `test_script.wand` is where that fact is asserted -- so the file has
        to contain the thing the rule reports. Lint is advice; the nearest
        binding winning is behaviour. *)
-    ("test_script.wand", "V-SHADOW1") ]
+    ("test_script.wand", "V-SHADOW1");
+    (* A-IF1 says a `match` over a Bool reads better as an `if`. That the
+       match works is still a fact, and `test_eval.wand` asserts it. *)
+    ("test_eval.wand", "A-IF1") ]
 
 let expected_type_errors =
   [ (* D1: the same script bash would run, which wand will not. *)
@@ -740,6 +743,33 @@ let test_shadow1 () =
   silent "renamed apart"
     "let limit = 100\nlet check = fn n -> n + limit\nlet ceiling = 500\ncheck ceiling"
 
+(* A `match` over `true` and `false` is an `if`, and an arm of `()` is the
+   branch `if` or `unless` leaves out. Only the plain two-armed form is one:
+   a guard, or a group of equations, says something an `if` does not. *)
+let test_if1 () =
+  let says src what =
+    let f =
+      List.find (fun (f : Lint.finding) -> f.Lint.rule = Lint_rules.A_IF1)
+        (findings src)
+    in
+    if not (contains f.Lint.text what) then
+      Alcotest.failf "expected %S in: %s" what f.Lint.text
+  in
+  let nothing_when_true = "let g () = ()\nlet f x = match x > 1 with\n  | true -> ()\n  | false -> g ()" in
+  fires "the true arm does nothing" nothing_when_true "A-IF1";
+  says nothing_when_true "unless";
+  let nothing_when_false = "let g () = ()\nlet f x = match x with\n  | false -> ()\n  | true -> g ()" in
+  fires "the false arm does nothing" nothing_when_false "A-IF1";
+  says nothing_when_false "`if <value> then` with the `true` arm";
+  fires "a wildcard for false"
+    "let f x = match x with\n  | true -> 1\n  | _ -> 2" "A-IF1";
+  not_fired "a guard"
+    "let f x = match x with\n  | true when x -> 1\n  | _ -> 2" "A-IF1";
+  not_fired "a group of equations"
+    "let f true = 1\nlet f false = 2" "A-IF1";
+  not_fired "a match over an Int"
+    "let f x = match x with\n  | 0 -> 1\n  | _ -> 2" "A-IF1"
+
 (* `let _ =` says a dropped failure does not matter. Where the value is Unit
    there is no failure, so the binder does nothing.
 
@@ -885,6 +915,7 @@ let () =
       Alcotest.test_case "A-BIND1"  `Quick test_bind1;
       Alcotest.test_case "A-BIND1 top-level binder" `Quick
         test_a_top_level_wildcard_binds_one_value;
+      Alcotest.test_case "A-IF1"    `Quick test_if1;
       Alcotest.test_case "V-SHADOW1" `Quick test_shadow1;
       Alcotest.test_case "V-SHADOW1 top level only" `Quick
         test_shadow1_is_top_level_only;

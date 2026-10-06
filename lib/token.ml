@@ -49,6 +49,7 @@ type t =
   | Match
   | With
   | If
+  | Unless
   | Then
   | Else
   | Type
@@ -170,6 +171,7 @@ let pp ppf tok =
     | Let        -> "let"
     | In         -> "in"     | Match      -> "match"
     | With       -> "with"   | If         -> "if"
+    | Unless     -> "unless"
     | Then       -> "then"   | Else       -> "else"
     | Type       -> "type"
     | Interface  -> "interface"
@@ -219,7 +221,7 @@ let equal a b = a = b
 (* A word the language has taken. Used where a name is expected, so the
    message can say why a perfectly ordinary-looking word was refused. *)
 let is_keyword = function
-  | Let | In | Match | With | If | Then | Else | Type | Import
+  | Let | In | Match | With | If | Unless | Then | Else | Type | Import
   | Interface | Implement
   | Requires | Ensures | Result | Fn | For | Do | End
   | When | As | And | Or | Handle | Return | Try -> true
@@ -232,6 +234,7 @@ let keyword_text = function
   | Let -> Some "let"           | In -> Some "in"
   | Match -> Some "match"       | With -> Some "with"
   | If -> Some "if"             | Then -> Some "then"
+  | Unless -> Some "unless"
   | Else -> Some "else"         | Type -> Some "type"
   | Import -> Some "import"     | Requires -> Some "requires"
   | Interface -> Some "interface"

@@ -33,6 +33,7 @@ type id =
   | V_SHADOW1  (* a top-level name is bound twice, so its meaning depends on the line *)
   | A_BIND1    (* `let _ =` over a Unit value dismisses a failure that is not there *)
   | V_MOD1     (* a module is bound to a name in lower case *)
+  | A_IF1      (* a `match` over a Bool says what an `if` or `unless` says *)
 
 (* The prefix says what a finding will do to you, so a rule ID printed in a
    terminal answers that on its own -- the same reason a raising function is
@@ -183,6 +184,13 @@ let all = [
   { id = V_SHADOW1; code = "V-SHADOW1";
     summary = "a top-level name is bound twice in one file";
     kind = Violation };
+  (* A `match` over `true` and `false` is an `if` written longer, and an
+     arm of `()` is the branch a one-armed `if` or `unless` leaves out. A
+     reader from an Algol-style language reads the `if` at once. Advisory:
+     the match is correct, and exhaustive. *)
+  { id = A_IF1;    code = "A-IF1";
+    summary = "a `match` over a Bool says what an `if` or `unless` says";
+    kind = Advisory };
 ]
 
 let rule id = List.find (fun r -> r.id = id) all
@@ -400,3 +408,17 @@ let bind1 ~standalone =
    so there is no failure to drop -- "
   ^ (if standalone then "write the statement on its own"
      else "write the statement on its own, sequenced with `;`")
+
+(* Which arm of the match does nothing, if one does: that arm is the
+   branch the suggested form leaves out. *)
+let if1 ~empty =
+  match empty with
+  | `True ->
+    "this `match` over a Bool does nothing when the value is true -- \
+     write `unless <value> then` with the `false` arm as its branch"
+  | `False ->
+    "this `match` over a Bool does nothing when the value is false -- \
+     write `if <value> then` with the `true` arm as its branch"
+  | `Neither ->
+    "a `match` over a Bool is an `if` -- write `if <value> then` with the \
+     `true` arm, and `else` with the `false` arm"
