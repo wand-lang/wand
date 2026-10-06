@@ -1,5 +1,14 @@
-## 0.101.3 - 2026-10-04
+## 0.102.0 - 2026-10-06
 
-### Fixed
+### Upgrading
 
-- A top-level `let` with a literal binder, as `let 0 = 0`, now ends at the end of its line, as `let _ = e` does, and the lines below it are statements of their own. Before, the `let` took all the lines below it as its body. `wand f` removes the brackets from `let (0) = 0`, so a second `wand f` gave a different file (#83).
+- `unless` is now a keyword. Rename a name or a map key spelled `unless`, or put the key in quotes: `{"unless" = 1}`.
+
+### Added
+
+- `unless c then a else b`, which is `if` with the condition the other way. The `else` is optional, as it is for `if`.
+- `A-IF1` reports a `match` with only the arms `true` and `false`, and says whether `if` or `unless` fits.
+
+### Documentation
+
+- The reference describes `unless` and `A-IF1`.
