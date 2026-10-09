@@ -792,6 +792,12 @@ let describe_operation name (v : value) =
      | VTuple [(VURL (url, _) | VString url); dest] ->
        Some ("download", url ^ " -> " ^ text dest)
      | other -> Some ("download", text other))
+  | "Net!listen" -> Some ("listen on", text v)
+  | "Net!write" ->
+    (match v with
+     | VTuple [_; VString s] ->
+       Some ("send", Printf.sprintf "%d bytes" (String.length s))
+     | other -> Some ("send", text other))
   | "FS!lock"      -> Some ("lock", text v)
   | "FS!lock_wait" -> Some ("lock, waiting up to", pair v)
   | "FS!unlock"    -> Some ("release the lock on", text v)
@@ -1071,7 +1077,10 @@ let is_mutation_value name v =
 
 let is_mutation = function
   | "Clock!sleep"
-  | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code" | "Shell!stream" | "Shell!stream_err" | "Shell!spawn" | "FS!write_lines" | "FS!write_lines_atomic" | "FS!append_lines" | "FS!write_file" | "FS!write_atomic" | "FS!append" | "FS!create_file" | "FS!delete" | "FS!mkdir" | "FS!rename" | "FS!copy" | "FS!temp_file" | "FS!temp_dir" | "FS!delete_tree" | "FS!copy_tree" | "Env!set" | "Env!clear"-> true
+  | "Shell!run" | "Shell!run_quiet" | "Shell!capture" | "Shell!exit_code" | "Shell!stream" | "Shell!stream_err" | "Shell!spawn" | "FS!write_lines" | "FS!write_lines_atomic" | "FS!append_lines" | "FS!write_file" | "FS!write_atomic" | "FS!append" | "FS!create_file" | "FS!delete" | "FS!mkdir" | "FS!rename" | "FS!copy" | "FS!temp_file" | "FS!temp_dir" | "FS!delete_tree" | "FS!copy_tree" | "Env!set" | "Env!clear"
+  (* Serving binds a port and answers whoever connects: a rehearsal that
+     did it served real clients and reported nothing. *)
+  | "Net!listen" | "Net!write" -> true
   | _ -> false
 
 (* What an operation hands back when it is reported instead of carried out.
@@ -1220,6 +1229,10 @@ let substitute_for name =
   | "Shell!stream" -> Some (VList [], "no output")
   | "Shell!stream_err" -> Some (VList [], "no output")
   | "Shell!spawn" -> Some (withheld_process "", "a process that reads nothing")
+  (* A port nobody can reach: the connections a rehearsal cannot have are
+     none, which is how a handler serves a test. *)
+  | "Net!listen" -> Some (VList [], "no connections")
+  | "Net!write" -> Some (VConstr (Ctor.Builtin "Ok", [VUnit]), "sent")
   (* A request that was not sent still has to answer, and what it answers
      steers the rest of the script. `202 Accepted` with no body says the
      server took it and said nothing, which is the least a caller can read

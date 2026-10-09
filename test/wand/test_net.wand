@@ -1,10 +1,13 @@
-uses {Clock, Net.Listen(:18471, :18472, :18473), Shell(curl)}
+uses {Clock, FS.Read, FS.Write, Net.Listen(:18471, :18472, :18473, :18474), Shell(curl)}
 
 import Clock
+import FS
 import List
 import Net
 import Option
 import Par
+import Stream
+import String
 
 let {test, group} = import Test
 
@@ -53,4 +56,37 @@ test "stopping a branch stops the work inside it" (fn t ->
     (Par.all! [
       fn () -> (Net.listen :18473 |> Par.each_stream 4 (fn _ -> ()); "server ended"),
       fn () -> (Clock.sleep 200ms; "stopped")
+    ]))
+
+-- A client that sends no line ending is not buffered without end: past 1MB
+-- the read ends as if the other end had finished, and the connection is
+-- closed, so the client's 3MB upload fails at once. Without the limit
+-- the server reads it all and waits for more, and curl's own time runs out,
+-- which is exit 28.
+test "a line longer than 1MB ends the connection" (fn t ->
+  let lines conn =
+    let go n =
+      match Net.read_line conn with
+      | Some _ -> go (n + 1)
+      | None -> n
+    in
+    go 0;
+  t.eq
+    "the server ended the read"
+    (Par.all! [
+      fn () -> (
+        let _ = Net.listen :18474 |> Stream.take 1 |> Stream.map lines |> Stream.to_list;
+        Clock.sleep 1s;
+        "the server ended the read"
+      ),
+      fn () -> (
+        Clock.sleep 200ms;
+        let r =
+          with FS.temp_file "wand_net_line_" "" as body -> (
+            FS.write_file! body (String.repeat 3000000 "a");
+            $?(curl -s --max-time 10 --data-binary @%{body} http://127.0.0.1:18474/)
+          );
+        if r.code == 28 then "the upload ran until curl stopped it"
+        else "the server ended the read"
+      )
     ]))

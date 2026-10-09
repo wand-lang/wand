@@ -3436,8 +3436,16 @@ let conn_of = function
   | VConn c -> c
   | _ -> raise (EvalError "expected a Connection")
 
+(* The longest line a connection may send. Without a limit, a client that
+   sends no newline is buffered until memory runs out: 400MB with no line
+   ending took a server to 828MB. A line that passes it ends the connection,
+   as the other end finishing does -- `read_line` has no way to fail, and a
+   peer that breaks the protocol is not owed the rest of the read. *)
+let max_line = 1 lsl 20
+
 (* The next line, without its line ending; None once the other end has
-   finished and nothing is left. *)
+   finished and nothing is left, or once it has sent a line longer than
+   [max_line]. *)
 let conn_read_line c =
   let rec go () =
     let len = Buffer.length c.c_buf in
@@ -3450,6 +3458,16 @@ let conn_read_line c =
       let n = String.length line in
       Some (if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1)
             else line)
+    | None when len - c.c_pos > max_line ->
+      (* Closed here, not only marked finished: a peer still sending would
+         otherwise wait on a socket nobody reads. Marked closed, so the
+         close at the end of the connection's work does not close the
+         descriptor again after another socket has taken its number. *)
+      c.c_eof <- true;
+      c.c_closed <- true;
+      (try Unix.close c.c_fd with Unix.Unix_error _ -> ());
+      Buffer.clear c.c_buf; c.c_pos <- 0; c.c_scan <- 0;
+      None
     | None ->
       c.c_scan <- len;
       if conn_fill c then go ()

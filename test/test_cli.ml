@@ -687,6 +687,18 @@ let test_import_work_waits_on_the_check () =
     Alcotest.(check bool) "without making it" false
       (Sys.file_exists (Filename.concat d "written.txt")))
 
+(* A rehearsal binds no port: it served real clients and reported nothing.
+   It reports the listen, and answers it with no connections. *)
+let test_a_rehearsal_does_not_listen () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "srv.wand")
+      "uses {Net.Listen(:18475)}\nimport Net\nimport Stream\n\
+       Net.listen :18475 |> Stream.take 1 |> Stream.each (fn c -> Net.write! \"x\" c)\n";
+    let (code, out) = wand_out ~dir:d ["--dry-run"; "srv.wand"] in
+    Alcotest.(check int) "the rehearsal ends" 0 code;
+    Alcotest.(check bool) "and reports the listen" true
+      (contains_sub out "would listen on: :18475"))
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1237,9 +1249,10 @@ let test_type_of_several_paths () =
 
 let () =
   Alcotest.run "CLI" [
-    "imports run after the check", [
+    "what a run checks and withholds", [
       Alcotest.test_case "a run checks what wand t checks" `Quick test_run_checks_what_t_checks;
       Alcotest.test_case "an import's work waits on the check" `Quick test_import_work_waits_on_the_check;
+      Alcotest.test_case "a rehearsal does not listen" `Quick test_a_rehearsal_does_not_listen;
     ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;

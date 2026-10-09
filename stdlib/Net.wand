@@ -26,7 +26,8 @@ uses {Net.Listen}
 let listen port = net_listen port
 
 -- The next line from `conn`, without its line ending, or `None` once the
--- other end has finished and nothing is left.
+-- other end has finished and nothing is left. A line longer than 1MB ends
+-- the connection the same way: `None`, and nothing more is read from it.
 let read_line conn = net_read_line conn
 
 -- Up to `n` bytes from `conn`: what has arrived, waiting for some if none
