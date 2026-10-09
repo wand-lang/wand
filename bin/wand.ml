@@ -429,7 +429,9 @@ let test_doc_examples sess name doc =
   ) examples;
   (List.length (List.filter (fun (_, e) -> e <> []) examples), !failures)
 
-let load_files ?(sources = []) loads =
+(* `~evaluate:false` reads each file for what it declares and runs none of
+   it: a question about a name is not a reason to run the file it is in. *)
+let load_files ?(sources = []) ?(evaluate = true) loads =
   let sess = Wand.Runner.make_session () in
   let file_sources = List.filter_map (fun path ->
     try Some (In_channel.with_open_text path In_channel.input_all)
@@ -454,7 +456,7 @@ let load_files ?(sources = []) loads =
     | Error m ->
       Printf.eprintf "Error loading '%s': %s\n" path m; exit 1
     | Ok src ->
-      match Wand.Runner.run_session s src with
+      match Wand.Runner.run_session ~evaluate s src with
       | Ok (s', _) -> s'
       | Error m ->
         Printf.eprintf "Error loading '%s': %s\n" path m; exit 1
@@ -776,7 +778,7 @@ let main () =
          let (loads, rest') = parse_loads rest in
          (match rest' with
           | [] ->
-            let sess = load_files ~sources:[expr] loads in
+            let sess = load_files ~sources:[expr] ~evaluate:false loads in
             (match Wand.Runner.typecheck_session sess expr with
              | Error d ->
                if json then (print_endline (Wand.Diag.to_json_array [d]); exit 1)
@@ -1023,7 +1025,7 @@ let main () =
          (* Every module's members at once. The same listing `wand d <module>`
             gives, for each module in turn, so what a tool reads is what the
             command already answers one module at a time. *)
-         let sess = load_files ~sources:[all_stdlib_imports] loads in
+         let sess = load_files ~sources:[all_stdlib_imports] ~evaluate:false loads in
          if json then print_endline (Wand.Runner.index_json sess)
          else List.iter print_endline (Wand.Runner.index_lines sess)
        | [] when execute || test ->
@@ -1036,7 +1038,7 @@ let main () =
             it is the same question with the argument left off -- a name has
             a doc, a module has the names in it, and no name at all has the
             modules. *)
-         let sess = load_files ~sources:[all_stdlib_imports] loads in
+         let sess = load_files ~sources:[all_stdlib_imports] ~evaluate:false loads in
          if json then print_endline (Wand.Runner.scope_json sess)
          else begin
            let entries =
@@ -1092,7 +1094,7 @@ let main () =
            if failed > 0 then exit 1
          end
        | [name] ->
-         let sess = load_files ~sources:[name] loads in
+         let sess = load_files ~sources:[name] ~evaluate:false loads in
          (* A module takes every name in it, which the usage has always
             said and this path did not do: it looked for a doc on the
             namespace, found none, and said so. Listing the members is the

@@ -699,6 +699,21 @@ let test_a_rehearsal_does_not_listen () =
     Alcotest.(check bool) "and reports the listen" true
       (contains_sub out "would listen on: :18475"))
 
+(* A question about a name in a file is not a reason to run the file: `wand
+   d --load` ran its statements to answer one, and `wand t -e --load` did
+   the same to check an expression against it. *)
+let test_a_loaded_file_is_read_not_run () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "mine.wand")
+      "uses {Shell(touch)}\n-- Adds one.\nlet inc x = x + 1\n$(touch ran)\n";
+    let (code, out) = wand_out ~dir:d ["d"; "--load"; "mine.wand"; "inc"] in
+    Alcotest.(check int) "wand d answers" 0 code;
+    Alcotest.(check bool) "with the doc" true (contains_sub out "Adds one.");
+    let (code, _) = wand_out ~dir:d ["t"; "-e"; "inc 2"; "--load"; "mine.wand"] in
+    Alcotest.(check int) "wand t -e answers" 0 code;
+    Alcotest.(check bool) "and neither ran the file" false
+      (Sys.file_exists (Filename.concat d "ran")))
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1253,6 +1268,7 @@ let () =
       Alcotest.test_case "a run checks what wand t checks" `Quick test_run_checks_what_t_checks;
       Alcotest.test_case "an import's work waits on the check" `Quick test_import_work_waits_on_the_check;
       Alcotest.test_case "a rehearsal does not listen" `Quick test_a_rehearsal_does_not_listen;
+      Alcotest.test_case "a loaded file is read, not run" `Quick test_a_loaded_file_is_read_not_run;
     ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;

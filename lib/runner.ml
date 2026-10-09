@@ -4214,12 +4214,17 @@ let last_non_import prog =
     match item with Ast.TLImport _ -> acc | other -> Some other
   ) None prog.Ast.items
 
-let run_session (sess : session) (src : string) : (session * repl_result, string) result =
+(* `~evaluate:false` takes in what the source declares -- its types, its
+   docs, its names -- and runs none of it, which is what reading a file for
+   `wand d` or `wand t -e` asks for. `wand d --load` used to run the file's
+   statements to answer a question about one of its names. *)
+let run_session ?(evaluate = true) (sess : session) (src : string)
+  : (session * repl_result, string) result =
   try
     let tokens = Lexer.tokenize src in
     let prog   = Parser.parse_program tokens in
     let loading = ref [] in
-    let (imp, imp_docs) = load_imports_for ~base_dir:sess.s_base_dir ~cache:sess.s_cache ~loading ~evaluate:true prog in
+    let (imp, imp_docs) = load_imports_for ~base_dir:sess.s_base_dir ~cache:sess.s_cache ~loading ~evaluate prog in
     (* A session declares its types a line at a time, so the ones to settle
        against are the ones it already has. *)
     let prog =
@@ -4240,8 +4245,9 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
           if Hashtbl.mem seen k then false
           else (Hashtbl.add seen k (); true)) lst
       in
-      if hole_types <> [] then begin
-        (* Holes present — skip evaluation, report hole types *)
+      if hole_types <> [] || not evaluate then begin
+        (* Holes present, or nothing to run -- skip evaluation, and report
+           the holes' types if there are any *)
         let new_sources =
           List.filter_map (function
             | Ast.TLLet (name, _, _) -> Some (name, src)
@@ -4256,7 +4262,7 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
           s_ifaces     = dedup merged_ifaces;
         } in
         let hole_strs = List.map Typechecker.string_of_typ hole_types in
-        Ok (new_sess, RHoles hole_strs)
+        Ok (new_sess, if hole_strs = [] then RSilent else RHoles hole_strs)
       end else begin
         let base_eval = index_env (base_eval_env @ Lazy.force imp.eval_env @ sess.s_eval_env) in
         let env_ref  = ref base_eval in
