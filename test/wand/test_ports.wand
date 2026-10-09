@@ -29,7 +29,7 @@ let {age, backup_name, expired, expired?, ours?, window} =
   import ../../examples/ports/rotate-backups
 -- `failures` is verify-archives' already, and a name is bound by one import
 -- only, so this one is renamed here.
-let {changed?, failures = unmet, line, outcome, outcomes, steps, Made, Already, Failed, Step} =
+let {apply, by_code, changed?, line, steps, told, Made, Already, Set, Failed, Step} =
   import ../../examples/ports/provision-host
 import Args
 import Env
@@ -308,6 +308,19 @@ group "verify-archives" (fn () -> [
       let sums = Path.join dir (Path.of_string "a.tar.gz.sha256");
       FS.write_file! sums "abc123  a.tar.gz\n";
       t.eq (Ok ("abc123", Path.join dir (Path.of_string "a.tar.gz"))) (stated sums)
+    )),
+  -- Everything after the digest is the name, so one with a space in it is
+  -- one name, and the `*` that `shasum -b` writes is not part of it.
+  test "a name with a space, and a binary-mode name, are read whole" (fn t ->
+    with FS.temp_dir "sha_" as dir -> (
+      let spaced = Path.join dir (Path.of_string "a.sha256");
+      let binary = Path.join dir (Path.of_string "b.sha256");
+      FS.write_file! spaced "abc123  my file.tar\n";
+      FS.write_file! binary "def456 *b.tar\n";
+      t.eq [
+        Ok ("abc123", Path.join dir (Path.of_string "my file.tar")),
+        Ok ("def456", Path.join dir (Path.of_string "b.tar"))
+      ] [stated spaced, stated binary]
     ))
 ])
 
@@ -393,59 +406,39 @@ group "provision-host" (fn () -> [
   -- The whole of what `|| true` throws away. `useradd` exits 9 for a user
   -- that is already there and 1 for a command that was wrong; one of those
   -- is fine and the other is not.
-  test "exit zero made it" (fn t ->
-    t.eq (Made) (outcome Step(name = "user deploy", done? = 9)
-      ShellResult(stdout = "", stderr = "", code = 0))),
+  test "exit zero made it" (fn t -> t.eq Made (by_code 9 0)),
   test "the code that means already there is not a failure" (fn t ->
-    t.eq (Already) (outcome Step(name = "user deploy", done? = 9)
-      ShellResult(stdout = "", stderr = "", code = 9))),
-  test "and every other code still is" (fn t ->
-    t.eq (Failed 1) (outcome Step(name = "user deploy", done? = 9)
-      ShellResult(stdout = "", stderr = "", code = 1))),
+    t.eq Already (by_code 9 9)),
+  test "and every other code still is" (fn t -> t.eq (Failed 1) (by_code 9 1)),
   -- apt-get exits 100 when it could not take the dpkg lock. Nothing was
   -- installed, and `|| true` reports that run as a success.
   test "a lock it could not take is a failure, not a no-op" (fn t ->
-    t.eq (Failed 100) (outcome Step(name = "package nginx", done? = 0)
-      ShellResult(stdout = "", stderr = "", code = 100))),
-  test "a step with no already-there code treats every non-zero as failure"
-    (fn t ->
-      t.eq (Failed 9) (outcome Step(name = "key mode", done? = 0)
-        ShellResult(stdout = "", stderr = "", code = 9))),
+    t.eq (Failed 100) (by_code (0 - 1) 100)),
+  -- chmod and ln exit 0 whether or not they changed anything.
+  test "a step its exit code cannot describe is set" (fn t -> t.eq Set (told 0)),
+  test "and its non-zero is a failure" (fn t -> t.eq (Failed 9) (told 9)),
   -- The property the bash cannot report: whether the second run did
-  -- anything.
+  -- anything. A step that was only set does not say it changed.
   test "a run that made nothing did not change the host" (fn t ->
-    t.eq false (changed? [
-      (Step(name = "a", done? = 9), Already),
-      (Step(name = "b", done? = 0), Already)
-    ])),
+    t.eq false (changed? [(Step(name = "a"), Already), (Step(name = "b"), Set)])),
   test "and one that made something did" (fn t ->
-    t.ok (changed? [
-      (Step(name = "a", done? = 9), Already),
-      (Step(name = "b", done? = 0), Made)
-    ])),
-  test "every failure is named with its code, not just the first" (fn t ->
-    t.eq [("a", 1), ("c", 100)] (unmet [
-      (Step(name = "a", done? = 0), Failed 1),
-      (Step(name = "b", done? = 0), Made),
-      (Step(name = "c", done? = 0), Failed 100)
-    ])),
-  test "a clean run has no failures" (fn t ->
-    t.eq [] (unmet [(Step(name = "a", done? = 0), Made)])),
-  test "the line says which of the three it was" (fn t ->
-    t.eq "already  user deploy"
-      (line Step(name = "user deploy", done? = 9) Already)),
+    t.ok (changed? [(Step(name = "a"), Already), (Step(name = "b"), Made)])),
+  -- A second run, where everything is already there, says so.
+  test "a run with everything in place changes nothing" (fn t ->
+    t.eq false (changed? (apply (fn w -> if w == "key" || w == "link" then Set else Already)))),
+  -- The steps after a failure do not run: the key's mode is not set for a
+  -- user that could not be made.
+  test "no step runs after one that failed" (fn t ->
+    t.eq
+      ["package nginx", "user deploy"]
+      (List.map
+        (fn (s, _) -> s.name)
+        (apply (fn w -> if w == "user" then Failed 1 else Already)))),
+  test "the line says which of the four it was" (fn t ->
+    t.eq "already  user deploy" (line Step(name = "user deploy") Already)),
   test "and a failure carries the code" (fn t ->
-    t.eq "FAILED   package nginx (exit 100)"
-      (line Step(name = "package nginx", done? = 0) (Failed 100))),
-  -- The steps and the results are paired in step order, so the report
-  -- reads in the order the file declares.
-  test "outcomes pairs each step with its own result" (fn t ->
-    t.eq [Made, Already] (List.map (fn (_, o) -> o) (outcomes
-      [Step(name = "a", done? = 0), Step(name = "b", done? = 9)]
-      [ShellResult(stdout = "", stderr = "", code = 0),
-       ShellResult(stdout = "", stderr = "", code = 9)]))),
-  test "every step this script declares is covered" (fn t ->
-    t.eq 4 (List.length steps))
+    t.eq "FAILED   package nginx (exit 100)" (line Step(name = "package nginx") (Failed 100))),
+  test "every step this script declares is covered" (fn t -> t.eq 4 (List.length steps))
 ])
 
 group "health-server" (fn () -> [

@@ -31,18 +31,30 @@ import String
 -- message when nothing is wrong with it.
 
 -- A `.sha256` file holds one line: the digest, then the name it was taken
--- from. The name is bare, so it is read against the directory the file
--- sits in rather than against wherever this runs.
+-- from, as `shasum` writes it -- `*` in front of the name when it was read
+-- in binary mode. Everything after the digest is the name, spaces and all,
+-- which is the point of not splitting on every space. The name is bare, so
+-- it is read against the directory the file sits in rather than against
+-- wherever this runs.
 let stated file =
   FS.read_file file
   |> Result.and_then (fn text ->
-    match String.words text with
-    | [digest, name] -> Ok (digest, Path.join (Path.parent file) (Path.of_string name))
-    | _ -> Error "not one digest and one name")
+    match String.split " " (String.trim text) with
+    | [digest :: rest] -> (
+      let name = String.trim (String.join " " rest);
+      let name =
+        if String.starts_with? "*" name then String.slice 1 (String.length name) name
+        else name;
+      if digest == "" || name == "" then Error "not a digest and a name"
+      else Ok (digest, Path.join (Path.parent file) (Path.of_string name))
+    )
+    | _ -> Error "not a digest and a name")
 
+-- The digest is the first word; the name `shasum` echoes after it is the
+-- one it was given, and may hold spaces.
 let taken! archive =
   match String.words $(shasum -a 256 %{archive}) with
-  | [digest, _] -> Ok digest
+  | [digest :: _] -> Ok digest
   | _ -> Error "shasum answered something else"
 
 let check! file =
@@ -63,8 +75,14 @@ let failures checked =
     | Ok false -> Some (file, "digest does not match")
     | Error why -> Some(file, why))
 
+-- No `.sha256` file at all is a failure: a check of nothing used to report
+-- "0 checked, 0 failed" and exit 0.
 let report! limit dir = (
   let files = FS.glob_in *.sha256 dir;
+  if List.empty? files then (
+    IO.println_err "no .sha256 files in %{Path.to_string dir}";
+    Proc.exit 1
+  );
   let bad = failures (verify! limit files);
   IO.println "%{List.length files} checked, %{List.length bad} failed";
   match bad with

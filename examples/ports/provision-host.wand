@@ -1,10 +1,8 @@
-uses {IO, Proc, Shell(apt-get, chmod, ln, useradd)}
+uses {IO, Proc, Shell(apt-get, chmod, dpkg, ln, useradd)}
 
 import IO
 import List
-import Path
 import Proc
-import Shell
 
 -- Provision a host: a package, a service user, a key with the mode ssh
 -- insists on, and a config linked into /etc. Run it twice and the second
@@ -32,85 +30,89 @@ import Shell
 -- this file may run is on line one, checked -- and an exit code that has
 -- to be looked at rather than discarded.
 --
--- What an exit code cannot do is worth knowing, because it bounds the two
--- steps below it: `chmod` and `ln -sfn` exit 0 whether or not they changed
--- anything. So those two always report `made`, and a run that changed
--- nothing cannot say so. Telling them apart means reading the mode and the
+-- What an exit code cannot do is worth knowing, because it bounds three
+-- steps below. `apt-get install` exits 0 whether or not the package was
+-- there, so the package is asked about first, with `dpkg -s`. `chmod` and
+-- `ln -sfn` exit 0 whether or not they changed anything, so those two
+-- report `set` -- done, with no way to say whether it was already so --
+-- and a run that only sets them says the host is as declared rather than
+-- that it changed. Telling them apart means reading the mode and the
 -- link back, and reading a mode is the one thing here a shell cannot do
 -- portably -- `stat -c '%a'` is GNU, `stat -f '%Lp'` is BSD. That is the
 -- price of the decision, paid here.
 
--- What a step's exit code meant. `Failed` carries the code because the
--- number is what tells someone which failure it was.
-type Outcome = Made | Already | Failed Int
+-- What a step answered. `Set` is a step done by a command whose exit code
+-- cannot say whether anything changed. `Failed` carries the code because
+-- the number is what tells someone which failure it was.
+type Outcome = Made | Already | Set | Failed Int
 
--- One step of the desired state: the command that makes it so, and the
--- single exit code that means the machine was already that way.
-type Step(name: String, done?: Int)
+-- One step of the desired state, by the name the report gives it.
+type Step(name: String)
+
+-- `useradd` exits 9 for a user that is already there: the one code that is
+-- not a failure. Every other non-zero still is.
+let by_code already code =
+  if code == 0 then Made else if code == already then Already else Failed code
+
+let told code = if code == 0 then Set else Failed code
+
+-- The package is asked about before it is installed, because `apt-get`
+-- exits 0 either way.
+let package () =
+  if $?(dpkg -s nginx).code == 0 then Already
+  else by_code (0 - 1) $?(apt-get install -y nginx).code
 
 let steps = [
-  Step(name = "package nginx", done? = 0),
-  Step(name = "user deploy", done? = 9),
-  Step(name = "key mode", done? = 0),
-  Step(name = "config link", done? = 0)
+  (Step(name = "package nginx"), "package"),
+  (Step(name = "user deploy"), "user"),
+  (Step(name = "key mode"), "key"),
+  (Step(name = "config link"), "link")
 ]
 
--- The decision `|| true` throws away. `done?` is the one code that is not
--- a failure; every other non-zero still is.
-let outcome (step: Step) (r: ShellResult) =
-  if r.code == 0 then Made else if r.code == step.done? then Already else Failed r.code
-
--- A run changed the host if any step did. `|| true` cannot report this at
--- all; here it is right for the package and the user, whose exit codes
--- distinguish, and always true while the last two steps are told rather
--- than asked.
+-- A run changed the host if any step made something. Steps that were only
+-- set do not count, because nothing says they changed.
 let changed? results = List.any? (fn (_, o) -> o == Made) results
 
--- The name and code of a step that failed, and nothing for one that did
--- not. Taking the step and the outcome as two arguments rather than a pair
--- is what lets the step carry its type.
-let failure (step: Step) o =
+let failed? o =
   match o with
-  | Failed code -> Some (step.name, code)
-  | Made -> None
-  | Already -> None
-
-let failures results = results |> List.filter_map (fn (step, o) -> failure step o)
+  | Failed _ -> true
+  | _ -> false
 
 let line (step: Step) o =
   match o with
   | Made -> "made     %{step.name}"
   | Already -> "already  %{step.name}"
+  | Set -> "set      %{step.name}"
   | Failed code -> "FAILED   %{step.name} (exit %{code})"
 
--- The effectful edge: one command per step, in the order the steps are
--- written. Everything above decides; this runs.
-let apply () = [
-  $?(apt-get install -y nginx),
-  $?(useradd -r deploy),
-  $?(chmod 0600 /home/deploy/.ssh/id_ed25519),
-  $?(ln -sfn /opt/app/nginx.conf /etc/nginx/conf.d/app.conf)
-]
+-- The effectful edge: the command for each step.
+let run which =
+  match which with
+  | "package" -> package ()
+  | "user" -> by_code 9 $?(useradd -r deploy).code
+  | "key" -> told $?(chmod 0600 /home/deploy/.ssh/id_ed25519).code
+  | _ -> told $?(ln -sfn /opt/app/nginx.conf /etc/nginx/conf.d/app.conf).code
 
--- The steps and what running them answered, paired. `List.zip` keeps them
--- in step order, so the report reads in the order the file declares.
-let outcomes steps results =
-  List.zip steps results |> List.map (fn (step, r) -> (step, outcome step r))
+-- One step at a time, through `run_step`, and none after one that failed:
+-- the key's mode is not set for a user that could not be made. The runner
+-- is an argument so the order can be tested without touching a host.
+let apply run_step =
+  let go [] done = List.reverse done
+  let go [(step, which) :: rest] done =
+    let o = run_step which;
+    let done = (step, o) :: done;
+    if failed? o then List.reverse done else go rest done;
+  go steps []
 
 -- The steps run in `main`: `test/wand/test_ports.wand` imports this file,
 -- and an import runs a file's bindings but not its bare expressions, so
 -- importing it provisions nothing.
 let main () = (
-  let results = outcomes steps (apply ());
+  let results = apply run;
   results |> List.each (fn (step, o) -> IO.println (line step o));
-  match failures results with
-  | [] ->
-    IO.println (if changed? results then "host changed" else "host already as declared")
-  | bad -> (
-    IO.println_err "%{List.length bad} step(s) failed:";
-    bad |> List.each (fn (name, code) -> IO.println_err "  %{name} exited %{code}");
-    Proc.exit 1
-  )
+  match List.filter (fn (_, o) -> failed? o) results with
+  | [] -> IO.println (if changed? results then "host changed" else "host as declared")
+  | _ -> (IO.println_err "a step failed, and the steps after it were not run"; Proc.exit 1)
 )
 
 main ()
