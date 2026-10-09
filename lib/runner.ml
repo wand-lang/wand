@@ -359,14 +359,23 @@ let deadline_for pid reaped =
            grace  = timeout_grace;
            kill   = (fun signal ->
              try Unix.kill pid signal with Unix.Unix_error _ -> ());
+           (* Only ECHILD says the child is gone. An interrupted wait says
+              nothing about it, and taking that for an exit marked the
+              command killed without the SIGKILL that follows SIGTERM, so
+              a child that ignored SIGTERM held the run past its deadline
+              (#93). *)
            gone   = (fun () ->
+             let rec wait () =
+               match Unix.waitpid [Unix.WNOHANG] pid with
+               | (0, _) -> false
+               | (_, status) -> reaped := Some status; true
+               | exception Unix.Unix_error (Unix.EINTR, _, _) -> wait ()
+               | exception Unix.Unix_error (Unix.ECHILD, _, _) -> true
+               | exception Unix.Unix_error _ -> false
+             in
              match !reaped with
              | Some _ -> true
-             | None ->
-               (match Unix.waitpid [Unix.WNOHANG] pid with
-                | (0, _) -> false
-                | (_, status) -> reaped := Some status; true
-                | exception Unix.Unix_error _ -> true)) }
+             | None -> wait ()) }
 
 (* A command that ran out of time. `Shell.timeout` turns it into an `Error`;
    anywhere else it is an ordinary raise, which is what a deadline nobody
