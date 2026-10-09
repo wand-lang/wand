@@ -1,3 +1,5 @@
+import Result
+
 -- Reading a network, and asking what is in it.
 --
 -- The type has been in the language since the beginning and the one
@@ -78,6 +80,12 @@ let to_string net = cidr_to_str net
 -- >> CIDR.of_string "10.0.0.0/33"
 -- Error("invalid CIDR prefix: must be 0–32") : Result String CIDR
 let of_string s = str_to_cidr s
+
+-- The same as `CIDR.of_string`, raising the reason instead of answering with it.
+--
+-- >> CIDR.of_string! "10.0.0.0/8"
+-- 10.0.0.0/8 : CIDR
+let of_string! s = Result.get! (of_string s)
 
 -- The network an address and a prefix name. A Result: a prefix is 0 to 32,
 -- and 33 is a mistake rather than a maximum.

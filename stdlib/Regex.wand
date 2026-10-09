@@ -1,3 +1,5 @@
+import Result
+
 -- Compile a pattern string into a Regex, returning Ok or Error.
 --
 -- For a pattern decided at run time. One written in the source is a
@@ -7,6 +9,12 @@
 -- >> Regex.compile "("
 -- Error("invalid regex: (") : Result String Regex
 let compile pattern = regex_compile pattern
+
+-- The same as `Regex.compile`, raising the reason instead of answering with it.
+--
+-- >> Regex.compile! "a+"
+-- <regex> : Regex
+let compile! pattern = Result.get! (compile pattern)
 
 -- Return true if the string contains a match for the regex.
 --

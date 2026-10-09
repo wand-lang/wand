@@ -1,3 +1,5 @@
+import Result
+
 -- Matching a path against a pattern, without reading the disk to do it.
 --
 -- `FS.glob` answers which files a pattern selects, and needs the FsRead
@@ -58,3 +60,9 @@ let to_string g = glob_to_str g
 -- >> Glob.of_string "notes.txt"
 -- Error("cannot parse \"notes.txt\" as Glob: a glob has a `*`, a `?` or a `[`; text with none of them is a Path") : Result String Glob
 let of_string s = str_to_glob s
+
+-- The same as `Glob.of_string`, raising the reason instead of answering with it.
+--
+-- >> Glob.of_string! "*.wand"
+-- *.wand : Glob
+let of_string! s = Result.get! (of_string s)

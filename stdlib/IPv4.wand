@@ -1,3 +1,5 @@
+import Result
+
 -- Reading an address.
 --
 -- The literal already checks itself -- each octet is 0 to 255, or it is a
@@ -67,6 +69,12 @@ let to_string a = ipv4_to_str a
 -- >> IPv4.of_string "256.0.0.1"
 -- Error("invalid IPv4 address: each octet must be 0–255") : Result String IPv4
 let of_string s = str_to_ipv4 s
+
+-- The same as `IPv4.of_string`, raising the reason instead of answering with it.
+--
+-- >> IPv4.of_string! "10.0.0.1"
+-- 10.0.0.1 : IPv4
+let of_string! s = Result.get! (of_string s)
 
 implement Ord IPv4 =
   -- The larger of two addresses.

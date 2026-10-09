@@ -4571,6 +4571,7 @@ try (String.to_port! ":99999")  -- Error (invalid port :99999: must be 0-65535)
 
 ```ocaml
 compile     : String -> Result String Regex
+compile!    : String -> Regex ! {Raise}
 match?      : Regex -> String -> Bool
 capture     : Regex -> String -> List String
 replace     : Regex -> String -> String -> String
@@ -6090,6 +6091,7 @@ private?  : IPv4 -> Bool
 loopback? : IPv4 -> Bool
 to_string : IPv4 -> String
 of_string : String -> Result String IPv4
+of_string! : String -> IPv4 ! {Raise}
 max       : IPv4 -> IPv4 -> IPv4
 min       : IPv4 -> IPv4 -> IPv4
 clamp     : IPv4 -> IPv4 -> IPv4 -> IPv4
@@ -6129,6 +6131,7 @@ last      : CIDR -> IPv4
 count     : CIDR -> Int
 to_string : CIDR -> String
 of_string : String -> Result String CIDR
+of_string! : String -> CIDR ! {Raise}
 of_parts  : IPv4 -> Int -> Result String CIDR
 max       : CIDR -> CIDR -> CIDR
 min       : CIDR -> CIDR -> CIDR
@@ -6157,6 +6160,7 @@ matches?  : Glob -> Path -> Bool
 base      : Glob -> Path
 to_string : Glob -> String
 of_string : String -> Result String Glob
+of_string! : String -> Glob ! {Raise}
 ```
 
 [`FS.glob`](#fs) answers which files a pattern selects, and needs `FS.Read`
@@ -6202,6 +6206,7 @@ build           : Version -> Option String
 stable?         : Version -> Bool
 to_string       : Version -> String
 of_string       : String -> Result String Version
+of_string!      : String -> Version ! {Raise}
 of_parts        : Int -> Int -> Int -> Result String Version
 bump_major      : Version -> Version
 bump_minor      : Version -> Version
@@ -6263,6 +6268,7 @@ query_list      : URL -> List (String, String)
 fragment        : URL -> Option String
 to_string       : URL -> String
 of_string       : String -> Result String URL
+of_string!      : String -> URL ! {Raise}
 with_scheme     : String -> URL -> Result String URL
 with_hostname   : String -> URL -> Result String URL
 with_port       : Option Port -> URL -> URL
@@ -6273,8 +6279,10 @@ with_query      : Map String -> URL -> URL
 with_query_list : List (String, String) -> URL -> URL
 with_fragment   : Option String -> URL -> URL
 join            : String -> URL -> Result String URL
+join!           : String -> URL -> URL ! {Raise}
 encode          : String -> String
 decode          : String -> Result String String
+decode!         : String -> String ! {Raise}
 ```
 
 Every accessor is total. The value is a URL already — a literal, or

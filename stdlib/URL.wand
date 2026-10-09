@@ -1,3 +1,5 @@
+import Result
+
 -- Reading a URL, and building one from another.
 --
 -- A URL literal is a value of its own, not a string, so the parts of one are
@@ -139,6 +141,12 @@ let to_string u = url_to_str u
 -- Error("cannot parse \"example.com\" as URL: a URL begins with http:// or https://") : Result String URL
 let of_string s = str_to_url s
 
+-- The same as `URL.of_string`, raising the reason instead of answering with it.
+--
+-- >> URL.of_string! "https://example.com/a"
+-- https://example.com/a : URL
+let of_string! s = Result.get! (of_string s)
+
 -- ── Building one from another ──────────────────────────────────────────
 
 -- The same URL with this query in place of whatever it had. The keys and
@@ -238,6 +246,12 @@ let with_password p u = url_with_password p u
 -- Ok(https://example.com/doc#top) : Result String URL
 let join reference u = url_join reference u
 
+-- The same as `URL.join`, raising the reason instead of answering with it.
+--
+-- >> URL.join! "b" https://example.com/a/
+-- https://example.com/a/b : URL
+let join! reference u = Result.get! (join reference u)
+
 -- ── Percent-encoding ───────────────────────────────────────────────────
 
 -- Text as one path segment or one query value. Everything outside the
@@ -261,3 +275,9 @@ let encode s = url_encode s
 -- >> URL.decode "100%"
 -- Error("\"100%\" ends inside a percent-escape") : Result String String
 let decode s = url_decode s
+
+-- The same as `URL.decode`, raising the reason instead of answering with it.
+--
+-- >> URL.decode! "a%20b"
+-- "a b" : String
+let decode! s = Result.get! (decode s)

@@ -1,3 +1,5 @@
+import Result
+
 -- Reading a version, and stepping to the next one.
 --
 -- The type is [Semantic Versioning 2.0.0][semver]: three numbers, an
@@ -94,6 +96,12 @@ let to_string v = version_to_str v
 -- >> Version.of_string "1.2"
 -- Error("cannot parse \"1.2\" as Version: a version is three numbers: major.minor.patch") : Result String Version
 let of_string s = str_to_version s
+
+-- The same as `Version.of_string`, raising the reason instead of answering with it.
+--
+-- >> Version.of_string! "1.2.3"
+-- 1.2.3 : Version
+let of_string! s = Result.get! (of_string s)
 
 -- The version with these three numbers. A Result: the spec's rule 2 has
 -- them as non-negative integers, so a negative one is a mistake rather than
