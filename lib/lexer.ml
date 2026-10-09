@@ -512,6 +512,41 @@ let is_url_char c =
    literal stops at the `,` and the string went through the same scanner. It
    also answered a lexer's complaint rather than its own -- `ftp://x` came
    back "a comment is '-- ...' to the end of the line, not '//'". *)
+(* What is wrong with the host and port a URL names, or None. `https:///x`
+   named no host, `:99999` a port nothing can listen on, and
+   `http://[::1` an address it never closed, and each was a URL. *)
+let authority_error after_scheme =
+  let stop = ref (String.length after_scheme) in
+  String.iteri (fun i c ->
+    if i < !stop && (c = '/' || c = '?' || c = '#') then stop := i) after_scheme;
+  let authority = String.sub after_scheme 0 !stop in
+  let hostport =
+    match String.rindex_opt authority '@' with
+    | Some i -> String.sub authority (i + 1) (String.length authority - i - 1)
+    | None -> authority
+  in
+  let port_error p =
+    if p = "" then None
+    else if String.for_all (fun c -> c >= '0' && c <= '9') p
+         && String.length p <= 5 && int_of_string p <= 65535 then None
+    else Some (Printf.sprintf "%s is not a port: a port is 0 to 65535" p)
+  in
+  if hostport = "" then Some "a URL names a host after the //"
+  else if hostport.[0] = '[' then
+    match String.index_opt hostport ']' with
+    | None -> Some "an address in brackets is closed with ]"
+    | Some j ->
+      let rest = String.sub hostport (j + 1) (String.length hostport - j - 1) in
+      if rest = "" then None
+      else if rest.[0] = ':' then port_error (String.sub rest 1 (String.length rest - 1))
+      else Some (Printf.sprintf "%S cannot follow an address in brackets" rest)
+  else
+    match String.rindex_opt hostport ':' with
+    | Some j ->
+      if j = 0 then Some "a URL names a host after the //"
+      else port_error (String.sub hostport (j + 1) (String.length hostport - j - 1))
+    | None -> None
+
 let url_error text =
   let scheme_len =
     if String.length text >= 7 && String.sub text 0 7 = "http://" then 7
@@ -528,7 +563,10 @@ let url_error text =
         "%C cannot appear in a URL: percent-encode it, or hold the text as a String"
         text.[i])
     in
-    bad scheme_len
+    match bad scheme_len with
+    | Some why -> Some why
+    | None -> authority_error (String.sub text scheme_len
+                                 (String.length text - scheme_len))
 
 let read_url s scheme =
   (* s.pos is at ':' of "://" — consume all three *)

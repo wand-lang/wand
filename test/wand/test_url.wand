@@ -1,8 +1,10 @@
 import Decode
 import JSON
+import List
 import Map
 import Option
 import Path
+import Result
 import String
 import URL
 
@@ -294,7 +296,28 @@ test "and keeping the userinfo" (fn t ->
 test "a hostname holding a space is refused" (fn t ->
   match URL.with_hostname "a b.com" https://a.com/x with
   | Ok _ -> t.ok false
-  | Error e -> t.ok (String.contains? "cannot appear in a URL" e))
+  | Error e -> t.ok (String.contains? "is not a host name" e))
+
+-- A host name and nothing else: `@` made the rest the host and the front a
+-- user, and `/` moved the rest into the path.
+test "a hostname holding an @, a / or nothing is refused" (fn t ->
+  t.eq
+    [true, true, true]
+    (List.map (fn h -> Result.error? (URL.with_hostname h https://a.com/x)) [
+      "evil.com@good.com",
+      "a/b",
+      ""
+    ]))
+
+test "a URL names a host and a port it can have" (fn t ->
+  t.eq
+    [true, true, true, false]
+    (List.map (fn u -> Result.error? (URL.of_string u)) [
+      "https:///x",
+      "https://a.com:99999/",
+      "http://[::1",
+      "http://[::1]:8080/a"
+    ]))
 
 test "the port" (fn t ->
   t.eq https://a.com:9000/x (URL.with_port (Some :9000) https://a.com/x))

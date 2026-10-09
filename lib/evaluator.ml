@@ -6322,7 +6322,20 @@ let stdlib_eval_env : env = [
          | Error why -> VConstr (Ctor.Builtin "Error", [VString why]))
       | _ -> raise (EvalError "url_with_scheme: expected URL"))
     | _ -> raise (EvalError "url_with_scheme: expected String")));
+  (* A host name and nothing else: letters, digits, `.`, `-`, `_` and `%`,
+     or an address in brackets. `evil.com@good.com` went in whole, and the
+     URL it made sent its requests to good.com with evil.com as the user;
+     `a/b` moved the rest into the path. *)
   ("url_with_hostname", VBuiltin (function
+    | VString h when not (
+        h <> ""
+        && ((h.[0] = '[' && h.[String.length h - 1] = ']')
+            || String.for_all (fun c ->
+                 (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                 || (c >= '0' && c <= '9') || c = '.' || c = '-' || c = '_'
+                 || c = '%') h)) ->
+      VBuiltin (fun _ -> VConstr (Ctor.Builtin "Error",
+        [VString (Printf.sprintf "%S is not a host name" h)]))
     | VString h -> VBuiltin (function
       | VURL (u, from) ->
         let parts = url_parts u in
