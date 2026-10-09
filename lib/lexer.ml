@@ -724,6 +724,47 @@ let read_duration s first_digits =
 let is_instant_char c =
   is_digit c || c = 'T' || c = ':' || c = 'Z' || c = '+' || c = '-'
 
+(* Why an instant as written names no instant, or None. The arithmetic
+   that turns one into seconds maps any numbers to some instant, so
+   `2024-02-30` came back as March the 1st and `T25:61:61Z` as the next
+   day: a typo in a date read as a different date. Checked here, where
+   both the literal and `String.to_datetime` read one. *)
+let instant_error text =
+  let n = String.length text in
+  let num at len =
+    if at + len > n then None
+    else
+      let sub = String.sub text at len in
+      if String.for_all (fun c -> c >= '0' && c <= '9') sub
+      then Some (int_of_string sub) else None
+  in
+  let days_in y m =
+    match m with
+    | 2 -> if (y mod 4 = 0 && y mod 100 <> 0) || y mod 400 = 0 then 29 else 28
+    | 4 | 6 | 9 | 11 -> 30
+    | _ -> 31
+  in
+  let date = String.sub text 0 (min 10 n) in
+  match num 0 4, num 5 2, num 8 2 with
+  | Some y, Some m, Some d when m < 1 || m > 12 || d < 1 || d > days_in y m ->
+    Some (Printf.sprintf "%s is not a day" date)
+  | _ ->
+    let field at limit what =
+      match num at 2 with
+      | Some v when v >= limit -> Some (Printf.sprintf
+          "%s has %s %02d, and a %s is 00 to %02d" text what v what (limit - 1))
+      | _ -> None
+    in
+    let checks =
+      if n >= 19 then
+        [field 11 24 "hour"; field 14 60 "minute"; field 17 60 "second"]
+        @ (if n >= 25 && (text.[19] = '+' || text.[19] = '-')
+           then [field 20 24 "offset hour"; field 23 60 "offset minute"]
+           else [])
+      else []
+    in
+    List.find_map (fun c -> c) checks
+
 (* ── Numbers (Int, Float, Date, DateTime, Time, IPv4, CIDR, Version, Size, Duration) *)
 
 let read_numeric s first_char =
@@ -856,7 +897,11 @@ let read_numeric s first_char =
          && is_instant_char (peek s) do
         Buffer.add_char dt (advance s)
       done;
-      DateTime (Buffer.contents dt)
+      let text = Buffer.contents dt in
+      (match instant_error text with
+       | Some why -> raise (Fail why)
+       | None -> ());
+      DateTime text
     end else
       (* A bare date is a spelling of midnight UTC, not a type of its own.
          One instant type, one resolution: `2026-08-22 + 5h` moves five
@@ -866,7 +911,9 @@ let read_numeric s first_char =
          The text is kept as it was written, the way an offset form is:
          `datetime_epoch` reads the meaning out of either, and a formatter
          that expanded this would delete a spelling the language offers. *)
-      DateTime date
+      (match instant_error date with
+       | Some why -> raise (Fail why)
+       | None -> DateTime date)
 
   (* Colon: a time of day, which is not a value. The shape is still read,
      so the refusal can name what to write instead of failing on the `:`
