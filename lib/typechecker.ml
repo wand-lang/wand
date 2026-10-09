@@ -1968,7 +1968,11 @@ let check_te_arity (te : type_expr) =
   in
   go te
 
-let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
+(* `~effects_off_pure` reads an arrow written with no effects as one that
+   performs none, which is what an interface member means by leaving them
+   off. Anywhere else, no effects written leaves them to inference. *)
+let type_of_te_bound_with_vars ?(effects_off_pure = false)
+    (bound : (string * typ) list) (te : type_expr)
   : typ * (string * typ) list =
   check_te_arity te;
   let vars : (string, typ) Hashtbl.t = Hashtbl.create 4 in
@@ -1978,6 +1982,7 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
   let evars : (string, Effect_set.t) Hashtbl.t = Hashtbl.create 4 in
   let effects_of (spec : te_effects option) =
     match spec with
+    | None when effects_off_pure -> Effect_set.pure
     | None -> Effect_set.unknown ()
     | Some { te_labels; te_var } ->
       let base =
@@ -2245,15 +2250,23 @@ let type_of_te_bound_with_vars (bound : (string * typ) list) (te : type_expr)
   in
   (t, named)
 
-let type_of_te_bound bound te = fst (type_of_te_bound_with_vars bound te)
+let type_of_te_bound ?effects_off_pure bound te =
+  fst (type_of_te_bound_with_vars ?effects_off_pure bound te)
 
 (* The members an implementation has to answer for, with the interface's
    parameters bound to what the claim named them at: `implement Ord Int`
    binds `'a` to `Int`, so `max` comes out `Int -> Int -> Int`. That is
-   instantiation, not dispatch -- nothing is looked up from a value. *)
+   instantiation, not dispatch -- nothing is looked up from a value.
+
+   A member with no effects written performs none, as the reference says.
+   Read as an open row, the check that a module implements it unified the
+   module's effects into one fresh row, and a caller reading the member
+   through `(m: R.Runner)` got another, so a module that wrote files
+   answered to a member its callers were told was pure. *)
 let iface_members (idef : Ast.interface_def) (args : typ list) =
   let bound = List.combine idef.Ast.if_params args in
-  List.map (fun (n, te) -> (n, type_of_te_bound bound te)) idef.Ast.if_members
+  List.map (fun (n, te) -> (n, type_of_te_bound ~effects_off_pure:true bound te))
+    idef.Ast.if_members
 
 let type_of_te (te : type_expr) : typ = type_of_te_bound [] te
 

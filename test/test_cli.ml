@@ -714,6 +714,24 @@ let test_a_loaded_file_is_read_not_run () =
     Alcotest.(check bool) "and neither ran the file" false
       (Sys.file_exists (Filename.concat d "ran")))
 
+(* A member written with no effects performs none. Read as an open row, a
+   module that wrote files implemented it, and a caller under `uses {IO}`
+   called it through the interface with both files checking clean. *)
+let test_an_effect_free_member_bounds_its_module () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "r.wand") "interface Runner(run: Int -> Int)\n";
+    write_file (Filename.concat d "impl.wand")
+      "uses {FS.Write}\nimport FS\nimport ./r\nimplement r.Runner =\n  \
+       let run n = (FS.write_file! ./written.txt \"x\"; n)\n";
+    write_file (Filename.concat d "pure.wand")
+      "import ./r\nimplement r.Runner =\n  let run n = n + 1\n";
+    let (code, out) = wand_out ~dir:d ["t"; "impl.wand"] in
+    Alcotest.(check bool) "the writing module is refused" true (code <> 0);
+    Alcotest.(check bool) "at the member" true
+      (contains_sub out "does not match what 'r.Runner' declares");
+    let (code, _) = wand_out ~dir:d ["t"; "pure.wand"] in
+    Alcotest.(check int) "a pure one is not" 0 code)
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1269,6 +1287,8 @@ let () =
       Alcotest.test_case "an import's work waits on the check" `Quick test_import_work_waits_on_the_check;
       Alcotest.test_case "a rehearsal does not listen" `Quick test_a_rehearsal_does_not_listen;
       Alcotest.test_case "a loaded file is read, not run" `Quick test_a_loaded_file_is_read_not_run;
+      Alcotest.test_case "an effect-free member bounds its module" `Quick
+        test_an_effect_free_member_bounds_its_module;
     ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;
