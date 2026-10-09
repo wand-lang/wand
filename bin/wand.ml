@@ -489,15 +489,11 @@ let split_own args =
 let reads_as_an_expression s = not (Filename.check_suffix s ".wand")
 
 (* The argument written the way it would have to be written again. A hint
-   that cannot be pasted is half a hint. *)
-let requote s =
-  let b = Buffer.create (String.length s + 2) in
-  Buffer.add_char b '"';
-  String.iter (fun c ->
-    if c = '"' || c = '\\' then Buffer.add_char b '\\';
-    Buffer.add_char b c) s;
-  Buffer.add_char b '"';
-  Buffer.contents b
+   that cannot be pasted is half a hint, and one that changes when pasted is
+   worse: in double quotes the reader's shell still expands `$(...)`, so
+   `wand -e "String.length $(whoami)"` ran whoami in their shell (#90).
+   Single quotes keep every character as it is. *)
+let requote s = Filename.quote s
 
 (* What is wrong, then the command that works. Nothing about what the
    spelling used to be: whoever reads this needs the right command, not its
@@ -639,11 +635,14 @@ let main () =
      meant to install without parsing prose. *)
   | ["v"] | ["version"] ->
     print_endline ("wand " ^ Wand.Version.value)
-  | sub :: rest when sub = "--dry-run" || sub = "--trace" ->
+  | sub :: rest when List.mem sub own_flags ->
     (* The mode can come first, which reads better: wand --dry-run
        deploy.wand. The path is lifted out and everything else, this flag
        included, goes to the one parser -- so `--strict` is a gate on either
-       side of the path rather than an argument the script is handed. *)
+       side of the path rather than an argument the script is handed. Any
+       of wand's own flags can lead: `--strict` and `--lint` were documented
+       as wand's wherever they appear before `--`, and in front they were
+       read as the script's path (#105). *)
     (match rest with
      | ("-e" | "--expr") :: _ ->
        (* Rehearsing and tracing are built around a script's effects and
@@ -680,7 +679,10 @@ let main () =
        | [cmd] -> usage_for cmd
        | _     -> usage ())
     | "i" | "interactive" ->
-      let (loads, _) = parse_loads rest in
+      (* What `--load` does not take is refused, not dropped: `wand i
+         --bogus` started a session as if nothing had been asked. *)
+      let (loads, rest') = parse_loads rest in
+      reject_unknown_options "i" rest';
       Wand.Repl.run ~base_dir:(Sys.getcwd ()) ~loads ()
     | "l" | "lsp" ->
       exit (Wand.Lsp.serve stdin stdout)
