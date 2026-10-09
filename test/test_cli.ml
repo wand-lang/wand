@@ -732,6 +732,26 @@ let test_an_effect_free_member_bounds_its_module () =
     let (code, _) = wand_out ~dir:d ["t"; "pure.wand"] in
     Alcotest.(check int) "a pure one is not" 0 code)
 
+(* What an import runs as it loads is this file's to bound, as what a
+   function it calls runs is: `uses {Shell(git)}` imported a file whose
+   top-level binding ran `touch`, through a module between them, and
+   checked clean. *)
+let test_an_import's_load_words_are_bounded () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "a.wand")
+      "uses {Shell(touch)}\nlet x = $(touch ran)\nlet y = 2\n";
+    write_file (Filename.concat d "mid.wand") "let {y} = import ./a\nlet w = y\n";
+    write_file (Filename.concat d "b.wand")
+      "uses {Shell(git)}\nlet {w} = import ./mid\nlet v = w\nlet z = $(git --version)\n";
+    let (code, out) = wand_out ~dir:d ["t"; "b.wand"] in
+    Alcotest.(check bool) "the import is refused" true (code <> 0);
+    Alcotest.(check bool) "for what it runs as it loads" true
+      (contains_sub out "an import runs 'touch' as it loads");
+    let (code, _) = wand_out ~dir:d ["b.wand"] in
+    Alcotest.(check bool) "and a run is refused before it" true (code <> 0);
+    Alcotest.(check bool) "so nothing ran" false
+      (Sys.file_exists (Filename.concat d "ran")))
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1289,6 +1309,8 @@ let () =
       Alcotest.test_case "a loaded file is read, not run" `Quick test_a_loaded_file_is_read_not_run;
       Alcotest.test_case "an effect-free member bounds its module" `Quick
         test_an_effect_free_member_bounds_its_module;
+      Alcotest.test_case "an import's load words are bounded" `Quick
+        test_an_import's_load_words_are_bounded;
     ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;

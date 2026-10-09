@@ -209,3 +209,26 @@ let imported_calls ~(imported : (string * t) list) (prog : Ast.program) =
       | TLImport _ | TLType _ | TLInterface _ -> []
     in
     List.concat_map (calls imported) bodies) prog.items
+
+(* What loading `prog` runs: the words of each top-level binding that is a
+   value rather than a function, since an import evaluates those. A file
+   that imports this one runs them, and its `Shell(...)` list has to hold
+   them as it holds the words of a function it calls. *)
+let load_words ~(imported : (string * t) list) (prog : Ast.program) =
+  let table = of_program ~imported prog in
+  let rec is_function (e : Ast.expr) =
+    match e with
+    | Fn _ -> true
+    | Located (_, inner) | Annot (_, inner) -> is_function inner
+    | _ -> false
+  in
+  List.fold_left (fun acc (item : Ast.top_item) ->
+    let names = match item with
+      | TLLet (n, [], b) when not (is_function b) -> [n]
+      | TLLetPat (p, _) -> Ast.pat_names p
+      | _ -> []
+    in
+    List.fold_left (fun acc n ->
+      match List.assoc_opt n table with
+      | Some w -> union acc w
+      | None -> acc) acc names) empty prog.items

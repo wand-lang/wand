@@ -6192,6 +6192,10 @@ let last_shell_allow  : string list option ref = ref None
    caller for the file being checked; see `Command_words`. *)
 let import_words_ref : (string * Command_words.t) list ref = ref []
 
+(* What the file's imports run as they load: the words of their value
+   bindings, which an import evaluates whether or not the file names them. *)
+let import_load_words_ref : Command_words.t ref = ref Command_words.empty
+
 (* Every $()/$?()/$*() payload in the file, with the nearest enclosing location.
    Only this file's text: an imported helper's sites are that file's
    manifest's business, which is what keeps the audit story compositional. *)
@@ -6339,6 +6343,36 @@ let check_shell_words (prog : program) =
       | _ -> ()
     end
   ) (Command_words.imported_calls ~imported:!import_words_ref prog);
+  (* And what they run as they load. The label was counted -- an import that
+     loads with a command makes this file perform `Shell` -- but its words
+     were not, so `uses {Shell(git)}` imported a file whose top-level
+     binding ran `touch`, and checked clean. *)
+  let loaded = !import_load_words_ref in
+  List.iter (fun word ->
+    if not (List.mem word !words) then words := word :: !words;
+    match allow with
+    | Some allow_list when not (Shell_scan.allowed ~allow:allow_list word) ->
+      (match corrected_with word with
+       | "" -> ()
+       | line -> pending_fix := Some (Diag.ReplaceLine line));
+      raise (TypeError (Printf.sprintf
+        "an import runs '%s' as it loads, which %s does not allow.\n       \
+         The manifest could be:  \"%s\""
+        word
+        (Shell_scan.render_label ("Shell", Some allow_list))
+        (corrected_with word)))
+    | _ -> ()) loaded.Command_words.words;
+  if loaded.Command_words.dynamic then begin
+    static := false;
+    match allow with
+    | Some allow_list ->
+      raise (TypeError (Printf.sprintf
+        "an import runs a command as it loads whose name is not written out, \
+         and its module does not list what it runs, so %s cannot bound it.\n       \
+         Declare bare Shell."
+        (Shell_scan.render_label ("Shell", Some allow_list))))
+    | None -> ()
+  end;
   last_shell_words := List.sort compare !words;
   last_shell_static := !static
 
@@ -7110,7 +7144,8 @@ let error_message = function
   | _ -> assert false
 
 let infer_program_ ?base_env ?init_tenv ?init_env ?init_ifaces ?init_effects
-    ?(type_names = []) ?(import_words = []) prog =
+    ?(type_names = []) ?(import_words = [])
+    ?(import_load_words = Command_words.empty) prog =
   (* A name with no dot is one this file may write: its own declarations, and
      what it selected in an import. `Foo.Status` is written with the module,
      and its constructors are reached the same way. *)
@@ -7120,9 +7155,13 @@ let infer_program_ ?base_env ?init_tenv ?init_env ?init_ifaces ?init_effects
   in
   forget_unbound ();
   let saved_words = !import_words_ref in
+  let saved_load_words = !import_load_words_ref in
   import_words_ref := import_words;
+  import_load_words_ref := import_load_words;
   let result =
-    Fun.protect ~finally:(fun () -> import_words_ref := saved_words)
+    Fun.protect ~finally:(fun () ->
+      import_words_ref := saved_words;
+      import_load_words_ref := saved_load_words)
     @@ fun () ->
     with_type_name_map type_names (fun () ->
       with_visible visible (fun () ->
@@ -7143,12 +7182,12 @@ let infer_program_full ?(init_tenv=[]) ?(init_env=[]) ?init_ifaces
 
 (* Returns (full_env, own_env); uses stdlib_type_env as base (for module loading). *)
 let infer_program_env_with_own ?(init_tenv=[]) ?(init_env=[]) ?init_ifaces
-    ?init_effects ?(type_names=[]) ?import_words
+    ?init_effects ?(type_names=[]) ?import_words ?import_load_words
     (prog : program) : (env * env * Effect_set.EffSet.t, string) result =
   try
     let (_, env, own, _) =
       infer_program_ ~base_env:stdlib_type_env ~init_tenv ~init_env ?init_ifaces
-        ?init_effects ~type_names ?import_words prog in
+        ?init_effects ~type_names ?import_words ?import_load_words prog in
     Ok (env, own, !last_load_effects)
   with (TypeError _ | TypeErrorAt _) as e -> Error (error_message e)
 
@@ -7173,7 +7212,7 @@ let string_of_scheme_brief = function
    site knew, as data. *)
 let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
     ?(init_env=[]) ?init_ifaces ?init_effects ?(type_names=[]) ?import_words
-    (prog : program)
+    ?import_load_words (prog : program)
     : (env * env * typ * typ list,
        Token.loc option * string * Diag.fix option) result =
   (* An unbound name is recorded rather than raised, so the check reaches the
@@ -7189,7 +7228,7 @@ let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
   try
     let (_, full_env, own_env, last_t) =
       infer_program_ ~base_env ~init_tenv ~init_env ?init_ifaces ?init_effects
-        ~type_names ?import_words prog in
+        ~type_names ?import_words ?import_load_words prog in
     match answer_with_unbound () with
     | Some (loc, msg) -> Error (loc, msg, None)
     | None ->

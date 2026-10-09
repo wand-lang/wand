@@ -2134,10 +2134,14 @@ type import_env = {
   (* What each imported function runs, under the name this file writes it:
      `K.apply!` through a namespace, `apply!` when destructured. *)
   words : (string * Command_words.t) list;
+  (* What evaluating the imported modules' bindings runs, their own imports
+     included: the command words of `load_effects`. *)
+  load_words : Command_words.t;
 }
 
 let empty_import_env =
   { tenv = []; type_env = []; eval_env = lazy []; type_names = []; ifaces = [];
+    load_words = Command_words.empty;
     load_effects = Effect_set.EffSet.empty; words = [] }
 
 (* ── Multi-clause merging ─────────────────────────────────────────────────── *)
@@ -2480,7 +2484,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
                modul_import.ifaces
            @ acc.ifaces;
          load_effects = Effect_set.EffSet.union load_eff acc.load_effects;
-         words = words @ acc.words },
+         words = words @ acc.words;
+         load_words = Command_words.union modul_import.load_words acc.load_words },
        mod_docs @ acc_docs)
     in
     at_import @@ fun () ->
@@ -2738,6 +2743,7 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
                ~init_ifaces:imported.ifaces
                ~init_effects:imported.load_effects
                ~import_words:imported.words
+               ~import_load_words:imported.load_words
                ~type_names:(own_type_names @ own_iface_names @ imported.type_names) prog with
        | Ok (type_env, own_type, load_eff) as ok ->
          let n_own = List.length type_env - tail_len in
@@ -2866,7 +2872,13 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
               @ List.filter (fun (k, _) -> Module_types.is_canonical k)
                   imported.ifaces);
            load_effects = own_load_eff;
-           words = imported.words } in
+           words = imported.words;
+           load_words =
+             if imported.load_words = Command_words.empty
+                && imported.words = [] && not (Command_words.may_run src)
+             then Command_words.empty
+             else Command_words.union imported.load_words
+                 (Command_words.load_words ~imported:imported.words prog) } in
        (* What each exported function runs. Read from the parse, so a
           module whose types came from the compile cache answers too. *)
        let own_words =
@@ -3546,7 +3558,7 @@ let run_program ?(mode = Normal) ~base_dir prog =
   let prog = Typechecker.settle_aliases ~init_tenv:imp.tenv prog in
   (match Typechecker.infer_program_env_with_own ~init_tenv:imp.tenv ~init_env:imp.type_env
            ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects
-           ~import_words:imp.words ~type_names:imp.type_names prog with
+           ~import_words:imp.words ~import_load_words:imp.load_words ~type_names:imp.type_names prog with
    | Error msg -> Error ("type error: " ^ msg)
    | Ok _ ->
      let result = run_in_mode mode (fun () ->
@@ -3730,7 +3742,7 @@ let run_test_program ~base_dir ?(item_locs = []) prog
   let prog = Typechecker.settle_aliases ~init_tenv:imp.tenv prog in
   match Typechecker.infer_program_env_with_own
           ~init_tenv:imp.tenv ~init_env:imp.type_env
-          ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects ~import_words:imp.words
+          ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
           ~type_names:imp.type_names prog with
   | Error msg -> Error ("type error: " ^ msg)
   | Ok (_, own_type_env, _) ->
@@ -4235,7 +4247,7 @@ let run_session ?(evaluate = true) (sess : session) (src : string)
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
             ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (full_type_env, own_type_env, last_t, hole_types) ->
@@ -4531,7 +4543,7 @@ let typecheck_source ?(set_main = true) ~path (src : string)
     in
     match Typechecker.infer_program_full_with_own ~base_env
             ~init_tenv:imp.tenv ~init_env:imp.type_env
-            ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects ~import_words:imp.words
+            ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
             ~type_names:imp.type_names prog with
     | Error (loc, msg, fix) ->
       (* An unbound name is the one error a check carries on past, so there
@@ -4765,7 +4777,7 @@ let lint_module_source (src : string) : (Lint.finding list, string) result =
     match Typechecker.infer_program_env_with_own
             ~init_tenv:(local_tenv_of prog @ imp.tenv)
             ~init_env:imp.type_env ~init_ifaces:imp.ifaces
-            ~init_effects:imp.load_effects ~import_words:imp.words
+            ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
             ~type_names:imp.type_names prog with
     | Error msg -> Error ("type error: " ^ msg)
     | Ok (_, own_type_env, _) ->
@@ -4792,7 +4804,7 @@ let lint_session (sess : session) (src : string) : (Lint.finding list, string) r
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
             ~type_names:merged_type_names prog with
     | Error (loc, msg, _) -> Error (Diag.legacy (Diag.error ~code:"E-TYPE" ?loc msg))
     | Ok (_, own_type_env, _, _) ->
@@ -4817,7 +4829,7 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
     let merged_ifaces = imp.ifaces @ sess.s_ifaces in
     match Typechecker.infer_program_full_with_own
             ~init_tenv:merged_tenv ~init_env:merged_type_env
-            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words
+            ~init_ifaces:merged_ifaces ~init_effects:imp.load_effects ~import_words:imp.words ~import_load_words:imp.load_words
             ~type_names:merged_type_names prog with
     | Error (loc, msg, fix) -> Error (Diag.error ~code:"E-TYPE" ?loc ?fix msg)
     | Ok (full_type_env, _, last_t, hole_types) ->
