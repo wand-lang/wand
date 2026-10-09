@@ -256,7 +256,7 @@ let _read_head conn max =
   in
   go [] 0
 
-let _parse_headers lines =
+let _header_pairs lines =
   lines
   |> List.filter_map (fn line ->
     match String.split ":" line with
@@ -266,7 +266,29 @@ let _parse_headers lines =
       String.lower (String.trim name),
       String.trim (String.join ":" rest)
     ))
-  |> Map.from_list
+
+let _parse_headers lines = Map.from_list (_header_pairs lines)
+
+-- How the body's length is framed, or why the request cannot be read. A
+-- second `Content-Length` used to replace the first, and a
+-- `Transfer-Encoding` was ignored, so a proxy in front could read one
+-- request where this read two. Both are refused, and a length is decimal
+-- digits and nothing else.
+let _body_length pairs = (
+  let named n = List.filter (fn (k, _) -> k == n) pairs;
+  match (named "transfer-encoding", named "content-length") with
+  | ([_ :: _], _) -> Error (
+    501,
+    "a Transfer-Encoding is not supported; send a Content-Length"
+  )
+  | (_, []) -> Ok 0
+  | (_, [(_, n)]) -> (
+    match String.to_int n with
+    | Ok length when length >= 0 -> Ok length
+    | _ -> Error (400, "the Content-Length is not a number")
+  )
+  | _ -> Error (400, "the request has more than one Content-Length")
+)
 
 -- Exactly `n` bytes of body, or fewer if the other end stops sending.
 let _read_body conn n =
@@ -289,37 +311,49 @@ let _read_request (limits: Server) conn =
       match _method_of verb with
       | None -> Error (501, "")
       | Some method -> (
-        let headers = _parse_headers rest;
-        let length =
-          (match Map.get "content-length" headers with
-           | Some n -> Result.default (0 - 1) (String.to_int n)
-           | None -> 0);
-        if length < 0 then Error (400, "the Content-Length is not a number")
-        else if length > Size.to_bytes limits.max_body then
-          Error (413, "the body is larger than %{limits.max_body}")
-        else (
-          let (path, query) = _split_target target;
-          Ok Incoming(
-            method = method,
-            path = path,
-            query = query,
-            headers = headers,
-            body = _read_body conn length,
-            peer = Net.peer conn
+        let pairs = _header_pairs rest;
+        let headers = Map.from_list pairs;
+        match _body_length pairs with
+        | Error refusal -> Error refusal
+        | Ok length -> if length > Size.to_bytes limits.max_body then
+            Error (413, "the body is larger than %{limits.max_body}")
+          else (
+            let (path, query) = _split_target target;
+            Ok Incoming(
+              method = method,
+              path = path,
+              query = query,
+              headers = headers,
+              body = _read_body conn length,
+              peer = Net.peer conn
+            )
           )
-        )
       )
     )
     | _ -> Error (400, "the request line is not `METHOD target HTTP/version`")
   )
 
+-- A header the handler set can hold no line break: written as it was, a
+-- value carrying user input could end the header and add others, or a
+-- second response. `Content-Length` and `Connection` are the server's own,
+-- so a handler's are not sent beside them.
+let _sendable? (k, v) =
+  let clean t =
+    !(String.contains? "\r" t || String.contains? "\n" t || String.contains? "\x00" t);
+  clean k && clean v
+
+let _ours? k = List.any? (fn n -> n == String.lower k) ["content-length", "connection"]
+
 let _send (r: Response) conn =
-  let head =
-    Map.to_list r.headers |> List.map (fn (k, v) -> "%{k}: %{v}\r\n") |> String.join "";
-  let status = "HTTP/1.1 %{r.status} %{_status_text r.status}\r\n";
-  let fixed = "Content-Length: %{String.length r.body}\r\nConnection: close\r\n";
-  let _ = Net.write "%{status}%{fixed}%{head}\r\n%{r.body}" conn;
-  ()
+  let pairs = Map.to_list r.headers |> List.filter (fn (k, _) -> !(_ours? k));
+  if !(List.all? _sendable? pairs) then _send (reply 500 "") conn
+  else (
+    let head = pairs |> List.map (fn (k, v) -> "%{k}: %{v}\r\n") |> String.join "";
+    let status = "HTTP/1.1 %{r.status} %{_status_text r.status}\r\n";
+    let fixed = "Content-Length: %{String.length r.body}\r\nConnection: close\r\n";
+    let _ = Net.write "%{status}%{fixed}%{head}\r\n%{r.body}" conn;
+    ()
+  )
 
 let _answer (limits: Server) handler conn =
   match Par.timeout limits.head_timeout (fn () -> _read_request limits conn) with

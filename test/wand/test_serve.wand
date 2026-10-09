@@ -28,6 +28,12 @@ let route! (state: Shared State) (req: HTTP.Incoming) =
   )
   | (HTTP.GET, ["boom"]) -> HTTP.reply 200 (List.head! [])
   | (HTTP.GET, ["slow"]) -> (Clock.sleep 3s; HTTP.reply 200 "late")
+  -- The body, sent back as a header: a line break in it must not reach the
+  -- wire as one.
+  | (HTTP.POST, ["header"]) -> HTTP.Response(
+    HTTP.reply 200 "ok",
+    headers = Map.set "x-echo" req.body {}
+  )
   | _ -> HTTP.reply 404 ""
 
 group "a handler without a socket" (fn () -> [
@@ -51,11 +57,17 @@ let status! verb data url =
 
 let body! url = $(curl -s %{url})
 
+let with_header! header data url =
+  $(curl -s -o /dev/null -w %{fmt} -H %{header} --data-binary %{data} %{url})
+
+let with_headers! first second data url =
+  $(curl -s -o /dev/null -w %{fmt} -H %{first} -H %{second} --data-binary %{data} %{url})
+
 -- The server and its client run as two branches of one call: when the
 -- client is done, the server stops.
 test "a server answers each request as its limits say" (fn t ->
   t.eq
-    ["201", "ada", "404", "500", "503", "413", "501"]
+    ["201", "ada", "404", "500", "503", "413", "501", "200", "500", "501", "400", "400"]
     (with Shared.make State(users = {}) as state ->
     Par.all! [
       fn () -> (
@@ -74,7 +86,12 @@ test "a server answers each request as its limits say" (fn t ->
           status! "GET" "" "%{url}/boom",
           status! "GET" "" "%{url}/slow",
           status! "POST" "0123456789ABCDEF" "%{url}/users/9",
-          status! "OPTIONS" "" "%{url}/"
+          status! "OPTIONS" "" "%{url}/",
+          status! "POST" "plain" "%{url}/header",
+          status! "POST" "a\r\nx: 1" "%{url}/header",
+          with_header! "Transfer-Encoding: chunked" "abc" "%{url}/users/1",
+          with_headers! "Content-Length: 3" "Content-Length: 4" "abc" "%{url}/users/1",
+          with_header! "Content-Length: 0x3" "abc" "%{url}/users/1"
         ]
       )
     ]))
