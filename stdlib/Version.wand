@@ -115,6 +115,15 @@ let bump_major v = version_bump_major v
 
 -- >> Version.bump_minor 1.2.3
 -- 1.3.0 : Version
+--
+-- A prerelease of the release a bump would reach is already on its way
+-- there, so that release is the answer, as it is for `bump_patch` below.
+--
+-- >> Version.bump_minor 1.3.0-rc.1
+-- 1.3.0 : Version
+--
+-- >> Version.bump_major 2.0.0-rc.1
+-- 2.0.0 : Version
 let bump_minor v = version_bump_minor v
 
 -- With one exception, which is the spec's rule 9 read forwards: a

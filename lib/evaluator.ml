@@ -6092,12 +6092,25 @@ let stdlib_eval_env : env = [
      build: `1.2.3-rc.1` bumped at the minor is `1.3.0`, not `1.3.0-rc.1`,
      because the prerelease named a run-up to 1.2.3 and there is nothing
      left of it. *)
+  (* The exception below holds at each level: a prerelease of the release
+     a bump would reach is already on the way to it. `2.0.0-rc.1` is the
+     run-up to 2.0.0, so its next major is 2.0.0; stepping to 3.0.0 skipped
+     the release it was for (#98). A prerelease of anything else is below a
+     release the bump steps past, as `1.2.3-rc.1` at the minor is 1.3.0. *)
   ("version_bump_major", VBuiltin (function
-    | VVersion v -> VVersion (Printf.sprintf "%d.0.0" (version_number v 0 + 1))
+    | VVersion v ->
+      let pre = snd (version_parts v) <> None in
+      if pre && version_number v 1 = 0 && version_number v 2 = 0
+      then VVersion (fst (version_parts v))
+      else VVersion (Printf.sprintf "%d.0.0" (version_number v 0 + 1))
     | _ -> raise (EvalError "version_bump_major: expected Version")));
   ("version_bump_minor", VBuiltin (function
     | VVersion v ->
-      VVersion (Printf.sprintf "%d.%d.0" (version_number v 0) (version_number v 1 + 1))
+      let pre = snd (version_parts v) <> None in
+      if pre && version_number v 2 = 0
+      then VVersion (fst (version_parts v))
+      else
+        VVersion (Printf.sprintf "%d.%d.0" (version_number v 0) (version_number v 1 + 1))
     | _ -> raise (EvalError "version_bump_minor: expected Version")));
   (* The one exception. A prerelease is below the release it names, so
      `1.2.3-rc.1` is already on the way to 1.2.3 and bumping the patch

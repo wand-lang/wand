@@ -639,6 +639,10 @@ let version_error text =
     Some "a version is three numbers: major.minor.patch"
   else if not (List.for_all all_digits core) then
     Some "a version's major, minor and patch are numbers"
+  (* Too large before a leading zero: both fail `numeric_identifier`, and
+     `99999999999999999999.0.0` was told it had a leading zero. *)
+  else if List.exists (fun d -> int_of_string_opt d = None) core then
+    Some "a version's numbers have to fit in an Int"
   else if not (List.for_all numeric_identifier core) then
     Some "a version's numbers cannot have a leading zero"
   else if pre <> "" && pre.[0] <> '-' then
