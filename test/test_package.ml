@@ -311,6 +311,8 @@ let test_run_entry_keeps_the_caller_s_build () =
 
 (* A git repository standing in for https://x.dev/me/json, which git is told
    to read from disk, and a cache of this test's own. *)
+let entry_of path version = { Package.path; version; name = None; local = None }
+
 let with_remote f =
   let root = fresh_dir () in
   let repo = Filename.concat root "repos/me/json" in
@@ -349,7 +351,7 @@ let test_fetch_and_sum () =
       (Sys.file_exists (Filename.concat cached "json.wand"));
     Alcotest.(check bool) "without .git" false
       (Sys.file_exists (Filename.concat cached ".git"));
-    let h = Package.tree_hash cached in
+    let h = Package.tree_hash ~name:"json" cached in
     write_sum app (Printf.sprintf "https://x.dev/me/json 1.4.0 %s\n" h);
     Alcotest.(check (result string string)) "runs once recorded" (Ok "parsed x")
       (run_in app "main.wand" main);
@@ -361,6 +363,44 @@ let test_fetch_and_sum () =
       (run_in app "main.wand" main);
     write (Filename.concat app "wand.pkg") (app_mod "1.5.0");
     error_says "no such tag" "git clone of the tag v1.5.0 failed" (run_in app "main.wand" main))
+
+(* A tag holding a symbolic link is refused, and the fetch leaves what the
+   link names alone. Followed, the hash read files outside the cache and the
+   chmod made them read-only. *)
+let test_a_link_in_a_package_is_refused () =
+  with_remote (fun ~app ~repo ->
+    let root = Filename.dirname app in
+    let victim = Filename.concat root "victim" in
+    Unix.mkdir victim 0o755;
+    write (Filename.concat victim "kept.txt") "mine";
+    Unix.chmod (Filename.concat victim "kept.txt") 0o644;
+    Unix.symlink victim (Filename.concat repo "outside");
+    let git args = ignore (Sys.command (Filename.quote_command "git" ("-C" :: repo :: args)
+        ~stdout:"/dev/null" ~stderr:"/dev/null")) in
+    git ["add"; "."];
+    git ["-c"; "user.email=t@t"; "-c"; "user.name=t"; "commit"; "-qm"; "two"];
+    git ["tag"; "v2.0.0"];
+    write (Filename.concat app "wand.pkg") (app_mod "2.0.0");
+    error_says "the fetch is refused" "holds a symbolic link, `outside`"
+      (run_in app "main.wand" "import https://x.dev/me/json\njson.parse \"x\"");
+    Alcotest.(check int) "what the link names keeps its mode" 0o644
+      (Unix.stat (Filename.concat victim "kept.txt")).Unix.st_perm;
+    Alcotest.(check bool) "and its contents" true
+      (Sys.file_exists (Filename.concat victim "kept.txt"));
+    let cached = Package.cache_dir (entry_of "https://x.dev/me/json" "2.0.0") in
+    Alcotest.(check bool) "nothing is cached" false (Sys.file_exists cached);
+    Alcotest.(check (list string)) "and no clone is left behind" []
+      (List.filter (fun n -> String.starts_with ~prefix:".fetch-" n)
+         (Array.to_list (Sys.readdir (Filename.dirname cached)))))
+
+(* A requirement can come from any package's wand.pkg, so where its clone
+   lands is not up to the path: one with `..` is refused. *)
+let test_a_dot_segment_is_refused () =
+  match Package.cache_dir (entry_of "https://x.dev/me/../../../elsewhere" "1.0.0") with
+  | _ -> Alcotest.fail "a path with `..` named a cache directory"
+  | exception Package.Unresolved m ->
+    Alcotest.(check bool) "it says why" true
+      (String.length m > 0 && Option.is_some (String.index_opt m '`'))
 
 (* Repositories under root/repos, each a list of tags and the files at
    that tag, and git told to read https://x.dev/ from there. *)
@@ -391,7 +431,7 @@ let record_sums app entries =
   write_sum app
     (String.concat "" (List.map (fun (path, version) ->
        let r = entry path version in
-       let h = if Sys.file_exists (Package.cache_dir r) then Package.tree_hash (Package.cache_dir r)
+       let h = if Sys.file_exists (Package.cache_dir r) then Package.tree_hash ~name:"r" (Package.cache_dir r)
          else Package.fetch r in
        Printf.sprintf "%s %s %s\n" path version h) entries))
 
@@ -833,6 +873,9 @@ let () =
     "fetching", [
       Alcotest.test_case "fetch and the sum section" `Quick
         (fun () -> if git_present then test_fetch_and_sum () else Alcotest.skip ());
+      Alcotest.test_case "a link in a package is refused" `Quick
+        (fun () -> if git_present then test_a_link_in_a_package_is_refused () else Alcotest.skip ());
+      Alcotest.test_case "a dot segment is refused" `Quick test_a_dot_segment_is_refused;
     ];
     "the build", [
       Alcotest.test_case "minimal version selection" `Quick

@@ -403,6 +403,8 @@ let of_dir dir =
    outside every package. *)
 let of_file path = of_dir (Filename.dirname path)
 
+exception Unresolved of string
+
 let url_path u =
   match String.index_opt u ':' with
   | Some i when i + 2 < String.length u && String.sub u i 3 = "://" ->
@@ -424,7 +426,20 @@ let cache_root () =
     let home = Option.value (Sys.getenv_opt "HOME") ~default:"." in
     List.fold_left Filename.concat home [".cache"; "wand"; "pkg"]
 
+(* A path that names a place in the cache has only real segments: a `.`
+   or `..` would put the clone somewhere else, and a requirement can come
+   from any package's wand.pkg, so where it lands is not the package's to
+   choose. *)
+let check_segments what segs =
+  match List.find_opt (fun s -> s = "." || s = "..") segs with
+  | Some s ->
+    raise (Unresolved (Printf.sprintf
+      "%s has a `%s` segment. A package path names one place, so it is \
+       written without `.` and `..`" what s))
+  | None -> ()
+
 let cache_dir r =
+  check_segments r.path (String.split_on_char '/' (url_path r.path));
   Filename.concat (cache_root ()) (url_path r.path ^ "@" ^ r.version)
 
 (* The entry whose path is the longest prefix of the URL, by whole segments. *)
@@ -461,8 +476,6 @@ let own_rest pkg url =
     match entry_for pkg url with
     | Some r when List.length (segments r.path) > List.length own -> None
     | _ -> Some rest
-
-exception Unresolved of string
 
 let absolute dir =
   let full = if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir else dir in
@@ -502,33 +515,51 @@ let run_git args =
   (try Sys.remove log with Sys_error _ -> ());
   (code, String.trim out)
 
-let rec files_under dir rel =
+(* Every walk of a package's tree reads what is there with `lstat`, so a link
+   is a link and never the place it names. A package is files and
+   directories: a symbolic link in one is refused, because the tree's hash
+   would cover the link and not what it reaches. Followed, a link in a
+   fetched tag had the hash read files outside the cache, the chmod below
+   make them read-only, and the cleanup after a lost race delete them. *)
+let rec files_under ~name dir rel =
   let names = Sys.readdir (Filename.concat dir rel) in
   Array.sort compare names;
   List.concat_map (fun n ->
     let r = if rel = "" then n else rel ^ "/" ^ n in
-    if Sys.is_directory (Filename.concat dir r) then files_under dir r else [r])
+    match (Unix.lstat (Filename.concat dir r)).Unix.st_kind with
+    | Unix.S_DIR -> files_under ~name dir r
+    | Unix.S_REG -> [r]
+    | Unix.S_LNK ->
+      raise (Unresolved (Printf.sprintf
+        "%s holds a symbolic link, `%s`. A package is files and directories \
+         only, so that its hash covers everything in it" name r))
+    | _ ->
+      raise (Unresolved (Printf.sprintf
+        "%s holds `%s`, which is not a file or a directory" name r)))
     (Array.to_list names)
 
 (* One hash for a tree: each file's path and the hash of its bytes, in path
    order. *)
-let tree_hash dir =
+let tree_hash ~name dir =
   let lines = List.map (fun r ->
     let bytes = In_channel.with_open_bin (Filename.concat dir r) In_channel.input_all in
     Printf.sprintf "%s %s\n" r Digestif.SHA256.(to_hex (digest_string bytes)))
-    (files_under dir "") in
+    (files_under ~name dir "") in
   "sha256:" ^ Digestif.SHA256.(to_hex (digest_string (String.concat "" lines)))
 
 let rec remove_tree path =
-  if Sys.is_directory path then begin
+  match (Unix.lstat path).Unix.st_kind with
+  | Unix.S_DIR ->
     Array.iter (fun n -> remove_tree (Filename.concat path n)) (Sys.readdir path);
     Sys.rmdir path
-  end else Sys.remove path
+  | _ -> Sys.remove path
 
 let rec set_read_only path =
-  if Sys.is_directory path then
+  match (Unix.lstat path).Unix.st_kind with
+  | Unix.S_DIR ->
     Array.iter (fun n -> set_read_only (Filename.concat path n)) (Sys.readdir path)
-  else Unix.chmod path 0o444
+  | Unix.S_REG -> Unix.chmod path 0o444
+  | _ -> ()
 
 let rec mkdir_p dir =
   if not (Sys.file_exists dir) then begin
@@ -539,7 +570,10 @@ let rec mkdir_p dir =
 let fetch r =
   let dir = cache_dir r in
   let parent = Filename.dirname dir in
-  mkdir_p parent;
+  (try mkdir_p parent
+   with Unix.Unix_error (e, _, _) ->
+     raise (Unresolved (Printf.sprintf "cannot make the cache directory %s: %s"
+                          parent (Unix.error_message e))));
   let tmp = Filename.concat parent
       (Printf.sprintf ".fetch-%d-%s" (Unix.getpid ()) (Filename.basename dir)) in
   if Sys.file_exists tmp then remove_tree tmp;
@@ -548,13 +582,16 @@ let fetch r =
     run_git ["-c"; "advice.detachedHead=false"; "clone"; "--quiet"; "--depth"; "1";
              "--branch"; "v" ^ r.version; r.path; tmp] in
   if code <> 0 then begin
-    (try remove_tree tmp with Sys_error _ -> ());
+    (try remove_tree tmp with Sys_error _ | Unix.Unix_error _ -> ());
     raise (Unresolved (Printf.sprintf
       "cannot fetch %s %s: git clone of the tag v%s failed%s"
       r.path r.version r.version (if out = "" then "" else ":\n" ^ out)))
   end;
   remove_tree (Filename.concat tmp ".git");
-  let h = tree_hash tmp in
+  let name = Printf.sprintf "%s %s" r.path r.version in
+  let h =
+    try tree_hash ~name tmp
+    with e -> (try remove_tree tmp with Sys_error _ | Unix.Unix_error _ -> ()); raise e in
   set_read_only tmp;
   (try Unix.rename tmp dir
    with Unix.Unix_error _ -> remove_tree tmp);
@@ -569,7 +606,10 @@ let cached_hash r =
   match Hashtbl.find_opt hashes dir with
   | Some h -> h
   | None ->
-    let h = if Sys.file_exists dir then tree_hash dir else fetch r in
+    let h =
+      if Sys.file_exists dir
+      then tree_hash ~name:(Printf.sprintf "%s %s" r.path r.version) dir
+      else fetch r in
     Hashtbl.replace hashes dir h;
     h
 
@@ -688,6 +728,7 @@ let in_package ~base_dir what =
        no package. Run `wand p init <url>` in the package's directory" what))
 
 let file_in main r rest =
+  check_segments (String.concat "/" (r.path :: rest)) rest;
   (match List.find_opt (fun s -> String.length s > 0 && s.[0] = '_') rest with
    | Some s ->
      raise (Unresolved (Printf.sprintf
