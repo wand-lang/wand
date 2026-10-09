@@ -170,3 +170,8 @@ test "a directory matching the pattern is not in the answer" (fn t ->
       FS.dir? (Path.join dir ./looks.txt)
     )
   ))
+
+-- `**/` is zero or more directories, as in bash's globstar: a file at the
+-- top is under it too.
+test "a double star matches no directory at all" (fn t ->
+  t.eq [true, true] [Glob.matches? ./**/*.ml ./a.ml, Glob.matches? ./**/*.ml ./x/y/a.ml])

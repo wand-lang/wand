@@ -1361,6 +1361,9 @@ files. A glob literal uses `*`, `**`, `?` or `[...]`:
 ./utils.wand        -- Path (no wildcards — unchanged)
 ```
 
+`**/` is zero or more directories, as in bash's globstar and `.gitignore`:
+`./**/*.ml` matches `a.ml` as well as `sub/b.ml`.
+
 A pattern that starts with a bare word needs the `./` prefix. Each relative
 path does. Write `./file*.txt`, not `file*.txt`. Without the prefix, `file` is
 a name and `*.txt` is a glob literal. The line then means "apply `file` to

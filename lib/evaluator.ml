@@ -4143,7 +4143,21 @@ let glob_strip_dot s =
    would show up as a walk finding a file the predicate says it should not
    have. *)
 let glob_compile pat =
-  match Re.compile (Re.Glob.glob ~anchored:true ~double_asterisk:true (glob_strip_dot pat)) with
+  (* `**/` is zero or more directories, as in bash's globstar and
+     .gitignore: `./**/*.ml` takes `a.ml` as well as `sub/b.ml`. `Re.Glob`
+     reads it as one or more, so the pattern is compiled with each `**/`
+     there and gone, every way, and any of them matching is a match (#101). *)
+  let rec variants p =
+    match Re.exec_opt (Re.compile (Re.str "**/")) p with
+    | None -> [p]
+    | Some g ->
+      let (i, j) = Re.Group.offset g 0 in
+      let before = String.sub p 0 i and after = String.sub p j (String.length p - j) in
+      List.concat_map (fun rest -> [before ^ "**/" ^ rest; before ^ rest])
+        (variants after)
+  in
+  let one p = Re.Glob.glob ~anchored:true ~double_asterisk:true p in
+  match Re.compile (Re.alt (List.map one (variants (glob_strip_dot pat)))) with
   | re -> Ok re
   | exception _ ->
     Error "a character class is not closed: every `[` needs a `]` after it"
