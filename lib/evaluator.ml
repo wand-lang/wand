@@ -1753,6 +1753,17 @@ let format_dur_ms ms =
     add wk "w"; add dy "d"; add hr "h"; add mn "m"; add sc "s"; add ml "ms";
     Buffer.contents buf
 
+(* A Duration from milliseconds, or the runtime error a negative count is.
+   A Duration is never negative -- subtraction stops at 0s -- and
+   `format_dur_ms` wrote the size of a negative count with no sign, so
+   `Duration.seconds (-5)` was 5s and `Duration.scale (-2) 5s` was 10s
+   (#96). *)
+let duration_of_ms ms =
+  if ms < 0 then
+    raise (EvalError (Printf.sprintf
+      "a Duration is 0s or more, and this one would be %d ms" ms))
+  else VDuration (format_dur_ms ms)
+
 (* An address as the 32-bit number it is, so `10.0.0.9` is below
    `10.0.0.10`. Text order says otherwise, which is the answer nobody
    wants. The lexer has already refused an octet above 255. *)
@@ -4105,6 +4116,17 @@ let checked_domain check r =
      | exception EvalError why -> VConstr (Ctor.Builtin "Error", [VString why]))
   | _ -> r
 
+(* A whole Float as an Int, or the runtime error an Int overflow is. NaN,
+   infinity and a value past an Int's range have no Int, and
+   `int_of_float` answered 0 for each, so a bad value became zero with
+   nothing said (#95). *)
+let int_of_whole name original whole =
+  if not (Float.is_integer whole)
+     || whole >= 4611686018427387904.0 || whole < -4611686018427387904.0
+  then raise (EvalError (Printf.sprintf "%s: %s has no Int" name
+                           (Printf.sprintf "%g" original)))
+  else int_of_float whole
+
 (* ── Globs ───────────────────────────────────────────────────────────────── *)
 
 (* `./` in front of a pattern or a path is a way of writing "here" and not
@@ -5778,13 +5800,13 @@ let stdlib_eval_env : env = [
   (* Round half away from zero, the arithmetic reading of "round": -2.5
      rounds to -3, as Float.round's doc states. *)
   ("float_round", VBuiltin (function
-    | VFloat f -> VInt (int_of_float (Float.round f))
+    | VFloat f -> VInt (int_of_whole "Float.round" f (Float.round f))
     | _ -> raise (EvalError "float_round: expected Float")));
   ("float_floor", VBuiltin (function
-    | VFloat f -> VInt (int_of_float (Float.floor f))
+    | VFloat f -> VInt (int_of_whole "Float.floor" f (Float.floor f))
     | _ -> raise (EvalError "float_floor: expected Float")));
   ("float_ceil", VBuiltin (function
-    | VFloat f -> VInt (int_of_float (Float.ceil f))
+    | VFloat f -> VInt (int_of_whole "Float.ceil" f (Float.ceil f))
     | _ -> raise (EvalError "float_ceil: expected Float")));
   ("float_abs", VBuiltin (function
     | VFloat f -> VFloat (Float.abs f)
@@ -6620,19 +6642,19 @@ let stdlib_eval_env : env = [
   (* Duration primitives *)
   ("dur_zero",    VDuration "0s");
   ("dur_seconds", VBuiltin (function
-    | VInt n -> VDuration (format_dur_ms (mul_ovf n 1000))
+    | VInt n -> duration_of_ms (mul_ovf n 1000)
     | _ -> raise (EvalError "dur_seconds: expected Int")));
   ("dur_minutes", VBuiltin (function
-    | VInt n -> VDuration (format_dur_ms (mul_ovf n 60000))
+    | VInt n -> duration_of_ms (mul_ovf n 60000)
     | _ -> raise (EvalError "dur_minutes: expected Int")));
   ("dur_hours",   VBuiltin (function
-    | VInt n -> VDuration (format_dur_ms (mul_ovf n 3600000))
+    | VInt n -> duration_of_ms (mul_ovf n 3600000)
     | _ -> raise (EvalError "dur_hours: expected Int")));
   ("dur_days",    VBuiltin (function
-    | VInt n -> VDuration (format_dur_ms (mul_ovf n 86400000))
+    | VInt n -> duration_of_ms (mul_ovf n 86400000)
     | _ -> raise (EvalError "dur_days: expected Int")));
   ("dur_weeks",   VBuiltin (function
-    | VInt n -> VDuration (format_dur_ms (mul_ovf n 604800000))
+    | VInt n -> duration_of_ms (mul_ovf n 604800000)
     | _ -> raise (EvalError "dur_weeks: expected Int")));
   ("dur_add", VBuiltin (function
     | VDuration a -> VBuiltin (function
@@ -6646,7 +6668,7 @@ let stdlib_eval_env : env = [
     | _ -> raise (EvalError "dur_sub: expected Duration")));
   ("dur_scale", VBuiltin (function
     | VInt n -> VBuiltin (function
-      | VDuration d -> VDuration (format_dur_ms (mul_ovf n (parse_dur_ms d)))
+      | VDuration d -> duration_of_ms (mul_ovf n (parse_dur_ms d))
       | _ -> raise (EvalError "dur_scale: expected Duration"))
     | _ -> raise (EvalError "dur_scale: expected Int")));
   ("dur_format", VBuiltin (function
@@ -6660,7 +6682,9 @@ let stdlib_eval_env : env = [
     | VSize s -> VInt (size_bytes s)
     | _ -> raise (EvalError "size_to_bytes: expected Size")));
   ("size_of_bytes", VBuiltin (function
-    | VInt n -> VSize (Printf.sprintf "%dB" (max 0 n))
+    | VInt n when n < 0 -> raise (EvalError (Printf.sprintf
+        "Size.of_bytes: %d bytes is no size; a size is 0B or more" n))
+    | VInt n -> VSize (Printf.sprintf "%dB" n)
     | _ -> raise (EvalError "size_of_bytes: expected Int")));
   ("size_format", VBuiltin (function
     | VSize s -> VString (format_size_bytes (size_bytes s))

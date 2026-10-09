@@ -88,3 +88,9 @@ test "a difference below zero floors" (fn t -> t.eq 0s (5s - 10s))
 -- that raises the first time it is used.
 test "reading one too large is an Error" (fn t ->
   t.ok (Result.error? (String.to_duration "9999999999999999999h")))
+
+-- A Duration is 0s or more. A negative count used to come back as its size
+-- with no sign: `Duration.seconds (-5)` was 5s.
+test "a negative count of seconds raises" (fn t ->
+  t.raises (fn () -> Duration.seconds (0 - 5)))
+test "scaling by a negative raises" (fn t -> t.raises (fn () -> Duration.scale (0 - 2) 5s))

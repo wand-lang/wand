@@ -57,7 +57,9 @@ let add a b = dur_add a b
 -- 0s : Duration
 let sub a b = dur_sub a b
 
--- Multiply a duration by a scalar.
+-- Multiply a duration by a scalar. A Duration is 0s or more, so a negative
+-- scalar, like a negative count given to `seconds` and the rest, is a
+-- runtime error.
 --
 -- >> Duration.scale 3 30s
 -- 1m30s : Duration

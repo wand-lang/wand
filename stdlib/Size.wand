@@ -4,7 +4,8 @@
 -- 10000000 : Int
 let to_bytes s = size_to_bytes s
 
--- A size of n bytes, written in bytes.
+-- A size of n bytes, written in bytes. A size is 0B or more, so a negative
+-- count is a runtime error.
 --
 -- >> Size.of_bytes 6466
 -- 6466B : Size

@@ -1,5 +1,6 @@
 let {test} = import Test
 import Float
+import Int
 
 -- Arithmetic is one spelling over both members of Num: the checker keeps
 -- an expression to one numeric type, the evaluator dispatches on the
@@ -38,3 +39,10 @@ test "format to one digit" (fn t -> t.eq "0.3" (Float.format 1 0.3333))
 test "format fills the digits in" (fn t -> t.eq "1.50" (Float.format 2 1.5))
 test "format to none" (fn t -> t.eq "2" (Float.format 0 2.4))
 test "format rounds away from zero" (fn t -> t.eq "-0.8" (Float.format 1 (-0.75)))
+
+-- NaN, infinity and a value past an Int's range have no Int; each used to
+-- come back as 0.
+test "rounding NaN raises" (fn t -> t.raises (fn () -> Float.round (0.0 / 0.0)))
+test "flooring infinity raises" (fn t -> t.raises (fn () -> Float.floor (1.0 / 0.0)))
+test "a value past an Int's range raises" (fn t ->
+  t.raises (fn () -> Float.ceil (Float.of_int Int.max_value * 4.0)))

@@ -13,7 +13,9 @@
 -- 3 : Float
 let of_int n = float_of_int n
 
--- The nearest Int, halves rounding away from zero.
+-- The nearest Int, halves rounding away from zero. NaN, infinity and a
+-- value past an Int's range have no nearest Int, and are a runtime error,
+-- as an Int that overflows is; the same holds for `floor` and `ceil`.
 --
 -- A negative argument needs its brackets: `Float.round -2.5` is the
 -- subtraction it looks like, not a call.

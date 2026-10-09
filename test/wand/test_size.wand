@@ -16,7 +16,6 @@ test "a decimal literal" (fn t -> t.eq 1500000000 (Size.to_bytes 1.5GB))
 
 test "of_bytes is exact" (fn t -> t.eq 6466B (Size.of_bytes 6466))
 test "of_bytes round-trips" (fn t -> t.eq 6466 (Size.to_bytes (Size.of_bytes 6466)))
-test "a size below zero is none" (fn t -> t.eq 0B (Size.of_bytes (0 - 5)))
 
 -- ── format picks the unit a reader wants ────────────────────────────────
 
@@ -45,3 +44,5 @@ test "and compares by raising" (fn t -> t.raises (fn () -> 9000000000GB > 1KB))
 test "a sum past it raises" (fn t -> t.raises (fn () -> 4000PB + 1000PB))
 test "reading one is an Error" (fn t ->
   t.ok (Result.error? (String.to_size "9999999999999999999GB")))
+
+test "a negative count of bytes raises" (fn t -> t.raises (fn () -> Size.of_bytes (0 - 5)))
