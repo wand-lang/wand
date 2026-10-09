@@ -105,9 +105,10 @@ let post! url body = request! Request(url = url, method = POST, body = body)
 -- true : Bool
 let post url body = try post! url body
 
--- Every value of one header, in the order they arrived. A response may
--- repeat a header -- `set-cookie` is the one that matters -- and `header`
--- answers the last of them.
+-- One header's value as a list: one element when the response has the
+-- header, none when it does not. A response's headers are a Map, so a
+-- header sent more than once -- `set-cookie` is the one that matters --
+-- keeps only the last value it was sent with, here and in `header` alike.
 --
 -- >> HTTP.header_list "Accept" HTTP.Response(status = 200, headers = {accept = "a"}, body = "")
 -- ["a"] : List String
