@@ -1692,8 +1692,10 @@ let parse_dur_ms s =
    the author wrote. Binary units would be `KiB`, which wand does not lex.
 
    A literal may carry a decimal (`1.5GB`), so the product is rounded to
-   the nearest byte. `Int` holds 4.6 exabytes, and the largest literal the
-   lexer accepts is far below that. *)
+   the nearest byte. `Int` holds 4.6 exabytes, and a literal can name more:
+   `9000000000GB` came back from `int_of_float` as a negative number, and
+   compared below `1KB`. A size past what an Int holds is too large, and
+   says so, as a Duration does. *)
 let size_bytes s =
   let n = String.length s in
   let i = ref 0 in
@@ -1710,7 +1712,11 @@ let size_bytes s =
     | "PB" -> 1e15
     | _ -> raise (EvalError (Printf.sprintf "invalid size: %S" s))
   in
-  int_of_float (Float.round (number *. factor))
+  let bytes = Float.round (number *. factor) in
+  if bytes >= float_of_int max_int then
+    raise (EvalError (Printf.sprintf
+      "size %S is too large: an Int holds about 4.6 exabytes" s))
+  else int_of_float bytes
 
 (* The readable spelling of a byte count: the largest unit that leaves at
    least one of it, to a tenth. `Size.of_bytes` answers exact bytes, so a
@@ -3127,7 +3133,7 @@ and eval_binop (env : env) op a b : value =
      | VInt x,   VInt y   -> VInt (sub_ovf x y)
      | VFloat x, VFloat y -> VFloat (x -. y)
      | VSize x,  VSize y  ->
-       VSize (Printf.sprintf "%dB" (max 0 (size_bytes x - size_bytes y)))
+       VSize (Printf.sprintf "%dB" (max 0 (sub_ovf (size_bytes x) (size_bytes y))))
      | VDuration x, VDuration y ->
        VDuration (format_dur_ms (max 0 (parse_dur_ms x - parse_dur_ms y)))
      | VDateTime x, VDuration d ->
@@ -4091,6 +4097,18 @@ let to_domain ?shown name build s =
   | Ok tok -> (match build tok with Some v -> VConstr (Ctor.Builtin "Ok", [v]) | None -> cannot ())
   | Error (Some why) -> VConstr (Ctor.Builtin "Error", [VString why])
   | Error None -> cannot ()
+
+(* An `Ok` from `to_domain` whose value cannot be used -- a Size or a
+   Duration too large for an Int -- turned into the `Error` using it would
+   raise. `String.to_duration "9999999999999999999h"` answered `Ok`, and the
+   value raised at the first comparison. *)
+let checked_domain check r =
+  match r with
+  | VConstr (c, [v]) when Ctor.name c = "Ok" ->
+    (match check v with
+     | () -> r
+     | exception EvalError why -> VConstr (Ctor.Builtin "Error", [VString why]))
+  | _ -> r
 
 (* ── Globs ───────────────────────────────────────────────────────────────── *)
 
@@ -5915,7 +5933,11 @@ let stdlib_eval_env : env = [
            (Printf.sprintf "cannot parse %S as Version: %s" s why)]))
     | _ -> raise (EvalError "str_to_version: expected String")));
   ("str_to_size", VBuiltin (function
-    | VString s -> to_domain "Size" (function Token.Size v -> Some (VSize v) | _ -> None) s
+    | VString s ->
+      (* Read as a literal, and then as a number of bytes: a size an Int
+         cannot hold is an Error here, not a value that fails when used. *)
+      checked_domain (function VSize v -> ignore (size_bytes v) | _ -> ())
+        (to_domain "Size" (function Token.Size v -> Some (VSize v) | _ -> None) s)
     | _ -> raise (EvalError "str_to_size: expected String")));
   (* ── Addresses and networks ─────────────────────────────────────────── *)
 
@@ -6469,7 +6491,9 @@ let stdlib_eval_env : env = [
     | VString s -> to_domain "DateTime" (function Token.DateTime v -> Some (VDateTime v) | _ -> None) s
     | _ -> raise (EvalError "str_to_datetime: expected String")));
   ("str_to_duration", VBuiltin (function
-    | VString s -> to_domain "Duration" (function Token.Duration v -> Some (VDuration v) | _ -> None) s
+    | VString s ->
+      checked_domain (function VDuration v -> ignore (parse_dur_ms v) | _ -> ())
+        (to_domain "Duration" (function Token.Duration v -> Some (VDuration v) | _ -> None) s)
     | _ -> raise (EvalError "str_to_duration: expected String")));
   (* FS primitives *)
   ("fs_exists",  performing "FS!exists?" (function

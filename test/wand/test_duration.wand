@@ -1,5 +1,6 @@
 let {test} = import Test
 import Duration
+import Result
 import String
 
 -- ── constructors ────────────────────────────────────────────────────────
@@ -82,3 +83,8 @@ test "the operator adds" (fn t -> t.eq 1h30m (1h + 30min))
 test "and matches Duration.add" (fn t -> t.eq (Duration.add 1h 30min) (1h + 30min))
 test "the operator subtracts" (fn t -> t.eq 30min (1h - 30min))
 test "a difference below zero floors" (fn t -> t.eq 0s (5s - 10s))
+
+-- A duration too large for an Int is an Error when it is read, not a value
+-- that raises the first time it is used.
+test "reading one too large is an Error" (fn t ->
+  t.ok (Result.error? (String.to_duration "9999999999999999999h")))

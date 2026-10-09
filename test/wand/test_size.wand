@@ -1,4 +1,6 @@
+import Result
 import Size
+import String
 
 let {test} = import Test
 
@@ -33,3 +35,13 @@ test "a sum compares as a value" (fn t -> t.eq 2MB (1MB + 1MB))
 test "a difference" (fn t -> t.eq 96MB (100MB - 4MB))
 test "a difference below zero floors" (fn t -> t.eq 0B (4KB - 100MB))
 test "adding nothing" (fn t -> t.eq 4KB (4KB + 0B))
+
+-- ── too large for an Int ────────────────────────────────────────────────
+
+-- An Int holds about 4.6 exabytes. Past that a size used to wrap, so
+-- `9000000000GB` compared below `1KB`; it is too large, and says so.
+test "a size too large raises" (fn t -> t.raises (fn () -> Size.to_bytes 9000000000GB))
+test "and compares by raising" (fn t -> t.raises (fn () -> 9000000000GB > 1KB))
+test "a sum past it raises" (fn t -> t.raises (fn () -> 4000PB + 1000PB))
+test "reading one is an Error" (fn t ->
+  t.ok (Result.error? (String.to_size "9999999999999999999GB")))
