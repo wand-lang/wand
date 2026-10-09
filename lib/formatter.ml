@@ -131,13 +131,11 @@ let fits col d =
 let fits_text col s =
   col + String.length s <= !max_width && not (String.contains s '\n')
 
-(* The keyword a binding opens with, and the column its name starts at. A
-   binding's later clauses line up under the first one's name rather than at
-   a fixed step, so a sibling keyword -- `letrec` -- would carry its own
-   clauses across without a second number to keep in step. *)
+(* The keyword a binding opens with. A binding's later clauses line up
+   under the first one's name rather than at a fixed step, so a sibling
+   keyword -- `letrec` -- would carry its own clauses across without a
+   second number to keep in step. *)
 let let_keyword = "let"
-
-let name_column indent keyword = indent + String.length keyword + 1
 
 let strip_located = Ast.strip_located
 

@@ -215,8 +215,6 @@ let map_put kvs key v =
   in
   go false kvs
 
-let map_of_pairs pairs = List.fold_left (fun acc (k, v) -> map_put acc k v) [] pairs
-
 (* Reading a key out of a document that names it twice. The later one, for
    the same reason a Map keeps the later value: it is what an assignment
    means, and it is what the parsers everything else in the world uses do.
@@ -3992,9 +3990,6 @@ let dotenv_pairs src =
           in
           Some (key, value))
     (String.split_on_char '\n' src)
-
-(* Slurp a file whole; a `Sys_error` is the caller's to catch. *)
-let read_whole_file path = In_channel.with_open_text path In_channel.input_all
 
 (* ── CSV helpers ──────────────────────────────────────────────────────────── *)
 

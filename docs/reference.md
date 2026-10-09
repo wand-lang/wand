@@ -7654,14 +7654,15 @@ back reads what it wrote:
 
 ```console
 $ wand --dry-run publish.wand
-would create temp directory: build_ -> /tmp/wand-dry-run-8b792a8-dir
-would write: /tmp/wand-dry-run-8b792a8-dir/manifest.json (214 bytes)
-read: /tmp/wand-dry-run-8b792a8-dir/manifest.json
-would delete recursively: /tmp/wand-dry-run-8b792a8-dir
+would create temp directory: build_ -> $TMPDIR/wand-dry-run-8b792a81c04d6e3f-dir
+would write: $TMPDIR/wand-dry-run-8b792a81c04d6e3f-dir/manifest.json (214 bytes)
+read: $TMPDIR/wand-dry-run-8b792a81c04d6e3f-dir/manifest.json
+would delete recursively: $TMPDIR/wand-dry-run-8b792a81c04d6e3f-dir
 ```
 
-The write went nowhere. The read after it answered from what the write would
-have put there, so the script ran to the end and the whole plan was
+The write went nowhere. The directory's name is new each run, under
+`$TMPDIR`, so no one else can hold it first. The read after it answered from
+what the write would have put there, so the script ran to the end and the whole plan was
 reported. Writes, appends, deletes, renames, copies, directories, the stream
 sinks, and `Env.set` all work this way, and every read consults them:
 `read_file`, `stream_lines`, `exists?`, `file?`, `dir?`, `size`, `mtime`,

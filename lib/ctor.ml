@@ -50,8 +50,3 @@ let equal (a : t) (b : t) = a = b
 (* What a reader sees: the constructor as it was written. Two constructors of
    one name print alike, which is what a value has always looked like. *)
 let to_string c = name c
-
-(* For a message that has to tell two of one name apart. *)
-let to_qualified_string = function
-  | Builtin n | Local n -> n
-  | Owned (m, n) -> m ^ "." ^ n

@@ -24,11 +24,6 @@ let bare base = { qual = None; base }
 
 let qualified qual base = { qual = Some qual; base }
 
-let show_qname q =
-  match q.qual with
-  | None -> q.base
-  | Some m -> m ^ "." ^ q.base
-
 type type_expr =
   | TEName  of string
   (* 'a, and 'a: Ord for one that carries a constraint. The constraint is

@@ -132,9 +132,12 @@ let normalise path =
       | [] -> List.rev acc
       | "." :: rest -> go acc rest
       | ".." :: rest ->
+        (* A `..` that has nothing to take off stays, and so does one after
+           it: the second used to take off the first, so `../../x` came out
+           as `x`. *)
         (match acc with
-         | _ :: tl -> go tl rest
-         | [] -> go [".."] rest)
+         | ".." :: _ | [] -> go (".." :: acc) rest
+         | _ :: tl -> go tl rest)
       | "" :: rest when acc <> [] -> go acc rest
       | p :: rest -> go (p :: acc) rest
     in

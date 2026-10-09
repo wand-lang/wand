@@ -216,9 +216,10 @@ let () =
   let edits = ref 6 and corpus = ref [] and out = ref "" and known_path = ref "" in
   let width = ref 0 in
   (* Off by default. It runs the program on both sides of a format, which
-     answers a question nothing else asks -- and costs a little over twice
-     the throughput, which is a little under half the ground a shard covers
-     in its 45 minutes. Asked for, not assumed. *)
+     answers a question nothing else asks -- and costs a little over half
+     the throughput (549 inputs a second becomes 241), so a shard covers a
+     little under half the ground in its 45 minutes. Asked for, not
+     assumed. *)
   let eval = ref false in
   let input = ref "" and input_path = ref "" and quiet = ref false in
   let show = ref false in

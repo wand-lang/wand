@@ -643,11 +643,6 @@ let operation_types op : (typ * typ) option =
 
 (* ── Repr (follow unification links) ─────────────────────────────────────── *)
 
-(* An alias name over what it names, with the name taken off. Everything
-   that asks what a type *is* goes through here, so an alias needs no case
-   of its own anywhere; only printing looks under the name. *)
-let rec strip_alias t = match t with TAlias (_, _, u) -> strip_alias u | _ -> t
-
 let rec repr t =
   match t with
   | TVar tv -> (match tv.def with
