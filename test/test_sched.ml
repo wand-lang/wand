@@ -124,7 +124,7 @@ let test_capture_overlaps () =
     Evaluator.run_fibers (Array.init 3 (fun _ () ->
       ignore (Runner.capture ~stdin:"x" "cat >/dev/null; sleep 0.3; echo out; echo err >&2")))) in
   Alcotest.(check bool) (Printf.sprintf "three captures in %dms" took)
-    true (took < 800)
+    true (took >= 300 && took < 800)
 
 let test_stream_lines_in_fibers () =
   let got = Array.make 2 [] in
@@ -154,11 +154,18 @@ let test_trace_overlaps () =
     output_string oc
       "uses {Shell(sleep)}\nimport List\nimport Par\n\
        let _ = Par.each 10 (fn _ -> $(sleep 0.3)) (List.range 1 10)\n");
+  (* The result and a lower bound as well as the upper one: a script that
+     fails to check returns at once, and only the upper bound was asked, so
+     a broken run passed. *)
+  let result = ref (Error "not run") in
   let took = timed (fun () ->
-    ignore (Runner.run_file ~mode:Runner.Trace path)) in
+    result := Runner.run_file ~mode:Runner.Trace path) in
   Sys.remove path;
+  (match !result with
+   | Ok _ -> ()
+   | Error m -> Alcotest.failf "the traced run failed: %s" m);
   Alcotest.(check bool) (Printf.sprintf "ten traced commands in %dms" took)
-    true (took < 1500)
+    true (took >= 300 && took < 1500)
 
 (* An implementation that raises an OCaml exception, not a wand one, inside
    `Par.map`. The default handler raised it beside the continuation, which

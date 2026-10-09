@@ -64,8 +64,16 @@ let report changed = (
   Proc.exit 1
 )
 
+-- No file found means the gate ran somewhere other than the repository's
+-- root and checked nothing; that is a failure, not a pass. It used to
+-- print "a fixed point (0 files)" and exit 0.
 let main! () =
-  with FS.temp_dir "wand_fmt_check_" as dir -> (
+  if List.empty? sources then (
+    IO.println_err
+      ("no .wand files under %{String.join ", " checked_dirs}; run this from " ++ "the repository's root -- this gate is checking nothing");
+    Proc.exit 1
+  )
+  else with FS.temp_dir "wand_fmt_check_" as dir -> (
     copy_into! dir;
     format_in! dir;
     match rewritten! dir with

@@ -72,5 +72,6 @@ test "as a pattern" (fn t ->
 -- A String is bytes, and `\xNN` writes one by its value: 255 starts a
 -- telnet command, and no character spells it.
 test "a byte escape is one byte" (fn t -> t.eq 3 (String.length "\xff\xfb\x01"))
-test "a byte escape can spell ASCII" (fn t -> t.eq "A" "A")
-test "two byte escapes can spell a character" (fn t -> t.eq "café" "café")
+-- That one spells ASCII, and two spell a character, is checked in
+-- test_lexer.ml: `wand f` writes a printable byte as itself, so here the
+-- escape became the character and the test compared a value with itself.

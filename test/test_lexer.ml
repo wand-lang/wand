@@ -26,7 +26,12 @@ let test_string () =
   check_tokens "empty string"    {|""|}             [String ""];
   check_tokens "escape newline"  {|"a\nb"|}         [String "a\nb"];
   check_tokens "escape tab"      {|"a\tb"|}         [String "a\tb"];
-  check_tokens "escape quote"    {|"say \"hi\""|} [String {|say "hi"|}]
+  check_tokens "escape quote"    {|"say \"hi\""|} [String {|say "hi"|}];
+  (* Byte escapes, here rather than in a `.wand` test: `wand f` writes a
+     printable byte as itself, so `t.eq "A" "\x41"` there became
+     `t.eq "A" "A"` and tested nothing (#103). *)
+  check_tokens "a byte escape spells ASCII" {|"\x41"|} [String "A"];
+  check_tokens "two byte escapes spell a character" {|"caf\xc3\xa9"|} [String "caf\xc3\xa9"]
 
 (* A brace inside a string in the interpolated expression is text, not a
    bracket. Counted with the rest, `"%{f "{" }"` ran off the end of the file

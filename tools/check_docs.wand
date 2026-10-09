@@ -119,7 +119,14 @@ let report_undocumented names = (
   Proc.exit 1
 )
 
+-- No module found means the gate ran somewhere other than the repository's
+-- root and checked nothing; that is a failure, not a pass.
 let main! () = (
+  if List.empty? modules then (
+    IO.println_err
+      ("no modules in stdlib/; run this from the repository's root -- " ++ "this gate is checking nothing");
+    Proc.exit 1
+  );
   let missing = modules |> List.map undocumented_in! |> List.flatten;
   if List.empty? missing then () else report_undocumented missing;
   let results = modules |> List.map check;
