@@ -451,7 +451,8 @@ and stream_source =
   | SPull  of (unit -> value option)
   (* Connections accepted on a port, one per pull, for as long as the read
      goes on. *)
-  | SListen of int
+  (* The address to bind, when one was named, and the port. *)
+  | SListen of string option * int
 
 and stream_stage =
   | StMap       of value
@@ -3355,8 +3356,42 @@ let socket_wait ~write fd =
      with Unix.Unix_error (Unix.EINTR, _, _) -> ());
   check_interrupt ()
 
-let net_listen_impl = function
-  | VPort port ->
+(* How long a connection may go without sending or taking a byte. A client
+   that connects and then sends nothing held a worker for ever; past this,
+   the connection ends as it does when the other end finishes. A ref so a
+   test can wait less than a minute to see it. *)
+let idle_limit_ms = ref 60_000
+
+(* Wait until [fd] is ready or [deadline] passes; true when it is still
+   worth trying. *)
+let socket_wait_until ~write ~deadline fd =
+  let now = Sched.elapsed_ms () in
+  if now >= deadline then false
+  else begin
+    if Sched.active () then
+      Sched.suspend { Sched.reads = (if write then [] else [fd]);
+                      writes = (if write then [fd] else []);
+                      until = Some deadline; signals = [] }
+    else begin
+      let wait = float_of_int (deadline - now) /. 1000. in
+      try ignore (if write then Unix.select [] [fd] [] wait
+                  else Unix.select [fd] [] [] wait)
+      with Unix.Unix_error (Unix.EINTR, _, _) -> ()
+    end;
+    check_interrupt ();
+    true
+  end
+
+(* `Net.listen` takes every interface, and `Net.listen_on` the one address
+   it is given -- `127.0.0.1` serves this machine and no other. *)
+let net_listen_impl v =
+  let (addr, port) = match v with
+    | VPort port -> (Unix.inet_addr_any, port)
+    | VTuple [VIPv4 a; VPort port] -> (Unix.inet_addr_of_string a, port)
+    | _ -> raise (EvalError "Net.listen: expected a Port")
+  in
+  match v with
+  | VPort _ | VTuple _ ->
     (match Domain.DLS.get ambient_file_listen with
      | Some allow when
          not (Narrow.allowed ~rule:Narrow.port ~allow (":" ^ string_of_int port)) ->
@@ -3367,7 +3402,7 @@ let net_listen_impl = function
     let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
     (try
        Unix.setsockopt fd Unix.SO_REUSEADDR true;
-       Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_any, port));
+       Unix.bind fd (Unix.ADDR_INET (addr, port));
        Unix.listen fd 128;
        Unix.set_nonblock fd
      with Unix.Unix_error (e, _, _) ->
@@ -3409,17 +3444,34 @@ let conn_chunk : Bytes.t Domain.DLS.key =
 (* Read more into the buffer; false once the other end has finished. The
    buffer is fetched on each attempt, so a wait in `socket_wait` never holds
    it across a yield. *)
-let rec conn_fill c =
-  if c.c_eof || c.c_closed then false
-  else
-    let chunk = Domain.DLS.get conn_chunk in
-    match Unix.read c.c_fd chunk 0 (Bytes.length chunk) with
-    | 0 -> c.c_eof <- true; false
-    | n -> Buffer.add_subbytes c.c_buf chunk 0 n; true
-    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
-      socket_wait ~write:false c.c_fd; conn_fill c
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> conn_fill c
-    | exception Unix.Unix_error _ -> c.c_eof <- true; false
+(* A connection that has gone quiet for too long, or broken its protocol,
+   ends here: finished for a read, and closed, so a peer still sending is
+   not left waiting on a socket nobody reads. Marked closed, so the close at
+   the end of the connection's work does not close the descriptor again
+   after another socket has taken its number. *)
+let conn_end c =
+  c.c_eof <- true;
+  if not c.c_closed then begin
+    c.c_closed <- true;
+    (try Unix.close c.c_fd with Unix.Unix_error _ -> ())
+  end
+
+let conn_fill c =
+  let deadline = Sched.elapsed_ms () + !idle_limit_ms in
+  let rec go () =
+    if c.c_eof || c.c_closed then false
+    else
+      let chunk = Domain.DLS.get conn_chunk in
+      match Unix.read c.c_fd chunk 0 (Bytes.length chunk) with
+      | 0 -> c.c_eof <- true; false
+      | n -> Buffer.add_subbytes c.c_buf chunk 0 n; true
+      | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+        if socket_wait_until ~write:false ~deadline c.c_fd then go ()
+        else (conn_end c; false)
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> go ()
+      | exception Unix.Unix_error _ -> c.c_eof <- true; false
+  in
+  go ()
 
 let conn_take c n =
   let s = Buffer.sub c.c_buf c.c_pos n in
@@ -3459,13 +3511,7 @@ let conn_read_line c =
       Some (if n > 0 && line.[n - 1] = '\r' then String.sub line 0 (n - 1)
             else line)
     | None when len - c.c_pos > max_line ->
-      (* Closed here, not only marked finished: a peer still sending would
-         otherwise wait on a socket nobody reads. Marked closed, so the
-         close at the end of the connection's work does not close the
-         descriptor again after another socket has taken its number. *)
-      c.c_eof <- true;
-      c.c_closed <- true;
-      (try Unix.close c.c_fd with Unix.Unix_error _ -> ());
+      conn_end c;
       Buffer.clear c.c_buf; c.c_pos <- 0; c.c_scan <- 0;
       None
     | None ->
@@ -3495,14 +3541,16 @@ let net_read_impl = function
    is known to be gone already. *)
 let fd_write ~closed fd s =
   let total = String.length s in
+  let deadline = ref (Sched.elapsed_ms () + !idle_limit_ms) in
   let rec go off =
     if off >= total then Ok ()
     else if closed () then Error "the connection is closed"
     else
       match Unix.single_write_substring fd s off (total - off) with
-      | n -> go (off + n)
+      | n -> deadline := Sched.elapsed_ms () + !idle_limit_ms; go (off + n)
       | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
-        socket_wait ~write:true fd; go off
+        if socket_wait_until ~write:true ~deadline:!deadline fd then go off
+        else Error "the other end took nothing for 60 seconds"
       | exception Unix.Unix_error (Unix.EINTR, _, _) -> go off
       | exception Unix.Unix_error ((Unix.EPIPE | Unix.ECONNRESET), _, _) ->
         Error "the other end closed the connection"
@@ -4955,8 +5003,11 @@ let rec stream_provider (src : stream_source)
   match src with
   | SVals vs -> of_vals vs
   | SPull f -> (f, fun ~early:_ -> ())
-  | SListen port ->
-    (match perform_wand ("Net!listen", VPort port) with
+  | SListen (addr, port) ->
+    let payload = match addr with
+      | None -> VPort port
+      | Some a -> VTuple [VIPv4 a; VPort port] in
+    (match perform_wand ("Net!listen", payload) with
      | VListener fd as l ->
        ((fun () -> Some (perform_wand ("Net!accept", l))),
         fun ~early:_ -> (try Unix.close fd with Unix.Unix_error _ -> ()))
@@ -5505,8 +5556,12 @@ let stdlib_eval_env : env = [
   ("shared_wait", VBuiltin (fun sh -> VBuiltin (fun f ->
     perform_wand ("Shared!wait", VTuple [sh; f]))));
   ("net_listen", VBuiltin (function
-    | VPort p -> VStream { s_source = SListen p; s_stages = [] }
+    | VPort p -> VStream { s_source = SListen (None, p); s_stages = [] }
     | _ -> raise (EvalError "Net.listen: expected a Port")));
+  ("net_listen_on", VBuiltin (fun a -> VBuiltin (fun p ->
+    match a, p with
+    | VIPv4 a, VPort p -> VStream { s_source = SListen (Some a, p); s_stages = [] }
+    | _ -> raise (EvalError "Net.listen_on: expected an IPv4 and a Port"))));
   ("net_read_line", VBuiltin (fun c -> perform_wand ("Net!read_line", c)));
   ("net_read", VBuiltin (fun c -> VBuiltin (fun n ->
     perform_wand ("Net!read", VTuple [c; n]))));

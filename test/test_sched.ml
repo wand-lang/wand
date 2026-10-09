@@ -183,11 +183,48 @@ let test_a_foreign_exception_in_par_comes_back () =
   Sys.set_signal Sys.sigalrm old;
   Alcotest.(check string) "the exception comes back" "boom" outcome
 
+(* A client that connects and sends nothing ends at the idle limit, as one
+   that finishes does, rather than holding its worker for ever. The limit
+   is cut to 300ms here. The client, on a domain of its own, connects to
+   127.0.0.1 -- all `listen_on` binds -- sends nothing, and times how long
+   the server keeps it. *)
+let test_a_quiet_connection_ends () =
+  let old = !Evaluator.idle_limit_ms in
+  Evaluator.idle_limit_ms := 300;
+  let client = Domain.spawn (fun () ->
+    let rec connect n =
+      let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+      match Unix.connect sock (Unix.ADDR_INET (Unix.inet_addr_loopback, 18477)) with
+      | () -> sock
+      | exception Unix.Unix_error _ when n > 0 ->
+        Unix.close sock; Unix.sleepf 0.05; connect (n - 1)
+    in
+    let sock = connect 100 in
+    Unix.setsockopt_float sock Unix.SO_RCVTIMEO 5.0;
+    let t0 = Unix.gettimeofday () in
+    let buf = Bytes.create 16 in
+    let ended = match Unix.read sock buf 0 16 with
+      | 0 -> true
+      | _ -> false
+      | exception Unix.Unix_error _ -> false in
+    Unix.close sock;
+    (ended, Unix.gettimeofday () -. t0)) in
+  let r = Fun.protect ~finally:(fun () -> Evaluator.idle_limit_ms := old)
+      (fun () -> Runner.run_string {|import Net
+import Stream
+let quiet conn = match Net.read_line conn with | Some _ -> "a line" | None -> "none"
+Net.listen_on 127.0.0.1 :18477 |> Stream.take 1 |> Stream.map quiet |> Stream.to_list|}) in
+  let (ended, took) = Domain.join client in
+  Alcotest.(check (result string string)) "the read ended" (Ok "[\"none\"]") r;
+  Alcotest.(check bool) "the server closed the connection" true ended;
+  Alcotest.(check bool) "at the limit, not the client's 5s" true (took < 2.0)
+
 let () =
   Alcotest.run "sched" [
     "sched", [
       Alcotest.test_case "a foreign exception in Par comes back" `Quick
         test_a_foreign_exception_in_par_comes_back;
+      Alcotest.test_case "a quiet connection ends" `Slow test_a_quiet_connection_ends;
       Alcotest.test_case "sleeps overlap" `Quick test_sleeps_overlap;
       Alcotest.test_case "a pipe wakes its reader" `Quick test_pipe_wakes_reader;
       Alcotest.test_case "yield interleaves" `Quick test_yield_interleaves;

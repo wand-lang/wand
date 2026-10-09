@@ -60,6 +60,7 @@ let check name = $?(%{wand} d --test %{name})
 --   HTTP.upload         reads a file to a host, and there is no host
 --   HTTP.upload!        the same
 --   Net.listen          waits for a client, and a check has none
+--   Net.listen_on       the same
 --   Net.read_line       needs a connection, and only a client makes one
 --   Net.read            the same
 --   Net.write           the same
@@ -84,6 +85,7 @@ let exempt = [
   "HTTP.upload",
   "HTTP.upload!",
   "Net.listen",
+  "Net.listen_on",
   "Net.read_line",
   "Net.read",
   "Net.write",

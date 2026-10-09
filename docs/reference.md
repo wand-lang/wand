@@ -5372,6 +5372,7 @@ pid.
 
 ```ocaml
 listen    : Port -> Stream {Net.Listen, Raise | ..} Connection
+listen_on : IPv4 -> Port -> Stream {Net.Listen, Raise | ..} Connection
 read_line : Connection -> Option String ! {Net.Listen}
 read      : Int -> Connection -> String ! {Net.Listen}
 write     : String -> Connection -> Result String Unit ! {Net.Listen}
@@ -5396,11 +5397,21 @@ let echo! conn =
 Net.listen :9000 |> Par.each_stream 64 echo!
 ```
 
+`listen` takes every interface the machine has, so other machines can
+connect. `listen_on` takes one address: `Net.listen_on 127.0.0.1 :9000`
+serves this machine and no other.
+
 `read_line` answers the next line without its line ending, and `None` once
 the other end has finished. `read n` answers up to `n` bytes, waiting for
 some if none has arrived. `write` answers `Error` when the text cannot go,
 most often because the other end has closed. `peer` says where the
 connection came from, as `203.0.113.7:51234`.
+
+A connection ends when it breaks one of two limits: a line longer than 1MB,
+or 60 seconds in which it sends nothing (for a read) or takes nothing (for a
+write). A read then answers as if the other end had finished, and a write
+answers `Error`, so a client cannot hold a worker or the server's memory
+without end.
 
 A port another process holds, or one below 1024 without the privilege for
 it, raises when the read begins. The effects are `Net.Listen`; see

@@ -441,10 +441,10 @@ let operations : operation list =
        and a connection is read and written. *)
     { op_name = "Net!listen"; op_effect = NetListen;
       op_types = (fun () -> None);
-      op_performers = ["Net.listen"] };
+      op_performers = ["Net.listen"; "Net.listen_on"] };
     { op_name = "Net!accept"; op_effect = NetListen;
       op_types = (fun () -> None);
-      op_performers = ["Net.listen"] };
+      op_performers = ["Net.listen"; "Net.listen_on"] };
     { op_name = "Net!read_line"; op_effect = NetListen;
       op_types = t TConnection (TApp (TName "Option", TString));
       op_performers = ["Net.read_line"] };
@@ -5381,6 +5381,11 @@ let stdlib_type_env : env = [
        (Effect_set.EffSet.of_list [Effect_set.NetListen; Effect_set.Raise],
         Some (Effect_set.fresh_var ())) in
    generalize [] (TFun (TPort, TStream (r, TConnection), Effect_set.pure)));
+  ("net_listen_on",
+   let r = Effect_set.Set
+       (Effect_set.EffSet.of_list [Effect_set.NetListen; Effect_set.Raise],
+        Some (Effect_set.fresh_var ())) in
+   generalize [] (TIPv4 @-> TFun (TPort, TStream (r, TConnection), Effect_set.pure)));
   ("net_read_line",
    generalize [] (effs [Effect_set.NetListen] TConnection
                     (TApp (TName "Option", TString))));

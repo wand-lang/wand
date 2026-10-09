@@ -12,7 +12,9 @@ uses {Net.Listen}
 -- it, and closed when that work ends.
 
 -- The connections accepted on `port`, one at a time, for as long as the
--- stream is read. Nothing listens until a terminal operation reads it.
+-- stream is read. Nothing listens until a terminal operation reads it. It
+-- listens on every interface, so other machines can connect; `listen_on`
+-- names one address.
 --
 -- Net.listen :8080 |> Par.each_stream 256 (fn conn -> serve conn)
 --
@@ -25,17 +27,27 @@ uses {Net.Listen}
 -- element a read or a write is for. The reference shows the whole pattern.
 let listen port = net_listen port
 
+-- The connections accepted on `port` at one address only. `listen` takes
+-- every interface the machine has, so a server on it can be reached from
+-- the network; `127.0.0.1` serves this machine and no other.
+--
+-- Net.listen_on 127.0.0.1 :8080 |> Par.each_stream 16 (fn conn -> serve conn)
+let listen_on address port = net_listen_on address port
+
 -- The next line from `conn`, without its line ending, or `None` once the
--- other end has finished and nothing is left. A line longer than 1MB ends
--- the connection the same way: `None`, and nothing more is read from it.
+-- other end has finished and nothing is left. A line longer than 1MB, or 60
+-- seconds with nothing sent, ends the connection the same way: `None`, and
+-- nothing more is read from it.
 let read_line conn = net_read_line conn
 
 -- Up to `n` bytes from `conn`: what has arrived, waiting for some if none
--- has. `""` once the other end has finished.
+-- has. `""` once the other end has finished, or has sent nothing for 60
+-- seconds.
 let read n conn = net_read conn n
 
 -- Send `text` on `conn`. `Error` says why it could not go, which is most
--- often that the other end has closed.
+-- often that the other end has closed, or has taken nothing for 60
+-- seconds.
 let write text conn = net_write conn text
 
 -- Send `text` on `conn`, raising if it cannot go.
