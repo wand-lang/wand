@@ -751,8 +751,10 @@ let instant_error text =
   | _ ->
     let field at limit what =
       match num at 2 with
-      | Some v when v >= limit -> Some (Printf.sprintf
-          "%s has %s %02d, and a %s is 00 to %02d" text what v what (limit - 1))
+      | Some v when v >= limit ->
+        let article = if what.[0] = 'h' || what.[0] = 'o' then "an" else "a" in
+        Some (Printf.sprintf "%s has %s %02d, and %s %s is 00 to %02d"
+                text what v article what (limit - 1))
       | _ -> None
     in
     let checks =
