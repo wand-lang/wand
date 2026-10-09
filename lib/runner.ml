@@ -1469,6 +1469,13 @@ let unhandled_operation name =
   EvalError (Printf.sprintf
     "no handler for '%s' -- this is a bug in wand, not in the script" name)
 
+(* Set while a script runs under `run_in_mode`. A module evaluated then --
+   an import, or a plugin `Wand.load!` reads -- performs its work through the
+   run's own handler, so a rehearsal withholds it and a trace reports it. A
+   handler of the module's own would sit inside the run's and answer first,
+   which is how an import's top-level write happened under `--dry-run`. *)
+let inside_run = Domain.DLS.new_key (fun () -> false)
+
 let rec run_with_default_handler (thunk : unit -> value) : value =
   (* An effect from a fiber that started inside [thunk] is answered with
      the work itself, which the fiber does under a handler of its own. *)
@@ -2012,7 +2019,13 @@ let import_kind_of    = Module_types.import_kind_of
 type import_env = {
   tenv     : (string * Ast.type_def) list;
   type_env : Typechecker.env;
-  eval_env : env;
+  (* What the imports' bindings evaluate to, worked out when it is forced.
+     An import is read and checked as it loads, and its bindings run only
+     when the run asks for them: after the importing script has checked,
+     and inside the run's handler, so a rehearsal withholds an import's
+     work like the script's own. Forcing runs each module once, its own
+     imports first, in the order the file wrote them. *)
+  eval_env : env Lazy.t;
   (* What a type name written in this file means: the short name a reader
      writes, and the canonical name it stands for. *)
   type_names : (string * string) list;
@@ -2029,7 +2042,7 @@ type import_env = {
 }
 
 let empty_import_env =
-  { tenv = []; type_env = []; eval_env = []; type_names = []; ifaces = [];
+  { tenv = []; type_env = []; eval_env = lazy []; type_names = []; ifaces = [];
     load_effects = Effect_set.EffSet.empty; words = [] }
 
 (* ── Multi-clause merging ─────────────────────────────────────────────────── *)
@@ -2248,13 +2261,13 @@ let fold_items step env items =
 (* ── Module loading ───────────────────────────────────────────────────────── *)
 
 (* What a loaded module hands back: everything it can see, the values it
-   exports, their runtime bindings, the types it declares itself, and its
-   docs. Its own types are kept apart from everything it can see, because a
+   exports, their runtime bindings -- which run the module's body when they
+   are forced -- the types it declares itself, and its docs. Its own types are kept apart from everything it can see, because a
    qualified name reaches only what the module declares. *)
 type module_result =
   import_env
   * (string * Typechecker.scheme) list
-  * env
+  * env Lazy.t
   * (string * Ast.type_def) list
   * (string * string) list
   (* What evaluating this module's bindings performs: the effects an import
@@ -2315,17 +2328,6 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
     let qualified_words alias own_words =
       List.map (fun (n, w) -> (alias ^ "." ^ n, w)) own_words
     in
-    let bind_field own_type own_eval field alias =
-      let t = match List.assoc_opt field own_type with
-        | Some s -> s
-        | None -> raise (Module_types.ImportError (Printf.sprintf "module has no exported symbol '%s'" field))
-      in
-      let v = match List.assoc_opt field own_eval with
-        | Some v -> v
-        | None -> raise (Module_types.ImportError (Printf.sprintf "module has no exported symbol '%s'" field))
-      in
-      ((alias, t), (alias, v))
-    in
     (* An import brings in exactly what it names -- the namespace, or the
        fields a destructuring pattern lists -- and nothing else. The module's
        own environment is deliberately not spliced in: its functions are
@@ -2363,7 +2365,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
          here -- but under their canonical names, which no file writes. *)
       ({ tenv     = own_entries @ modul_import.tenv @ acc.tenv;
          type_env = type_entries @ acc.type_env;
-         eval_env = eval_entries @ acc.eval_env;
+         eval_env = (let rest = acc.eval_env in
+                     lazy (let rest = Lazy.force rest in Lazy.force eval_entries @ rest));
          type_names = extra_names @ qual_names @ acc.type_names;
          (* Reached the way an imported type is: through the name this file
             bound, and only that way. `ord.Ord` says which module's `Ord` it
@@ -2400,7 +2403,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
         (* The namespace holds the module's constructors as well as its
            values, so `Foo.Live` reads the one `Foo` declares rather than
            whichever `Live` was registered last. *)
-        [(ns_name, VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))]
+        (lazy [(ns_name, VRecord (Evaluator.vrecord_make
+                                    (Lazy.force own_eval @ ctor_bindings_of ~modul own_tenv)))])
         prefixed_docs
     | Ast.TLLet (name, [], body) when Option.is_some (import_kind_of body) ->
       let kind = Option.get (import_kind_of body) in
@@ -2412,7 +2416,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
         ~words:(qualified_words name own_words) modul_import
         [(name, (let (ms, cs) = Typechecker.split_claims own_type in
            Typechecker.Namespace (ms, cs)))]
-        [(name, VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))]
+        (lazy [(name, VRecord (Evaluator.vrecord_make
+                                (Lazy.force own_eval @ ctor_bindings_of ~modul own_tenv)))])
         prefixed_docs
     | Ast.TLLetPat (pat, body) when Option.is_some (import_kind_of body) ->
       let kind = Option.get (import_kind_of body) in
@@ -2435,7 +2440,8 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
           let pdocs = List.map (fun (n, d) -> (name ^ "." ^ n, d)) mod_docs in
           [(name, (let (ms, cs) = Typechecker.split_claims own_type in
            Typechecker.Namespace (ms, cs)))],
-          [(name, VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))],
+          lazy [(name, VRecord (Evaluator.vrecord_make
+                                 (Lazy.force own_eval @ ctor_bindings_of ~modul own_tenv)))],
           pdocs,
           own_tenv
         | Ast.PMap binds ->
@@ -2444,11 +2450,18 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
           let is_upper n = n <> "" && n.[0] >= 'A' && n.[0] <= 'Z' in
           let (uppers, lowers) =
             List.partition (fun (field, _) -> is_upper field) binds in
-          let te, ee = List.map (fun (field, p) ->
+          let selected = List.map (fun (field, p) ->
             match p with
-            | Ast.PVar alias -> bind_field own_type own_eval field alias
+            | Ast.PVar alias -> (field, alias)
             | _ -> raise (Module_types.ImportError "import destructuring only supports name bindings")
-          ) lowers |> List.split in
+          ) lowers in
+          let te = List.map (fun (field, alias) ->
+            (alias, match List.assoc_opt field own_type with
+             | Some s -> s
+             | None -> raise (Module_types.ImportError (Printf.sprintf
+                 "module has no exported symbol '%s'" field)))) selected in
+          let ee = lazy (List.map (fun (field, alias) ->
+            (alias, List.assoc field (Lazy.force own_eval))) selected) in
           (* `{TestOutcome = Outcome}`: the new name is uppercase, so it
              parses as a constructor pattern rather than a variable. *)
           let alias_of field p =
@@ -2490,7 +2503,7 @@ let rec load_imports_for ?(item_locs = []) ~base_dir ~cache ~loading ~evaluate p
               if n = field then Some (alias, v) else None)
               (ctor_bindings_of ~modul selected_tenv)) uppers
           in
-          te, ee @ ctor_ee, [], selected_tenv
+          te, lazy (Lazy.force ee @ ctor_ee), [], selected_tenv
         | Ast.PList _ ->
           (* The 0.17 spelling. A list pattern on an import no longer
              selects members; the braces that do are one keystroke away. *)
@@ -2532,16 +2545,16 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
      where the bytes came from. *)
   let path = match key with Some k -> k | None -> Module_types.key_of src_ref in
   let src = Module_types.read_source src_ref in
-  let tokens =
-    (* Every position from here names this file, so an error raised inside an
-       imported module says which one rather than a bare line number the
-       reader cannot place. *)
-    try Lexer.tokenize ~file:path src
-    with Lexer.LexError (loc, msg) ->
-      raise (Module_types.ImportError (Printf.sprintf "lex error in '%s': %d:%d: %s"
-                  path loc.Token.line loc.Token.col msg))
-  in
-  let prog =
+  let parse () =
+    let tokens =
+      (* Every position from here names this file, so an error raised inside an
+         imported module says which one rather than a bare line number the
+         reader cannot place. *)
+      try Lexer.tokenize ~file:path src
+      with Lexer.LexError (loc, msg) ->
+        raise (Module_types.ImportError (Printf.sprintf "lex error in '%s': %d:%d: %s"
+                    path loc.Token.line loc.Token.col msg))
+    in
     try Parser.parse_program tokens
     with Parser.ParseError (loc, msg) ->
       let pos = match loc with
@@ -2550,6 +2563,7 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
       in
       raise (Module_types.ImportError (Printf.sprintf "parse error in '%s': %s%s" path pos msg))
   in
+  let prog = parse () in
   let base_dir = Filename.dirname path in
   loading := path :: !loading;
   let (imported, imp_docs) = load_imports_for ~base_dir ~cache ~loading ~evaluate prog in
@@ -2651,8 +2665,9 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
        (* Indexed here: everything a module can see that it did not define
           itself is fixed by this point, and every name the module goes on to
           look up sits in front of it. *)
-       let base = index_env (stdlib_eval_env @ imported.eval_env) in
-       let full_eval =
+       let full_eval = lazy (
+         let base = index_env (stdlib_eval_env @ Lazy.force imported.eval_env) in
+         let full =
          if not evaluate then
            (* The caller asked what this module is, not what it does, so the
               body is never run: each exported name stands in the
@@ -2677,15 +2692,15 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
               effect was not allowed. The manifest still decides what a
               module may do; this decides only that it is asked. *)
            let out = ref base in
-           ignore (run_with_default_handler (fun () ->
+           let body () =
              with_file_bounds prog.Ast.manifest (fun () ->
                out := fold_items (run_item ~modul:path) base (hoist_types prog.Ast.items));
-             VUnit));
+             VUnit in
+           ignore (if Domain.DLS.get inside_run then body ()
+                   else run_with_default_handler body);
            !out
-       in
-       let n_own = List.length full_eval - List.length base in
-       let own_eval = List.filteri (fun i _ -> i < n_own) full_eval
-         |> List.filter (fun (n, _) -> not (is_private n)) in
+         in
+         (base, full)) in
        let own_type = List.filter (fun (n, _) -> not (is_private n)) own_type in
        let own = local_tenv_of prog in
        (* What this module's declarations mean, read the way its own
@@ -2715,13 +2730,19 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
           bare-name index holds one of them. `run_item` registered these from
           the raw declaration, where the field still says `Meta`, so a nested
           field decoded to whichever module was loaded last. Registered again
-          here, where the canonicalised declaration is. *)
-       if evaluate then
-         List.iter (fun (n, d) ->
-           Evaluator.register_derivable
-             ~ident:(fun c -> Ctor.Owned (path, Ctor.make_key ~type_name:n c))
-             [Module_types.canonical_type ~modul:path n]
-             (Module_types.canonicalise_tdef module_names d)) own;
+          here, where the canonicalised declaration is -- after the body
+          has run. *)
+       let own_eval = lazy (
+         let (base, full) = Lazy.force full_eval in
+         if evaluate then
+           List.iter (fun (n, d) ->
+             Evaluator.register_derivable
+               ~ident:(fun c -> Ctor.Owned (path, Ctor.make_key ~type_name:n c))
+               [Module_types.canonical_type ~modul:path n]
+               (Module_types.canonicalise_tdef module_names d)) own;
+         let n_own = List.length full - List.length base in
+         List.filteri (fun i _ -> i < n_own) full
+         |> List.filter (fun (n, _) -> not (is_private n))) in
        let full_import =
          { tenv = List.map (fun (n, d) ->
                     (Module_types.canonical_type ~modul:path n,
@@ -2729,7 +2750,7 @@ and load_module ?key src_ref ~cache ~loading ~evaluate =
                     own
                   @ imported.tenv;
            type_env;
-           eval_env = full_eval;
+           eval_env = lazy (ignore (Lazy.force own_eval); snd (Lazy.force full_eval));
            type_names = own_type_names @ imported.type_names;
            (* This module's own, under the names it declared them with, for
               its importer to qualify. Its imports' are deliberately not
@@ -3263,7 +3284,13 @@ let substitute_sink name (v : value) : value option =
    again and carried out as usual -- there is one implementation of each
    operation, and a rehearsal cannot drift from a real run by reimplementing
    them. *)
-let run_in_mode mode (thunk : unit -> value) : value =
+let rec run_in_mode mode (thunk : unit -> value) : value =
+  let was = Domain.DLS.get inside_run in
+  Domain.DLS.set inside_run true;
+  Fun.protect ~finally:(fun () -> Domain.DLS.set inside_run was)
+    (fun () -> run_in_mode_inner mode thunk)
+
+and run_in_mode_inner mode (thunk : unit -> value) : value =
   current_mode := mode;
   rehearsal := (if mode = DryRun then Some (new_overlay ()) else None);
   match mode with
@@ -3412,13 +3439,19 @@ let run_program ?(mode = Normal) ~base_dir prog =
   let cache = Hashtbl.create 8 in
   let loading = ref [] in
   run_cache := Some (cache, loading);
+  (* Read and checked here, and run only once the script has checked too:
+     an import's top-level work is the script's work, so it waits on the
+     script's manifest and runs inside the rehearsal like the rest. The
+     check is the one `wand t` makes, with what the imports do as they load
+     and the words their functions run. *)
   let (imp, _) = load_imports_for ~base_dir ~cache ~loading ~evaluate:true prog in
   (* Settled once, here, so the typechecker and the evaluator are handed the
      same program: `type This = That` is an alias to both of them or a
      variant to both, never one to each. *)
   let prog = Typechecker.settle_aliases ~init_tenv:imp.tenv prog in
-  (match Typechecker.infer_program_env ~init_tenv:imp.tenv ~init_env:imp.type_env
-           ~init_ifaces:imp.ifaces ~type_names:imp.type_names prog with
+  (match Typechecker.infer_program_env_with_own ~init_tenv:imp.tenv ~init_env:imp.type_env
+           ~init_ifaces:imp.ifaces ~init_effects:imp.load_effects
+           ~import_words:imp.words ~type_names:imp.type_names prog with
    | Error msg -> Error ("type error: " ^ msg)
    | Ok _ ->
      let result = run_in_mode mode (fun () ->
@@ -3437,7 +3470,7 @@ let run_program ?(mode = Normal) ~base_dir prog =
             walks past everything defined early. *)
          if since >= Evaluator.index_every then ((Evaluator.index_env env, last), 0)
          else ((env, last), since + 1)
-       ) ((index_env (base_eval_env @ imp.eval_env), VUnit), 0)
+       ) ((index_env (base_eval_env @ Lazy.force imp.eval_env), VUnit), 0)
          (hoist_types prog.Ast.items)
        in last)
      ) in
@@ -3592,6 +3625,8 @@ let run_test_program ~base_dir ?(item_locs = []) prog
   let cache = Hashtbl.create 8 in
   let loading = ref [] in
   run_cache := Some (cache, loading);
+  (* As in `run_program`, a test file's imports run only once the file has
+     checked. *)
   let (imp, _) = load_imports_for ~base_dir ~cache ~loading ~evaluate:true prog in
   (* Settled before anything reads the program's own declarations: an
      alias parses as a variant with one nullary constructor, and a lint
@@ -3641,7 +3676,7 @@ let run_test_program ~base_dir ?(item_locs = []) prog
            | Error m -> outcomes := !outcomes @ [TError m]);
           env
         | _ -> run_item env item
-      ) (index_env (base_eval_env @ imp.eval_env))
+      ) (index_env (base_eval_env @ Lazy.force imp.eval_env))
         (hoist_types prog.Ast.items)));
       VUnit
     ));
@@ -4128,7 +4163,7 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
         let hole_strs = List.map Typechecker.string_of_typ hole_types in
         Ok (new_sess, RHoles hole_strs)
       end else begin
-        let base_eval = index_env (base_eval_env @ imp.eval_env @ sess.s_eval_env) in
+        let base_eval = index_env (base_eval_env @ Lazy.force imp.eval_env @ sess.s_eval_env) in
         let env_ref  = ref base_eval in
         let last_ref = ref VUnit in
         ignore (run_with_default_handler (fun () ->
@@ -4204,7 +4239,7 @@ let run_session (sess : session) (src : string) : (session * repl_result, string
         let new_sess = { sess with
           s_tenv     = dedup (local_tenv_of prog @ imp.tenv @ sess.s_tenv);
           s_type_env = dedup (own_type_env @ imp.type_env @ sess.s_type_env);
-          s_eval_env = dedup (own_eval_env @ imp.eval_env @ sess.s_eval_env);
+          s_eval_env = dedup (own_eval_env @ Lazy.force imp.eval_env @ sess.s_eval_env);
           s_sources  = new_sources @ sess.s_sources;
           s_docs     = prog.Ast.docs @ imp_docs @ sess.s_docs;
           s_type_names = dedup merged_type_names;
@@ -4606,7 +4641,7 @@ let load_value (key : string) (path : string) (src : string) : Evaluator.value =
       with
       | Module_types.ImportError msg | Module_types.ImportErrorAt (_, msg) -> fail msg
     in
-    VRecord (Evaluator.vrecord_make (own_eval @ ctor_bindings_of ~modul own_tenv)))
+    VRecord (Evaluator.vrecord_make (Lazy.force own_eval @ ctor_bindings_of ~modul own_tenv)))
 
 let () =
   Evaluator.wand_check_hook := check_text;

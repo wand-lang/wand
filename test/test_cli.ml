@@ -651,6 +651,42 @@ let contains_sub hay needle =
   let rec go i = i + n <= h && (String.sub hay i n = needle || go (i + 1)) in
   n = 0 || go 0
 
+(* A run checks what `wand t` checks, and an import's work waits on the
+   check: `wand b.wand` used to type the script without what its imports do
+   as they load, and run those imports before the check at all. *)
+let test_run_checks_what_t_checks () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "a.wand")
+      "import FS\ntype Box(f: Unit -> Unit)\n\
+       let box = Box(f = fn () -> FS.write_file! ./written.txt \"x\")\n";
+    write_file (Filename.concat d "b.wand")
+      "uses {IO}\nimport IO\nlet A = import ./a\nlet main () = A.box.f ()\n\
+       main ()\nIO.println \"done\"\n";
+    let (code, out) = wand_out ~dir:d ["b.wand"] in
+    Alcotest.(check bool) "the run is refused" true (code <> 0);
+    Alcotest.(check bool) "for the manifest" true (contains_sub out "FS.Write");
+    Alcotest.(check bool) "and wrote nothing" false
+      (Sys.file_exists (Filename.concat d "written.txt")))
+
+let test_import_work_waits_on_the_check () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "a.wand")
+      "import FS\nlet x = FS.write_file! ./written.txt \"x\"\nlet y = 1\n";
+    write_file (Filename.concat d "b.wand")
+      "uses {IO}\nimport IO\nlet {y} = import ./a\nIO.println y\n";
+    let (code, _) = wand_out ~dir:d ["b.wand"] in
+    Alcotest.(check bool) "a script whose import writes is refused" true (code <> 0);
+    Alcotest.(check bool) "before the import runs" false
+      (Sys.file_exists (Filename.concat d "written.txt"));
+    write_file (Filename.concat d "c.wand")
+      "uses {FS.Write, IO}\nimport IO\nlet {y} = import ./a\nIO.println y\n";
+    let (code, out) = wand_out ~dir:d ["--dry-run"; "c.wand"] in
+    Alcotest.(check int) "a rehearsal that allows it succeeds" 0 code;
+    Alcotest.(check bool) "and reports the import's write" true
+      (contains_sub out "would write: ./written.txt");
+    Alcotest.(check bool) "without making it" false
+      (Sys.file_exists (Filename.concat d "written.txt")))
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1201,6 +1237,10 @@ let test_type_of_several_paths () =
 
 let () =
   Alcotest.run "CLI" [
+    "imports run after the check", [
+      Alcotest.test_case "a run checks what wand t checks" `Quick test_run_checks_what_t_checks;
+      Alcotest.test_case "an import's work waits on the check" `Quick test_import_work_waits_on_the_check;
+    ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;
     ];
