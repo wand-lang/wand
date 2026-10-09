@@ -4387,7 +4387,7 @@ filter_map : ('a -> Option 'b ! 'e) -> List 'a -> List 'b ! 'e
 fold_left  : ('a -> 'b -> 'a ! 'e) -> 'a -> List 'b -> 'a ! 'e
 fold_right : ('a -> 'b -> 'b ! 'e) -> List 'a -> 'b -> 'b ! 'e
 length     : List 'a -> Int
-append     : List 'a -> List 'a -> List 'a ! 'e
+append     : List 'a -> List 'a -> List 'a
 reverse    : List 'a -> List 'a
 head       : List 'a -> Option 'a
 head!      : List 'a -> 'a ! {Raise}
@@ -4398,8 +4398,8 @@ empty?     : List 'a -> Bool
 any?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
 all?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
 find       : ('a -> Bool ! 'e) -> List 'a -> Option 'a ! 'e
-zip        : List 'a -> List 'b -> List ('a, 'b) ! 'e
-take       : Int -> List 'a -> List 'a ! 'e
+zip        : List 'a -> List 'b -> List ('a, 'b)
+take       : Int -> List 'a -> List 'a
 drop       : Int -> List 'a -> List 'a ! 'e
 take_while : ('a -> Bool ! 'e) -> List 'a -> List 'a ! 'e
 drop_while : ('a -> Bool ! 'e) -> List 'a -> List 'a ! 'e

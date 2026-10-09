@@ -106,12 +106,17 @@ let choose xs = List.head (List.drop (random_below (List.length xs)) xs)
 --
 -- >> List.length (Random.shuffle [1, 2, 3, 4])
 -- 4 : Int
-let shuffle [] = []
+--
+-- Each element is given a key drawn from the whole of an Int's positive
+-- range, and the list is sorted by it. Picking one element at a time from
+-- what was left took time in the square of the length and ran out of depth
+-- on a long list; two keys drawn alike are rare enough at that range to
+-- leave every order as likely as the others.
 let shuffle xs =
-  let i = random_below (List.length xs);
-  let taken = List.take 1 (List.drop i xs);
-  let rest = List.append (List.take i xs) (List.drop (i + 1) xs);
-  List.append taken (shuffle rest)
+  xs
+  |> List.map (fn x -> (random_below 4611686018427387903, x))
+  |> List.sort_by (fn (key, _) -> key)
+  |> List.map (fn (_, x) -> x)
 
 let _hex_digits = "0123456789abcdef"
 
@@ -129,4 +134,7 @@ let _hex_digits = "0123456789abcdef"
 -- 8 : Int
 let hex n =
   if n <= 0 then ""
-  else (let i = random_below 16; String.slice i (i + 1) _hex_digits ++ hex (n - 1))
+  else
+    List.range 1 n
+    |> List.map (fn _ -> (let i = random_below 16; String.slice i (i + 1) _hex_digits))
+    |> String.join ""

@@ -1,26 +1,40 @@
+-- `acc` reversed onto the front of `rest`. Each function below that builds
+-- a list builds it backwards in an accumulator and turns it round once at
+-- the end, so the call that does the work is always in tail position: a
+-- call that waits on the next one ran out of depth on a list of a million
+-- lines, and `String.lines` makes those from any large log.
+let _onto acc rest = list_rev_onto acc rest
+
 -- Apply a function to every element of a list, returning a new list.
 --
 -- >> List.map (fn x -> x * 2) [1, 2, 3]
 -- [2, 4, 6] : List Int
-let map _ [] = []
-let map f [h :: t] = f h :: map f t
+let map f xs =
+  let go [] acc = _onto acc []
+  let go [h :: t] acc = go t (f h :: acc);
+  go xs []
 
 -- Keep only elements satisfying a predicate.
 --
 -- >> List.filter (fn x -> x >= 2) [1, 2, 3]
 -- [2, 3] : List Int
-let filter _ [] = []
-let filter p [h :: t] = if p h then h :: filter p t else filter p t
+let filter p xs =
+  let go [] acc = _onto acc []
+  let go [h :: t] acc = go t (if p h then h :: acc else acc);
+  go xs []
 
 -- Apply a function to every element, keeping each Some value and dropping each None.
 --
 -- >> List.filter_map (fn x -> if x > 1 then Some (x * 10) else None) [1, 2, 3]
 -- [20, 30] : List Int
-let filter_map _ [] = []
-let filter_map f [h :: t] =
-  match f h with
-  | Some v -> v :: filter_map f t
-  | None -> filter_map f t
+let filter_map f xs =
+  let go [] acc = _onto acc []
+  let go [h :: t] acc =
+    match f h with
+    | Some v -> go t (v :: acc)
+    | None -> go t acc
+  in
+  go xs []
 
 -- Reduce a list left to right with an accumulator.
 --
@@ -33,28 +47,25 @@ let fold_left f acc [h :: t] = fold_left f (f acc h) t
 --
 -- >> List.fold_right (fn x acc -> x - acc) [1, 2, 3] 0
 -- 2 : Int
-let fold_right f [] acc = acc
-let fold_right f [h :: t] acc = f h (fold_right f t acc)
+let fold_right f xs acc = fold_left (fn a x -> f x a) acc (_onto xs [])
 
 -- Return the number of elements in a list.
 --
 -- >> List.length [1, 2, 3]
 -- 3 : Int
-let length [] = 0
-let length [_ :: t] = 1 + length t
+let length xs = list_length xs
 
 -- Concatenate two lists.
 --
 -- >> List.append [1, 2] [3]
 -- [1, 2, 3] : List Int
-let append [] ys = ys
-let append [h :: t] ys = h :: append t ys
+let append xs ys = _onto (_onto xs []) ys
 
 -- Reverse a list.
 --
 -- >> List.reverse [1, 2, 3]
 -- [3, 2, 1] : List Int
-let reverse xs = fold_left (fn acc x -> x :: acc) [] xs
+let reverse xs = _onto xs []
 
 -- Return the first element of a list, or None if it is empty.
 --
@@ -120,9 +131,10 @@ let find p [h :: t] = if p h then Some h else find p t
 --
 -- >> List.zip [1, 2] ["a", "b"]
 -- [(1, "a"), (2, "b")] : List (Int, String)
-let zip [] _ = []
-let zip _ [] = []
-let zip [a :: t] [b :: u] = (a, b) :: zip t u
+let zip xs ys =
+  let go [a :: t] [b :: u] acc = go t u ((a, b) :: acc)
+  let go _ _ acc = _onto acc [];
+  go xs ys []
 
 -- Take the first n elements. A count of 0 or less takes none, as
 -- `Stream.take` does.
@@ -133,9 +145,12 @@ let zip [a :: t] [b :: u] = (a, b) :: zip t u
 -- >> List.take (-1) [1, 2, 3]
 -- [] : List Int
 let take n xs =
-  match xs with
-  | [h :: t] when n > 0 -> h :: take (n - 1) t
-  | _ -> []
+  let go n xs acc =
+    match xs with
+    | [h :: t] when n > 0 -> go (n - 1) t (h :: acc)
+    | _ -> _onto acc []
+  in
+  go n xs []
 
 -- Drop the first n elements. A count of 0 or less drops none, as
 -- `Stream.drop` does.
@@ -154,8 +169,10 @@ let drop n xs =
 --
 -- >> List.take_while (fn x -> x < 3) [1, 2, 3, 1]
 -- [1, 2] : List Int
-let take_while _ [] = []
-let take_while p [h :: t] = if p h then h :: take_while p t else []
+let take_while p xs =
+  let go [] acc = _onto acc []
+  let go [h :: t] acc = if p h then go t (h :: acc) else _onto acc [];
+  go xs []
 
 -- Drop elements while the predicate holds, returning the remainder.
 --
@@ -185,9 +202,9 @@ let each f [h :: t] =
 -- >> List.indexed ["a", "b"]
 -- [(0, "a"), (1, "b")] : List (Int, String)
 let indexed xs =
-  let go _ [] = []
-  let go i [h :: t] = (i, h) :: go (i + 1) t;
-  go 0 xs
+  let go _ [] acc = _onto acc []
+  let go i [h :: t] acc = go (i + 1) t ((i, h) :: acc);
+  go 0 xs []
 
 -- Return the element at index n, or None if out of bounds.
 --

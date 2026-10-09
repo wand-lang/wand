@@ -7413,6 +7413,30 @@ let stdlib_eval_env : env = [
         | VList xs -> xs
         | _ -> raise (EvalError "list_flatten: expected List of Lists")) xss)
     | _ -> raise (EvalError "list_flatten: expected List")));
+  (* `acc` reversed onto `rest`, which is what a list built backwards in an
+     accumulator needs at the end: `List.map` and its kin build that way so
+     their recursion is in tail position, and turning the list round in wand
+     cost them half their speed again. *)
+  ("list_rev_onto", VBuiltin (function
+    | VList xs -> VBuiltin (function
+      | VList ys -> charge (List.length xs); VList (List.rev_append xs ys)
+      | _ -> raise (EvalError "list_rev_onto: expected List"))
+    | _ -> raise (EvalError "list_rev_onto: expected List")));
+  (* One allocation for the whole string. Joined in wand, each element
+     copied everything before it again, so 100,000 short strings took eleven
+     seconds. *)
+  ("str_join", VBuiltin (function
+    | VString sep -> VBuiltin (function
+      | VList xs ->
+        charge (List.length xs);
+        VString (String.concat sep (List.map (function
+          | VString x -> x
+          | _ -> raise (EvalError "String.join: expected a List of String")) xs))
+      | _ -> raise (EvalError "String.join: expected a List"))
+    | _ -> raise (EvalError "String.join: expected a String")));
+  ("list_length", VBuiltin (function
+    | VList xs -> VInt (List.length xs)
+    | _ -> raise (EvalError "list_length: expected List")));
   ("list_concat", VBuiltin (function
     | VList xs -> VBuiltin (function
       | VList ys -> charge (List.length xs + List.length ys); VList (xs @ ys)

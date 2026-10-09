@@ -5933,6 +5933,9 @@ let stdlib_type_env : env = [
   ("list_range",   generalize [] ((TInt @-> (TInt @-> TList TInt))));
   ("list_flatten", let a = fresh () in generalize [] ((TList (TList a) @-> TList a)));
   ("list_concat",  let a = fresh () in generalize [] ((TList a @-> (TList a @-> TList a))));
+  ("list_rev_onto", let a = fresh () in generalize [] ((TList a @-> (TList a @-> TList a))));
+  ("list_length", let a = fresh () in generalize [] (TList a @-> TInt));
+  ("str_join",     generalize [] ((TString @-> (TList TString @-> TString))));
   (* Map builtins *)
   ("map_empty",    let a = fresh () in generalize [] (TMap a));
   ("map_get",      let a = fresh () in generalize [] ((TString @-> (TMap a @-> TApp (TName "Option", a)))));

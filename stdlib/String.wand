@@ -1,4 +1,3 @@
-import List
 import Result
 
 -- Return the number of bytes in a string. A character outside ASCII takes
@@ -324,14 +323,7 @@ let to_duration! s = Result.get! (to_duration s)
 --
 -- >> String.join "," ["", "b"]
 -- ",b" : String
-let join sep xs =
-  match xs with
-  | [] -> ""
-  -- Which element comes first is a question about the list, not about what
-  -- the elements hold: testing the accumulator for "" made an empty first
-  -- element look like "nothing yet", so `join "," ["", "b"]` answered "b"
-  -- and dropped a field that was empty on purpose.
-  | [h :: t] -> List.fold_left (fn acc x -> acc ++ sep ++ x) h t
+let join sep xs = str_join sep xs
 
 -- Split a string into lines. A newline ends a line rather than separating
 -- two, so a trailing one adds no empty line and a string with nothing in it
