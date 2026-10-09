@@ -709,6 +709,25 @@ let test_the_server_answers_a_bad_body_and_reads_on () =
       Alcotest.(check bool) "the bad body was answered with -32700" true
         (Lint.contains written "-32700"))
 
+(* A check that runs past its limit is stopped and reported, and the server
+   goes on: each line here applies the one before twice, which no check
+   finishes in time (#92). *)
+let test_a_long_check_is_stopped () =
+  let src = String.concat "\n"
+      ("let f0 = fn x -> (x, x)"
+       :: List.init 9 (fun i ->
+            Printf.sprintf "let f%d = fn x -> f%d (f%d x)" (i + 1) i i)) in
+  let old = !Lsp.check_limit_s in
+  Lsp.check_limit_s := 0.3;
+  let (_, out) = Fun.protect ~finally:(fun () -> Lsp.check_limit_s := old)
+      (fun () -> session [did_open uri src]) in
+  let messages = List.concat_map (fun p ->
+    match m "diagnostics" p with
+    | `List ds -> List.filter_map (fun d -> Lsp.str (m "message" d)) ds
+    | _ -> []) (diagnostics_of out) in
+  Alcotest.(check bool) "it says the check was stopped" true
+    (List.exists (fun msg -> Lint.contains msg "took longer than") messages)
+
 (* Opening a file is not a request to reach the hosts its wand.pkg names:
    the server turns fetching off for the rest of the process. *)
 let test_the_server_fetches_nothing () =
@@ -732,6 +751,7 @@ let () =
       Alcotest.test_case "initialize"            `Quick test_initialize;
       Alcotest.test_case "shutdown then exit"    `Quick test_shutdown_then_exit;
       Alcotest.test_case "the server fetches nothing" `Quick test_the_server_fetches_nothing;
+      Alcotest.test_case "a long check is stopped" `Quick test_a_long_check_is_stopped;
       Alcotest.test_case "exit without shutdown" `Quick test_exit_without_shutdown;
       Alcotest.test_case "unknown method"        `Quick test_unknown_method;
     ];

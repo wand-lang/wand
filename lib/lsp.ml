@@ -187,10 +187,38 @@ let path_of_uri uri =
    A check answers with one diagnostic and the ones that travel with it --
    every unbound name in the buffer, where there are several -- so the pane
    lists them all rather than one at a time. *)
+exception Check_too_long
+
+(* How long one check may take. Inference can grow with each line of a short
+   file -- seven lines that each apply the one before twice took a check past
+   30 seconds and 3GB -- and the server answers one message at a time, so a
+   check that does not end stops the editor (#92). One that runs out is
+   reported, and the server goes on. A ref so a test can wait less. *)
+let check_limit_s = ref 5.0
+
+let with_check_limit f =
+  let old = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Check_too_long)) in
+  (* Ignored before the timer is stopped, so an alarm that lands as the
+     check finishes is not raised out of the cleanup. *)
+  let stop () =
+    Sys.set_signal Sys.sigalrm Sys.Signal_ignore;
+    ignore (Unix.setitimer Unix.ITIMER_REAL { Unix.it_interval = 0.; it_value = 0. });
+    Sys.set_signal Sys.sigalrm old
+  in
+  ignore (Unix.setitimer Unix.ITIMER_REAL
+            { Unix.it_interval = 0.; it_value = !check_limit_s });
+  Fun.protect ~finally:stop f
+
 let analyze uri text : Runner.source_check option * Diag.t list =
-  match Runner.typecheck_source ~path:(path_of_uri uri) text with
+  match with_check_limit (fun () ->
+          Runner.typecheck_source ~path:(path_of_uri uri) text) with
   | Error d -> (None, Diag.all d)
   | Ok sc -> (Some sc, List.map (Lint.to_diag ~strict:false) sc.Runner.sc_findings)
+  | exception Check_too_long ->
+    (None, [Diag.error ~code:"E-TIME" (Printf.sprintf
+       "checking this file took longer than %g seconds, so the check was \
+        stopped; `wand t` in a terminal checks it with no limit"
+       !check_limit_s)])
 
 let publish uri diags =
   notification "textDocument/publishDiagnostics"
