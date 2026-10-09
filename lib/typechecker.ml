@@ -5731,7 +5731,7 @@ let stdlib_type_env : env = [
      and inferred, which is why it was right all along. *)
   ("env_load_file",   generalize [] (effs [Effect_set.Env; Effect_set.FsRead; Effect_set.Raise] (TPath) (TUnit)));
   (* CSV primitives *)
-  ("csv_parse",         generalize [] ((TString @-> (TString @-> TList (TList TString)))));
+  ("csv_parse",         generalize [] ((TString @-> (TString @-> TResult (TString, TList (TList TString))))));
   (* A cell is text, and every value has a text form, so a row does not have
      to be converted before it is written. Nothing here can fail. *)
   ("csv_stringify",     let a = fresh () in

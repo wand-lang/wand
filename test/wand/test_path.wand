@@ -70,3 +70,8 @@ test "of_string" (fn t -> t.eq "/etc/hosts" (Path.to_string (Path.of_string "/et
 test "components absolute" (fn t ->
   t.eq ["usr", "local", "bin"] (Path.components /usr/local/bin))
 test "components relative" (fn t -> t.eq [".", "foo", "bar"] (Path.components ./foo/bar))
+
+-- The root is its own parent, and nothing left is `.`.
+test "the parent of the root is the root" (fn t -> t.eq /a (Path.normalize /../a))
+test "a path that goes back to where it began is ." (fn t ->
+  t.eq "." (Path.to_string (Path.normalize (Path.of_string "a/.."))))

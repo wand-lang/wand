@@ -876,6 +876,10 @@ let read_numeric s first_char =
               Buffer.add_char prefix (advance s)
             done;
             let prefix_str = Buffer.contents prefix in
+            (* A leading zero is refused, as it is in an octet: `/08` read
+               as 8 where an address refuses `08` (#107). *)
+            if String.length prefix_str > 1 && prefix_str.[0] = '0' then
+              raise (Fail "invalid CIDR prefix: a prefix has no leading zero");
             (match int_of_string_opt prefix_str with
              | Some n when n >= 0 && n <= 32 ->
                CIDR (ipv4 ^ "/" ^ prefix_str)

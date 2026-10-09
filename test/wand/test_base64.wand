@@ -1,6 +1,7 @@
 let {test} = import Test
 import Base64
 import List
+import Result
 import String
 
 -- The vectors are RFC 4648 section 10, which gives the encoding of the
@@ -85,8 +86,17 @@ test "a long value round-trips through every padding phase" (fn t ->
 -- ── what is refused ─────────────────────────────────────────────────────
 
 test "a character outside the alphabet" (fn t ->
-  t.eq (Error "not a base64 character: !") (Base64.decode "Zm9v!"))
+  t.eq (Error "not a base64 character: '!'") (Base64.decode "Zm9v!"))
 test "a length that cannot be base64" (fn t ->
   t.eq (Error "base64 input has a trailing character") (Base64.decode "Zm9vY"))
 test "decode! raises" (fn t -> t.raises (fn () -> Base64.decode! "Zm9v!"))
 test "decode_url! raises" (fn t -> t.raises (fn () -> Base64.decode_url! "Zm9v!"))
+
+-- Padding, where there is some, is the padding the length needs, and a
+-- last character carries no bits past the end of the data.
+test "too much padding is an Error" (fn t -> t.ok (Result.error? (Base64.decode "YQ===")))
+test "too little padding is an Error" (fn t -> t.ok (Result.error? (Base64.decode "YQ=")))
+test "spare bits that are set are an Error" (fn t ->
+  t.ok (Result.error? (Base64.decode "YR==")))
+test "the bad character is the one named" (fn t ->
+  t.eq (Error "not a base64 character: '\\n'") (Base64.decode "YQ==\n"))

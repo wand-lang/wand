@@ -1,20 +1,39 @@
 uses {FS.Read}
 
--- Parse a CSV string with the default comma separator.
--- Returns a list of rows, each row a list of field strings.
+import Result
+
+-- Parse a CSV string with the default comma separator: a list of rows,
+-- each row a list of field strings, or an Error saying why the text is not
+-- CSV -- a quoted field that is never closed.
 --
 -- A cell is text, whatever it looks like: reading `1` as a number is the
 -- caller's to do, or `rows` and a decoder.
 --
 -- >> CSV.parse "a,b\n1,2"
--- [["a", "b"], ["1", "2"]] : List (List String)
+-- Ok([["a", "b"], ["1", "2"]]) : Result String (List (List String))
+--
+-- >> CSV.parse "a,\"b"
+-- Error("a quoted field is not closed: every opening \" needs a closing one") : Result String (List (List String))
 let parse src = csv_parse "," src
 
--- Parse a CSV string with a custom separator character.
+-- The same as `CSV.parse`, raising the reason instead of answering with it.
+--
+-- >> CSV.parse! "a,b"
+-- [["a", "b"]] : List (List String)
+let parse! src = Result.get! (parse src)
+
+-- Parse a CSV string with a custom separator, which is one character.
 --
 -- >> CSV.parse_with ";" "a;b"
--- [["a", "b"]] : List (List String)
+-- Ok([["a", "b"]]) : Result String (List (List String))
 let parse_with sep src = csv_parse sep src
+
+-- The same as `CSV.parse_with`, raising the reason instead of answering
+-- with it.
+--
+-- >> CSV.parse_with! ";" "a;b"
+-- [["a", "b"]] : List (List String)
+let parse_with! sep src = Result.get! (parse_with sep src)
 
 -- Write rows as CSV. A cell is text, and every value has a text form, so
 -- a row of numbers or domain values needs no conversion first.
@@ -42,7 +61,7 @@ let stringify_with sep rows = csv_stringify sep rows
 -- >> with FS.temp_dir "ex_" as d ->
 -- ..   (let f = Path.join d ./c.csv; FS.write_file! f "a,b"; CSV.read_file! f)
 -- [["a", "b"]] : List (List String)
-let read_file! path = parse (read_file path)
+let read_file! path = parse! (read_file path)
 
 -- Read and parse a CSV file.  Returns Ok rows or Error message.
 --

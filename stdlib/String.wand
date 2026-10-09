@@ -92,10 +92,14 @@ let replace old new s = str_replace old new s
 -- "ababab" : String
 let repeat n s = str_repeat n s
 
--- Reverse a string.
+-- Reverse a string, character by character: a character written in more
+-- than one byte stays whole.
 --
 -- >> String.reverse "wand"
 -- "dnaw" : String
+--
+-- >> String.reverse "café"
+-- "éfac" : String
 let reverse s = str_reverse s
 
 -- At most n bytes, cut so a multi-byte character is never split.

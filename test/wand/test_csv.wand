@@ -4,28 +4,29 @@ let {test} = import Test
 import CSV
 import List
 import Path
+import Result
 import FS
 
 -- ── parse ───────────────────────────────────────────────────────────────
 
-test "single row" (fn t -> t.eq 1 (List.length (CSV.parse "a,b,c")))
+test "single row" (fn t -> t.eq 1 (List.length (CSV.parse! "a,b,c")))
 test "field value" (fn t ->
-  t.eq "hello" (List.head! (List.head! (CSV.parse "hello,world"))))
-test "multiple rows" (fn t -> t.eq 2 (List.length (CSV.parse "a,b\nc,d")))
-test "field count per row" (fn t -> t.eq 3 (List.length (List.head! (CSV.parse "a,b,c"))))
+  t.eq "hello" (List.head! (List.head! (CSV.parse! "hello,world"))))
+test "multiple rows" (fn t -> t.eq 2 (List.length (CSV.parse! "a,b\nc,d")))
+test "field count per row" (fn t -> t.eq 3 (List.length (List.head! (CSV.parse! "a,b,c"))))
 
 test "quoted field with space" (fn t ->
-  t.eq "hello world" (List.head! (List.head! (CSV.parse `"hello world",b`))))
-test "embedded comma" (fn t -> t.eq "a,b" (List.head! (List.head! (CSV.parse `"a,b",c`))))
+  t.eq "hello world" (List.head! (List.head! (CSV.parse! `"hello world",b`))))
+test "embedded comma" (fn t -> t.eq "a,b" (List.head! (List.head! (CSV.parse! `"a,b",c`))))
 test "escaped quote" (fn t ->
-  t.eq `say "hi"` (List.head! (List.head! (CSV.parse `"say ""hi""",b`))))
+  t.eq `say "hi"` (List.head! (List.head! (CSV.parse! `"say ""hi""",b`))))
 
 -- ── parse_with ──────────────────────────────────────────────────────────
 
 test "tab separator field count" (fn t ->
-  t.eq 3 (List.length (List.head! (CSV.parse_with "\t" "a\tb\tc"))))
+  t.eq 3 (List.length (List.head! (CSV.parse_with! "\t" "a\tb\tc"))))
 test "pipe separator second field" (fn t ->
-  t.eq "y" (List.head! (List.tail! (List.head! (CSV.parse_with "|" "x|y")))))
+  t.eq "y" (List.head! (List.tail! (List.head! (CSV.parse_with! "|" "x|y")))))
 
 -- ── stringify ───────────────────────────────────────────────────────────
 
@@ -75,3 +76,13 @@ test "a row of domain values" (fn t ->
 -- written as text, which is what a cell is.
 test "mixed cells are written as text" (fn t ->
   t.eq "web,8080" (CSV.stringify [["web", "%{8080}"]]))
+
+-- What is not CSV is an Error, not rows read some other way.
+test "an unclosed quote is an Error" (fn t -> t.ok (Result.error? (CSV.parse `a,"b`)))
+test "a separator is one character" (fn t ->
+  t.eq [true, true] [
+    Result.error? (CSV.parse_with "" "a"),
+    Result.error? (CSV.parse_with ";;" "a")
+  ])
+test "a row of one empty field round-trips" (fn t ->
+  t.eq (Ok [[""]]) (CSV.parse (CSV.stringify [[""]])))

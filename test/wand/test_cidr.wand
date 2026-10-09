@@ -4,6 +4,7 @@ import List
 import String
 
 let {test} = import Test
+import Result
 
 -- ── contains? ──────────────────────────────────────────────────────────
 
@@ -131,3 +132,7 @@ test "an octet cannot have a leading zero" (fn t ->
   match CIDR.of_string "010.0.0.0/8" with
   | Ok _ -> t.ok false
   | Error e -> t.ok (String.contains? "leading zero" e))
+
+-- A prefix has no leading zero, as an octet has none.
+test "a prefix with a leading zero is an Error" (fn t ->
+  t.ok (Result.error? (CIDR.of_string "10.0.0.0/08")))

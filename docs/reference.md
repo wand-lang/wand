@@ -5650,8 +5650,10 @@ rather than read from the environment, so they are [`Proc.args`](#proc).
 ### `CSV`
 
 ```ocaml
-parse          : String -> List (List String)
-parse_with     : String -> String -> List (List String)
+parse          : String -> Result String (List (List String))
+parse!         : String -> List (List String) ! {Raise}
+parse_with     : String -> String -> Result String (List (List String))
+parse_with!    : String -> String -> List (List String) ! {Raise}
 stringify      : List (List 'a) -> String
 stringify_with : String -> List (List 'a) -> String
 read_file      : Path -> Result String (List (List String)) ! {FS.Read}

@@ -75,3 +75,6 @@ test "a byte escape is one byte" (fn t -> t.eq 3 (String.length "\xff\xfb\x01"))
 -- That one spells ASCII, and two spell a character, is checked in
 -- test_lexer.ml: `wand f` writes a printable byte as itself, so here the
 -- escape became the character and the test compared a value with itself.
+
+-- A character written in more than one byte stays whole.
+test "reverse keeps a character whole" (fn t -> t.eq "éfac" (String.reverse "café"))

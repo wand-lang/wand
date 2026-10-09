@@ -3791,9 +3791,20 @@ let str_repeat n s =
   for _ = 1 to n do Buffer.add_string buf s done;
   Buffer.contents buf
 
+(* By character, not by byte: reversing the bytes of `café` split the
+   two-byte `é` and gave text that is not UTF-8 (#107). Each character is
+   kept whole, as `String.get_utf_8_uchar` measures it; a byte that starts
+   no character is one character of its own, so bytes that are not UTF-8
+   still reverse. *)
 let str_reverse s =
   let n = String.length s in
-  String.init n (fun i -> s.[n - 1 - i])
+  let rec pieces i acc =
+    if i >= n then acc
+    else
+      let len = Uchar.utf_decode_length (String.get_utf_8_uchar s i) in
+      pieces (i + len) (String.sub s i len :: acc)
+  in
+  String.concat "" (pieces 0 [])
 
 (* At most [n] bytes, never ending inside a UTF-8 character. A cut lands
    badly only when the byte at [n] is a continuation byte (0b10xxxxxx),
@@ -3918,37 +3929,44 @@ let base64_decode alphabet s =
     let rec find i = if i >= 64 then -1 else if alphabet.[i] = c then i else find (i + 1) in
     find 0
   in
-  let s =
-    (* Padding is optional on the way in, so it is dropped before decoding
-       rather than counted. *)
-    let n = ref (String.length s) in
-    while !n > 0 && s.[!n - 1] = '=' do decr n done;
-    String.sub s 0 !n
-  in
-  let n = String.length s in
-  let err = ref None in
-  let buf = Buffer.create (n / 4 * 3) in
-  let acc = ref 0 and bits = ref 0 in
-  String.iter (fun c ->
-    if !err = None then begin
-      let v = value c in
-      if v < 0 then err := Some (Printf.sprintf "not a base64 character: %c" c)
-      else begin
-        acc := (!acc lsl 6) lor v;
-        bits := !bits + 6;
-        if !bits >= 8 then begin
-          bits := !bits - 8;
-          Buffer.add_char buf (Char.chr ((!acc lsr !bits) land 0xff))
-        end
-      end
-    end) s;
+  (* Padding is optional on the way in, but where there is some it has to
+     be the padding this length needs. `YQ===`, `YQ=` and `YR==` all
+     decoded to "a": too much padding, too little, and a last character
+     whose spare bits were not zero (#107). *)
+  let total = String.length s in
+  let pad = ref 0 in
+  while !pad < total && s.[total - 1 - !pad] = '=' do incr pad done;
+  let n = total - !pad in
+  let core = String.sub s 0 n in
   (* The character scan runs first, so `Zm9v!` is reported as the `!` it
-     is rather than as a length that cannot be base64. Both are true of it;
-     only one tells the caller what to fix. *)
-  match !err with
-  | Some m -> Error m
+     is rather than as a length that cannot be base64, and `YQ==\n` as the
+     newline rather than the `=` before it. *)
+  let bad =
+    let rec find i =
+      if i >= total then None
+      else if s.[i] <> '=' && value s.[i] < 0 then Some s.[i]
+      else find (i + 1)
+    in
+    find 0
+  in
+  match bad with
+  | Some c -> Error (Printf.sprintf "not a base64 character: %C" c)
+  | None when String.contains core '=' -> Error "a = can only end base64 input"
+  | None when n mod 4 = 1 -> Error "base64 input has a trailing character"
+  | None when !pad > 0 && (!pad > 2 || total mod 4 <> 0) ->
+    Error "the padding does not match the length: base64 is padded to a multiple of four"
   | None ->
-    if n mod 4 = 1 then Error "base64 input has a trailing character"
+    let buf = Buffer.create (n / 4 * 3) in
+    let acc = ref 0 and bits = ref 0 in
+    String.iter (fun c ->
+      acc := ((!acc lsl 6) lor value c) land 0xffff;
+      bits := !bits + 6;
+      if !bits >= 8 then begin
+        bits := !bits - 8;
+        Buffer.add_char buf (Char.chr ((!acc lsr !bits) land 0xff))
+      end) core;
+    if !acc land ((1 lsl !bits) - 1) <> 0 then
+      Error "the last character carries bits past the end of the data"
     else Ok (Buffer.contents buf)
 
 let path_normalize s =
@@ -3960,6 +3978,8 @@ let path_normalize s =
     | ("" | ".") :: rest -> process acc rest
     | ".." :: rest ->
       (match acc with
+       (* The root is its own parent: `/../a` is `/a` (#107). *)
+       | [] when is_abs -> process acc rest
        | [] | ".." :: _ -> process (".." :: acc) rest
        | _ :: tl -> process tl rest)
     | p :: rest -> process (p :: acc) rest
@@ -3967,6 +3987,9 @@ let path_normalize s =
   let parts = process [] parts in
   let joined = String.concat "/" parts in
   if is_abs then "/" ^ joined
+  (* Nothing left is the directory it started from, `.`: `a/..` came back
+     as the empty path, and `./a/..` as `./`. *)
+  else if joined = "" then "."
   else if is_cur then "./" ^ joined
   else joined
 
@@ -3992,20 +4015,49 @@ let dotenv_pairs src =
         if key = "" then None
         else
           let raw = String.concat "=" rest in
+          (* A `#` after a space starts a comment, as it does in a shell and
+             in every dotenv reader: `K=v # note` gave `v # note`, and
+             `B="x" # note` kept its quotes because the line did not end in
+             one (#107). A quoted value ends at its closing quote, and a `#`
+             inside the quotes is text. *)
           let value =
             let n = String.length raw in
-            if n >= 2 && ((raw.[0] = '"' && raw.[n-1] = '"')
-                       || (raw.[0] = '\'' && raw.[n-1] = '\'')) then
-              String.sub raw 1 (n - 2)
-            else raw
+            let closing q = if n >= 2 then String.index_from_opt raw 1 q else None in
+            let comment_or_blank rest =
+              let rest = String.trim rest in
+              rest = "" || rest.[0] = '#'
+            in
+            match (if n > 0 then Some raw.[0] else None) with
+            | Some ('"' | '\'' as q) ->
+              (match closing q with
+               | Some j when comment_or_blank (String.sub raw (j + 1) (n - j - 1)) ->
+                 String.sub raw 1 (j - 1)
+               | _ -> raw)
+            | _ ->
+              let rec cut i =
+                if i >= n then raw
+                else if raw.[i] = '#' && i > 0 && (raw.[i - 1] = ' ' || raw.[i - 1] = '\t')
+                then String.trim (String.sub raw 0 i)
+                else cut (i + 1)
+              in
+              cut 0
           in
           Some (key, value))
     (String.split_on_char '\n' src)
 
 (* ── CSV helpers ──────────────────────────────────────────────────────────── *)
 
+(* What a CSV text cannot be read as, raised by `csv_parse_string` and
+   answered as an Error by everything that calls it. *)
+exception Csv_error of string
+
 let csv_parse_string sep src =
-  (* RFC 4180: quoted fields, "" = escaped quote, \r\n or \n line endings *)
+  (* RFC 4180: quoted fields, "" = escaped quote, \r\n or \n line endings.
+     A separator is one character: "" fell back to a comma and ";;" used
+     its first, so a mistyped separator read the file some other way (#107). *)
+  if String.length sep <> 1 then
+    raise (Csv_error (Printf.sprintf
+      "a separator is one character, and %S is %d" sep (String.length sep)));
   let src = (* normalise line endings *)
     let n = String.length src in
     let buf = Buffer.create n in
@@ -4028,10 +4080,14 @@ let csv_parse_string sep src =
     row := Buffer.contents field :: !row;
     Buffer.clear field
   in
+  (* A quoted field was read on this line, empty or not: `""` alone at the
+     end of the text is a row of one empty field, and not nothing. *)
+  let quoted = ref false in
   let commit () =
     commit_field ();
     rows := List.rev !row :: !rows;
-    row := []
+    row := [];
+    quoted := false
   in
   while !i < n do
     let c = src.[!i] in
@@ -4049,7 +4105,14 @@ let csv_parse_string sep src =
         end else begin
           Buffer.add_char field src.[!i]; incr i
         end
-      done
+      done;
+      (* A quote still open at the end is a field that never ended. It was
+         read as if it had, so a line whose last field opened a quote and
+         never closed it came back as whole fields. *)
+      if !continue_ then
+        raise (Csv_error "a quoted field is not closed: every opening \" \
+                          needs a closing one");
+      quoted := true
     end else if c = sep_char then begin
       commit_field (); incr i
     end else if c = '\n' then begin
@@ -4059,7 +4122,7 @@ let csv_parse_string sep src =
     end
   done;
   (* commit trailing content (file may not end with newline) *)
-  if Buffer.length field > 0 || !row <> [] then commit ();
+  if Buffer.length field > 0 || !row <> [] || !quoted then commit ();
   List.rev !rows
 
 let csv_stringify_rows sep rows =
@@ -4067,6 +4130,9 @@ let csv_stringify_rows sep rows =
   let needs_quoting s =
     String.exists (fun c -> c = sep_char || c = '"' || c = '\n' || c = '\r') s
   in
+  (* A row of one empty field is written `""`: written as nothing, it was
+     a blank line, which reads back as no row at all, so `[[""]]` did not
+     come back (#107). *)
   let quote_field s =
     if needs_quoting s then
       "\"" ^ String.concat "" (List.map (fun c ->
@@ -4075,7 +4141,9 @@ let csv_stringify_rows sep rows =
     else s
   in
   String.concat "\n" (List.map (fun row ->
-    String.concat sep (List.map quote_field row)) rows)
+    match row with
+    | [""] -> "\"\""
+    | _ -> String.concat sep (List.map quote_field row)) rows)
 
 (* Lexing one domain literal out of a string, keeping the lexer's complaint
    when it has one. `256.0.0.1` and `:99999` are not merely unreadable: the
@@ -7088,8 +7156,11 @@ let stdlib_eval_env : env = [
   ("csv_parse", VBuiltin (function
     | VString sep -> VBuiltin (function
       | VString src ->
-        let rows = csv_parse_string sep src in
-        VList (List.map (fun row -> VList (List.map (fun s -> VString s) row)) rows)
+        (match csv_parse_string sep src with
+         | rows ->
+           VConstr (Ctor.Builtin "Ok", [VList (List.map (fun row ->
+             VList (List.map (fun s -> VString s) row)) rows)])
+         | exception Csv_error why -> VConstr (Ctor.Builtin "Error", [VString why]))
       | _ -> raise (EvalError "csv_parse: expected String content"))
     | _ -> raise (EvalError "csv_parse: expected String separator")));
   ("csv_stringify", VBuiltin (function
@@ -8409,6 +8480,7 @@ let decode_builtins : env = [
     VBuiltin (function
       | VString s ->
         (match csv_parse_string "," s with
+         | exception Csv_error why -> VConstr (Ctor.Builtin "Error", [VString why])
          | [] -> VConstr (Ctor.Builtin "Ok", [VList []])
          | header :: rows ->
            let as_object row =

@@ -71,6 +71,20 @@ test "basic key=value" (fn t ->
 let dotenv_fmt =
   "# comment\nKEY1=hello\nKEY2=\"quoted\"\nKEY3='single'\nexport KEY4=exported\n\nKEY5=has=equals\n"
 
+-- A `#` after a space starts a comment; inside quotes, or with no space
+-- before it, it is text.
+test "a comment after a value is not part of it" (fn t ->
+  with FS.temp_file "wand_env_cm_" ".env" as p -> (
+    FS.write_file! p "A=v # note\nB=\"x\" # c\nC=\"has # inside\"\nD=no#comment\n";
+    let m = Env.read! p;
+    t.eq ("v", "x", "has # inside", "no#comment") (
+      Map.get! "A" m,
+      Map.get! "B" m,
+      Map.get! "C" m,
+      Map.get! "D" m
+    )
+  ))
+
 test "dotenv formats" (fn t ->
   with FS.temp_file "wand_env_fmt_" ".env" as p -> (
     FS.write_file! p dotenv_fmt;

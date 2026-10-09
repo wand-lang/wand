@@ -44,7 +44,7 @@ let decode! text = Result.get! (base64_decode text)
 -- Ok("hello") : Result String String
 --
 -- >> Base64.decode "not base64"
--- Error("not a base64 character:  ") : Result String String
+-- Error("not a base64 character: ' '") : Result String String
 let decode text = try decode! text
 
 -- Encode, with padding, in the URL-safe alphabet.
@@ -72,5 +72,5 @@ let decode_url! text = Result.get! (base64_decode_url text)
 -- The standard alphabet's characters are not in this one.
 --
 -- >> Base64.decode_url "+/8="
--- Error("not a base64 character: +") : Result String String
+-- Error("not a base64 character: '+'") : Result String String
 let decode_url text = try decode_url! text
