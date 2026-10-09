@@ -752,6 +752,25 @@ let test_an_import's_load_words_are_bounded () =
     Alcotest.(check bool) "so nothing ran" false
       (Sys.file_exists (Filename.concat d "ran")))
 
+(* A read after a withheld write answers what the write would have put
+   there under any spelling of the path, as a real run would; keyed as
+   written, `zz.txt` after a write to `./zz.txt` found nothing (#87). *)
+let test_a_rehearsal_reads_any_spelling () =
+  in_scratch (fun d ->
+    write_file (Filename.concat d "dr.wand")
+      "uses {FS.Read, FS.Write, IO}\nimport FS\nimport IO\nimport Path\n\
+       let main () = (\n\
+       \  FS.write_file! ./zz.txt \"hello\";\n\
+       \  IO.println (FS.read_file! (Path.of_string \"zz.txt\"));\n\
+       \  IO.println (FS.read_file! (Path.of_string \"./sub/../zz.txt\"))\n\
+       )\nmain ()\n";
+    let (code, out) = wand_out ~dir:d ["--dry-run"; "dr.wand"] in
+    Alcotest.(check int) "the rehearsal succeeds" 0 code;
+    Alcotest.(check bool) "and reads the write back" true
+      (contains_sub out "hello\n" && not (contains_sub out "No such file"));
+    Alcotest.(check bool) "without making it" false
+      (Sys.file_exists (Filename.concat d "zz.txt")))
+
 let test_type_over_a_tree () =
   in_scratch (fun d ->
     write_file (Filename.concat d "bad.wand") "let f x = unknown_name x\n";
@@ -1311,6 +1330,8 @@ let () =
         test_an_effect_free_member_bounds_its_module;
       Alcotest.test_case "an import's load words are bounded" `Quick
         test_an_import's_load_words_are_bounded;
+      Alcotest.test_case "a rehearsal reads any spelling" `Quick
+        test_a_rehearsal_reads_any_spelling;
     ];
     "wand d --index", [
       Alcotest.test_case "every module's members, once each" `Quick test_doc_index;

@@ -3062,11 +3062,22 @@ let rehearsal : overlay option ref = ref None
 
 let with_overlay f = match !rehearsal with None -> () | Some o -> f o
 
-(* Trailing slashes make two spellings of one directory, and a path built by
-   `Path.join` and one written as a literal have to agree. *)
+(* One key for every spelling of a path: absolute, from the directory the
+   run is in when the operation happens, with `.`, `..`, doubled and
+   trailing slashes worked out. A path built by `Path.join` and one written
+   as a literal have to agree, and so do `./out.txt`, `out.txt` and
+   `./sub/../out.txt` -- keyed as written, a read after a withheld write
+   found nothing under another spelling, and the rehearsal went down a path
+   the real run would not. Worked out by the text, as `Path.normalize`
+   does; a link is not followed. *)
 let normal p =
-  let n = String.length p in
-  if n > 1 && p.[n - 1] = '/' then String.sub p 0 (n - 1) else p
+  let full = if Filename.is_relative p then Filename.concat (Sys.getcwd ()) p else p in
+  let parts = List.fold_left (fun acc seg ->
+    match seg with
+    | "" | "." -> acc
+    | ".." -> (match acc with _ :: rest -> rest | [] -> [])
+    | s -> s :: acc) [] (String.split_on_char '/' full) in
+  "/" ^ String.concat "/" (List.rev parts)
 
 let under ~dir p =
   let dir = normal dir and p = normal p in
@@ -3259,18 +3270,21 @@ let overlay_read name (v : value) : (value, string) result option =
        gone. A rehearsal that writes three files and lists the directory
        sees three more entries than the disk has, which is what the real run
        would see. *)
-    | "FS!list_dir", Some p, _ ->
+    | "FS!list_dir", Some p, (VPath written | VString written) ->
+      (* Keyed absolute, answered under the directory as the script wrote
+         it, which is how a real run answers. *)
       (match known p with
-       | Some RGone -> Some (missing p)
+       | Some RGone -> Some (missing written)
        | _ ->
          let real =
            match Sys.readdir p with
-           | entries -> Array.to_list entries |> List.map (Filename.concat p)
+           | entries -> Array.to_list entries |> List.map (Filename.concat written)
            | exception Sys_error _ -> []
          in
          let added =
            Hashtbl.fold (fun k e acc ->
-             if e <> RGone && Filename.dirname k = p then k :: acc else acc)
+             if e <> RGone && Filename.dirname k = p
+             then Filename.concat written (Filename.basename k) :: acc else acc)
              o.paths []
          in
          let gone k = Hashtbl.find_opt o.paths (normal k) = Some RGone in
@@ -3288,6 +3302,7 @@ let overlay_read name (v : value) : (value, string) result option =
         | VGlob g | VString g -> Some g | _ -> None in
       let base = match dir with
         | VPath d | VString d -> Some (normal d) | _ -> None in
+      let written = match dir with VPath d | VString d -> d | _ -> "." in
       (match pat, base with
        | Some pat, Some base when Hashtbl.length o.paths > 0 ->
          (match Evaluator.glob_compile pat with
@@ -3311,7 +3326,8 @@ let overlay_read name (v : value) : (value, string) result option =
                   let rel =
                     String.sub k (String.length base + 1)
                       (String.length k - String.length base - 1) in
-                  if Re.execp re rel then VPath k :: acc else acc
+                  if Re.execp re rel
+                  then VPath (Filename.concat written rel) :: acc else acc
                 | _ -> acc) o.paths []
             in
             let seen = List.filter_map
