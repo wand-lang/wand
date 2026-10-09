@@ -428,6 +428,65 @@ let test_an_existing_target_keeps_its_mode () =
       Alcotest.(check int) "the mode survived the rename" 0o640
         (mode_of target)))
 
+(* The contents go into a file only its owner can read, and get the target's
+   mode once they are whole. Made 0644, the new contents of a 0600 file
+   could be read by anyone for as long as the write took. *)
+let test_the_temp_file_is_private () =
+  with_tree (fun root ->
+    with_open_umask (fun () ->
+      let target = Filename.concat root "secret" in
+      write target "before";
+      Unix.chmod target 0o600;
+      let p = Runner.open_atomic target in
+      let mode = mode_of p.Runner.pub_tmp in
+      Runner.abort_atomic p;
+      Alcotest.(check int) "the temp file is 0600" 0o600 mode))
+
+let fails_with label needle src =
+  match run src with
+  | Ok _ -> Alcotest.failf "%s: the script succeeded" label
+  | Error m ->
+    if not (contains m needle) then Alcotest.failf "%s: %s" label m
+
+(* The destination was truncated before the source was read, so a copy onto
+   the file itself emptied it and reported success. *)
+let test_a_copy_onto_itself_is_refused () =
+  with_tree (fun root ->
+    let f = Filename.concat root "f" in
+    let link = Filename.concat root "link" in
+    write f "important";
+    Unix.symlink "f" link;
+    fails_with "by its name" "the same file" (Printf.sprintf
+      {|import FS
+import Path
+FS.copy! (Path.of_string "%s") (Path.of_string "%s")|} f f);
+    fails_with "through a link" "the same file" (Printf.sprintf
+      {|import FS
+import Path
+FS.copy! (Path.of_string "%s") (Path.of_string "%s")|} f link);
+    Alcotest.(check string) "the file is whole" "important"
+      (In_channel.with_open_text f In_channel.input_all))
+
+(* A tree copied into itself nested until the path was too long, and one
+   copied onto itself emptied every file. *)
+let test_a_tree_copied_into_itself_is_refused () =
+  with_tree (fun root ->
+    let d = Filename.concat root "d" in
+    Unix.mkdir d 0o755;
+    write (Filename.concat d "g") "kept";
+    let copy dst = Printf.sprintf
+      {|import FS
+import Path
+FS.copy_tree! (Path.of_string "%s") (Path.of_string "%s")|} d dst in
+    fails_with "into a subdirectory" "in the tree being copied"
+      (copy (Filename.concat d "sub"));
+    fails_with "onto itself" "in the tree being copied"
+      (copy (Filename.concat root "d/../d"));
+    Alcotest.(check bool) "nothing was added" false
+      (Sys.file_exists (Filename.concat d "sub"));
+    Alcotest.(check string) "and nothing emptied" "kept"
+      (In_channel.with_open_text (Filename.concat d "g") In_channel.input_all))
+
 (* A new file should not depend on which function wrote it. *)
 let test_a_new_target_is_created_like_write_file () =
   with_tree (fun root ->
@@ -948,6 +1007,12 @@ let () =
         test_the_temp_file_is_beside_the_target;
       Alcotest.test_case "an existing target keeps its mode" `Quick
         test_an_existing_target_keeps_its_mode;
+      Alcotest.test_case "the temp file is private" `Quick
+        test_the_temp_file_is_private;
+      Alcotest.test_case "a copy onto itself is refused" `Quick
+        test_a_copy_onto_itself_is_refused;
+      Alcotest.test_case "a tree copied into itself is refused" `Quick
+        test_a_tree_copied_into_itself_is_refused;
       Alcotest.test_case "a new target is created like write_file" `Quick
         test_a_new_target_is_created_like_write_file;
       Alcotest.test_case "a symlink is written through" `Quick

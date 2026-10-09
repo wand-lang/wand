@@ -814,9 +814,20 @@ let describe_operation name (v : value) =
    destination that already exists keeps its own permissions -- what `cp`
    does, and the copy is not the place to widen a file somebody else's mode
    was chosen for. *)
+let same_file (a : Unix.stats) (b : Unix.stats) =
+  a.Unix.st_dev = b.Unix.st_dev && a.Unix.st_ino = b.Unix.st_ino
+
 let copy_file src dst =
-  let mode = (Unix.stat src).Unix.st_perm in
+  let src_st = Unix.stat src in
+  let mode = src_st.Unix.st_perm in
   let existed = Sys.file_exists dst in
+  (* The destination is opened with truncation before the source is read, so
+     a copy onto the file itself -- by its own name, or a link to it -- left
+     it empty and reported success. `cp` refuses it, and so does this. *)
+  (match Unix.stat dst with
+   | st when same_file st src_st ->
+     raise (Sys_error (Printf.sprintf "%s and %s are the same file" src dst))
+   | _ | exception Unix.Unix_error _ -> ());
   (* A block at a time. The whole file used to be read into a string first,
      so copying a file took the file's size in memory -- and `FS.copy` is
      what a script reaches for on the large ones. *)
@@ -1122,7 +1133,10 @@ let rec resolve_link ?(depth = 0) p =
    The mode: an existing target's own, set outright so the umask cannot trim
    it; a new file's is 0644 through the umask, which is what every other
    write in `FS` asks for. `write_atomic` is not the place a file's
-   permissions change.
+   permissions change -- and so the temp file is made 0600 and given its
+   mode only once it is whole. Made 0644, the new contents of a 0600 file
+   could be read by anyone for as long as the write took, and a reader that
+   opened it then kept it after the chmod.
 
    The temp file is dot-prefixed and carries the target's name, so an
    ordinary `*.conf` glob in another process does not match it and one left
@@ -1135,11 +1149,16 @@ let rec resolve_link ?(depth = 0) p =
    once. Splitting it here is what keeps one implementation of the rename,
    the mode and the sync -- two copies would be two things to keep in
    agreement, and the second copy is the one that would drift. *)
+(* Read once, while there is one domain: asking for the umask means setting
+   it, and a file made by another domain in between would get the wrong
+   one. *)
+let process_umask = let u = Unix.umask 0o022 in ignore (Unix.umask u); u
+
 type publication = {
   pub_fd : Unix.file_descr;
   pub_tmp : string;
   pub_target : string;
-  pub_mode : int option;
+  pub_mode : int;
 }
 
 let open_atomic path =
@@ -1147,8 +1166,8 @@ let open_atomic path =
   let dir = Filename.dirname target in
   let mode =
     match Unix.stat target with
-    | { Unix.st_perm; _ } -> Some st_perm
-    | exception Unix.Unix_error _ -> None
+    | { Unix.st_perm; _ } -> st_perm
+    | exception Unix.Unix_error _ -> 0o644 land lnot process_umask
   in
   let tmp =
     Filename.concat dir
@@ -1156,7 +1175,7 @@ let open_atomic path =
          (random_tag ()))
   in
   let fd =
-    Unix.openfile tmp [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC] 0o644
+    Unix.openfile tmp [Unix.O_WRONLY; Unix.O_CREAT; Unix.O_EXCL; Unix.O_CLOEXEC] 0o600
   in
   { pub_fd = fd; pub_tmp = tmp; pub_target = target; pub_mode = mode }
 
@@ -1174,7 +1193,7 @@ let write_publication p content =
 let commit_atomic p =
   Unix.fsync p.pub_fd;
   Unix.close p.pub_fd;
-  (match p.pub_mode with Some m -> Unix.chmod p.pub_tmp m | None -> ());
+  Unix.chmod p.pub_tmp p.pub_mode;
   Unix.rename p.pub_tmp p.pub_target
 
 (* Nothing is published and nothing is left lying beside the target. Both
@@ -1904,6 +1923,29 @@ let rec run_with_default_handler (thunk : unit -> value) : value =
              would otherwise be copied until the disk filled. *)
           | WandEffect ("FS!copy_tree", VTuple [VPath src; VPath dst]) ->
             Some (fun (k : (a, value) Effect.Deep.continuation) ->
+              (* A destination inside the source, or the source itself, is
+                 refused before anything is written: the copy reads the
+                 tree it is adding to, so it nested a level deeper each
+                 time until the path was too long, copying every file again
+                 at each level, and a copy onto itself emptied every file.
+                 Asked by device and inode, so a link or a `..` on the way
+                 to the destination cannot hide it. *)
+              let check_outside () =
+                match Unix.stat src with
+                | exception Unix.Unix_error _ -> ()
+                | src_st ->
+                  let rec up d =
+                    (match Unix.stat d with
+                     | st when same_file st src_st ->
+                       raise (Sys_error (Printf.sprintf
+                         "%s is in the tree being copied, %s" dst src))
+                     | _ | exception Unix.Unix_error _ -> ());
+                    let parent = Filename.dirname d in
+                    if parent <> d then up parent
+                  in
+                  up (if Filename.is_relative dst
+                      then Filename.concat (Sys.getcwd ()) dst else dst)
+              in
               let rec cp s d =
                 let st = Unix.lstat s in
                 match st.Unix.st_kind with
@@ -1924,7 +1966,7 @@ let rec run_with_default_handler (thunk : unit -> value) : value =
                     (Sys.readdir s)
                 | _ -> copy_file s d
               in
-              match (try cp src dst; Ok ()
+              match (try check_outside (); cp src dst; Ok ()
                      with
                      | Sys_error m -> Error ("copy_tree: " ^ m)
                      | Unix.Unix_error (e, _, _) ->
