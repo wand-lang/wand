@@ -1361,6 +1361,37 @@ let resolve_location ~base loc =
     if String.length loc > 0 && loc.[0] = '/' then scheme_host ^ loc
     else scheme_host ^ "/" ^ loc
 
+(* Where a URL's credentials belong: its scheme, host and port, with any
+   user info dropped. Two URLs with the same origin are the same server as
+   far as a header is concerned; spelling the same port two ways reads as
+   two origins, which only ever drops a header that could have stayed. *)
+let origin_of url =
+  let lower = String.lowercase_ascii in
+  match String.index_opt url ':' with
+  | Some i when i + 2 < String.length url && String.sub url i 3 = "://" ->
+    let rest = String.sub url (i + 3) (String.length url - i - 3) in
+    let stop_at c s =
+      match String.index_opt s c with Some j -> String.sub s 0 j | None -> s in
+    let authority = stop_at '/' rest |> stop_at '?' |> stop_at '#' in
+    let authority =
+      match String.rindex_opt authority '@' with
+      | Some j -> String.sub authority (j + 1) (String.length authority - j - 1)
+      | None -> authority
+    in
+    lower (String.sub url 0 i) ^ "://" ^ lower authority
+  | _ -> lower url
+
+(* The headers that carry a caller's identity. A redirect to another origin
+   goes without them, as it does in curl and in a browser: wand follows
+   redirects itself, and sent each hop the same headers, so a server could
+   answer `302` to a host of its choosing and be handed the caller's token. *)
+let credential_headers = ["authorization"; "proxy-authorization"; "cookie"]
+
+let headers_for_hop ~from ~next headers =
+  if origin_of from = origin_of next then headers
+  else List.filter (fun (k, _) ->
+         not (List.mem (String.lowercase_ascii k) credential_headers)) headers
+
 (* Fetch straight to a file, so a large artifact never becomes a value.
    `-D -` puts the headers on stdout and `-o` puts the body in the file, so
    a redirect can still be read and checked without holding what it points
@@ -1369,7 +1400,7 @@ let rec http_download ~hops ~url ~dest ~timeout_ms =
   guard_net ~what:"this download reaches" (Evaluator.host_of_url url);
   let seconds = max 1 ((timeout_ms + 999) / 1000) in
   let argv =
-    [| "curl"; "-sS"; "--noproxy"; "*"; "--max-redirs"; "0";
+    [| "curl"; "-q"; "--globoff"; "-sS"; "--noproxy"; "*"; "--max-redirs"; "0";
        "--max-time"; string_of_int seconds; "-D"; "-"; "-o"; dest; url |]
   in
   let (out, err, status) = spawn_argv argv "" in
@@ -1401,13 +1432,18 @@ let rec http_download ~hops ~url ~dest ~timeout_ms =
    default, and honouring it would send the body to a host the manifest never
    named -- and make every fetch read the environment, so every script that
    fetched anything would declare `Env`. `--noproxy '*'` is what makes the
-   rule the reference states true on a machine that sets one. *)
+   rule the reference states true on a machine that sets one.
+
+   `-q`, which has to come first, keeps `curl` from reading `~/.curlrc`:
+   an option there such as `--connect-to` would send the request somewhere
+   other than the host the manifest was checked against. `--globoff` keeps
+   `[1-9]` and `{a,b}` in a URL as text, so one URL is one request. *)
 let rec http_send ~hops ~url ~meth ~headers ~body ~timeout_ms =
   guard_net ~what:"this request reaches" (Evaluator.host_of_url url);
   let seconds = max 1 ((timeout_ms + 999) / 1000) in
   let head_only = meth = "HEAD" in
   let argv =
-    [ "curl"; "-sS"; "--noproxy"; "*"; "--max-redirs"; "0";
+    [ "curl"; "-q"; "--globoff"; "-sS"; "--noproxy"; "*"; "--max-redirs"; "0";
       "--max-time"; string_of_int seconds ]
     @ (if head_only then ["--head"] else ["-i"; "-X"; meth])
     @ (if body = "" then [] else ["--data-binary"; "@-"])
@@ -1442,6 +1478,7 @@ let rec http_send ~hops ~url ~meth ~headers ~body ~timeout_ms =
         then "GET" else meth
       in
       let body = if meth = "GET" then "" else body in
+      let headers = headers_for_hop ~from:url ~next headers in
       http_send ~hops:(hops - 1) ~url:next ~meth ~headers ~body ~timeout_ms
     | _ -> (code, hdrs, payload)
   else (code, hdrs, payload)

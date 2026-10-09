@@ -183,8 +183,95 @@ let () =
   if not (contains out "does not allow") then
     Alcotest.failf "a rebuilt URL reached past the manifest:\n%s" out
 
+(* The origin a header belongs to: scheme, host and port, without user
+   info. *)
+let test_origins () =
+  let same a b = Alcotest.(check bool) (a ^ " ~ " ^ b) true
+      (Wand.Runner.origin_of a = Wand.Runner.origin_of b) in
+  let differ a b = Alcotest.(check bool) (a ^ " !~ " ^ b) false
+      (Wand.Runner.origin_of a = Wand.Runner.origin_of b) in
+  same "https://api.example.com/a" "https://api.example.com/b?c#d";
+  same "https://API.example.com/a" "https://api.example.com";
+  same "https://u:p@api.example.com/a" "https://api.example.com/b";
+  differ "https://api.example.com/a" "https://other.example.com/a";
+  differ "https://api.example.com/a" "http://api.example.com/a";
+  differ "https://api.example.com/a" "https://api.example.com:8443/a"
+
+let test_credentials_stay_with_their_origin () =
+  let headers = [("Authorization", "Bearer t"); ("cookie", "s=1");
+                 ("Proxy-Authorization", "p"); ("Accept", "a")] in
+  let names hs = List.map fst hs in
+  Alcotest.(check (list string)) "the same origin keeps them" (names headers)
+    (names (Wand.Runner.headers_for_hop ~from:"https://a.test/x"
+              ~next:"https://a.test/y" headers));
+  Alcotest.(check (list string)) "another origin gets the rest" ["Accept"]
+    (names (Wand.Runner.headers_for_hop ~from:"https://a.test/x"
+              ~next:"https://b.test/y" headers))
+
+(* End to end: a server that redirects to a second one, on another port and
+   so another origin, and the second writes down the headers it was sent. *)
+let serve_once ~reply =
+  let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Unix.setsockopt sock Unix.SO_REUSEADDR true;
+  Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  Unix.listen sock 1;
+  let port = match Unix.getsockname sock with
+    | Unix.ADDR_INET (_, p) -> p | _ -> assert false in
+  let request_file = Filename.temp_file "wand_http_req_" ".txt" in
+  match Unix.fork () with
+  | 0 ->
+    let (c, _) = Unix.accept sock in
+    let buf = Buffer.create 512 and chunk = Bytes.create 512 in
+    let rec read () =
+      let n = Unix.read c chunk 0 512 in
+      Buffer.add_subbytes buf chunk 0 n;
+      let text = Buffer.contents buf in
+      let ends = String.length text >= 4
+                 && (let rec find i = i + 4 <= String.length text
+                       && (String.sub text i 4 = "\r\n\r\n" || find (i + 1)) in find 0) in
+      if n > 0 && not ends then read ()
+    in
+    read ();
+    Out_channel.with_open_bin request_file (fun oc ->
+      Out_channel.output_string oc (Buffer.contents buf));
+    let r = reply () in
+    ignore (Unix.write_substring c r 0 (String.length r));
+    Unix.close c;
+    Unix._exit 0
+  | pid -> Unix.close sock; (port, pid, request_file)
+
+let test_a_redirect_to_another_origin_drops_credentials () =
+  let (b_port, b_pid, b_req) =
+    serve_once ~reply:(fun () -> "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok") in
+  let (a_port, a_pid, _) =
+    serve_once ~reply:(fun () -> Printf.sprintf
+      "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:%d/x\r\nContent-Length: 0\r\n\r\n"
+      b_port) in
+  let out = run_source (Printf.sprintf
+    {|uses {IO, Net}
+import IO
+import HTTP
+let r = HTTP.request! HTTP.Request(url = http://127.0.0.1:%d/start, headers = {"Authorization" = "Bearer secret", "Accept" = "text/plain"})
+let () = IO.println "%%{r.status}"|} a_port) in
+  (* A server that was never reached is still waiting. *)
+  List.iter (fun pid ->
+    (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
+    ignore (Unix.waitpid [] pid)) [a_pid; b_pid];
+  let seen = In_channel.with_open_bin b_req In_channel.input_all in
+  if not (contains out "200") then Alcotest.failf "the redirect was not followed: %s" out;
+  Alcotest.(check bool) "the second host saw the other headers" true
+    (contains seen "Accept: text/plain");
+  Alcotest.(check bool) "and not the credentials" false (contains seen "secret")
+
 let () =
   Alcotest.run "HTTP" [
+    "redirects", [
+      Alcotest.test_case "origins" `Quick test_origins;
+      Alcotest.test_case "credentials stay with their origin" `Quick
+        test_credentials_stay_with_their_origin;
+      Alcotest.test_case "a redirect to another origin drops them" `Slow
+        test_a_redirect_to_another_origin_drops_credentials;
+    ];
     "what a manifest admits", [
       Alcotest.test_case "a named host" `Slow test_a_named_host_is_admitted;
       Alcotest.test_case "an unnamed host is refused" `Slow
