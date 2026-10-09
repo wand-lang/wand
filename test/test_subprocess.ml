@@ -159,6 +159,27 @@ with held as _ -> List.each (fn i -> IO.println "%%{i} %%{String.repeat 200 "x"}
     Alcotest.failf "killed by signal %d instead of unwinding" n
   | Unix.WSTOPPED n -> Alcotest.failf "stopped by signal %d" n
 
+(* A stream stopped early ends everything its command started: the shell
+   and the pipeline under it. Only the shell was signalled, so `sleep | cat`
+   went on after wand had stopped reading (#91). The sleep carries an odd
+   length so that it is this test's and no one else's. *)
+let test_an_early_stop_ends_the_whole_command () =
+  let marker = "31.7319" in
+  let count () =
+    let ic = Unix.open_process_in ("pgrep -f 'sleep " ^ marker ^ "' | wc -l") in
+    let n = int_of_string (String.trim (In_channel.input_all ic)) in
+    ignore (Unix.close_process_in ic); n
+  in
+  let (pull, finish) =
+    Wand.Runner.stream_command (Printf.sprintf "echo a; sleep %s | cat" marker) in
+  ignore (pull ());
+  finish true;
+  Unix.sleepf 0.3;
+  let left = count () in
+  if left > 0 then
+    ignore (Sys.command ("pkill -f 'sleep " ^ marker ^ "'"));
+  Alcotest.(check int) "nothing it started is left" 0 left
+
 let () =
   Alcotest.run "Subprocess" [
     "neither stream waits on the other", [
@@ -172,5 +193,9 @@ let () =
         test_piped_command_keeps_its_stderr;
       Alcotest.test_case "a closed reader releases first" `Quick
         test_closed_reader_still_releases;
+    ];
+    "a stream stopped early", [
+      Alcotest.test_case "ends the whole command" `Quick
+        test_an_early_stop_ends_the_whole_command;
     ];
   ]

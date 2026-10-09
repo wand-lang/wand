@@ -170,16 +170,36 @@ let rec remember pid =
   let old = Atomic.get children in
   if not (Atomic.compare_and_set children old (pid :: old)) then remember pid
 
+(* The children that lead a process group of their own, so a signal meant
+   for one reaches everything it started. *)
+let group_leaders : int list Atomic.t = Atomic.make []
+
+let rec remember_group pid =
+  let old = Atomic.get group_leaders in
+  if not (Atomic.compare_and_set group_leaders old (pid :: old)) then remember_group pid
+
 let rec forget pid =
   let old = Atomic.get children in
   let now = List.filter (fun p -> p <> pid) old in
   if not (Atomic.compare_and_set children old now) then forget pid
+  else begin
+    let rec ungroup () =
+      let old = Atomic.get group_leaders in
+      let now = List.filter (fun p -> p <> pid) old in
+      if not (Atomic.compare_and_set group_leaders old now) then ungroup ()
+    in
+    ungroup ()
+  end
+
+(* A child, or the whole of its group when it leads one. *)
+let signal_child pid signal =
+  let target = if List.mem pid (Atomic.get group_leaders) then -pid else pid in
+  try Unix.kill target signal with Unix.Unix_error _ -> ()
 
 (* Stop every process wand started. Failures are ignored on purpose: a
    child that has already exited is exactly the case this is racing with. *)
 let stop_children signal =
-  List.iter (fun pid -> try Unix.kill pid signal with Unix.Unix_error _ -> ())
-    (Atomic.get children)
+  List.iter (fun pid -> signal_child pid signal) (Atomic.get children)
 
 (* A command with nothing shell-special in it is exec'd directly rather
    than through `/bin/sh -c` -- make's optimization, decided by
@@ -244,6 +264,49 @@ let spawn_in cmd =
   Unix.close w;
   remember pid;
   (pid, r)
+
+(* A streamed command, in a process group of its own. A stream that is
+   stopped early ends the command, and a command is often a pipeline:
+   `tail -f x | grep y` is a shell with two children, and signalling the
+   shell alone left both running after wand had gone (#91). With a group,
+   one signal reaches all of it.
+
+   OCaml's `create_process` cannot set a process group and `fork` is refused
+   once a domain runs, so this goes through the `spawn` library, which dune
+   uses for the same job. `spawn` does not search PATH, so the command
+   always goes through `/bin/sh -c`, which does; a stream runs for long
+   enough that the shell's start-up does not count.
+
+   A group of its own is not the terminal's foreground group, so Ctrl-C
+   reaches wand and not the command -- wand passes it on through
+   `stop_children` -- and a command that read the terminal would be stopped
+   for it. So when wand's stdin is a terminal, the command's is /dev/null. *)
+let spawn_grouped ~stdout ~stderr cmd =
+  if String.contains cmd '\000' then
+    raise (Evaluator.EvalError
+      "this command holds a NUL byte, which no command line can carry -- \
+       take it out of the value before splicing it in");
+  let cwd = match Domain.DLS.get Evaluator.ambient_shell_dir with
+    | Some dir ->
+      if not (Sys.file_exists dir && Sys.is_directory dir) then
+        raise (Evaluator.EvalError (Printf.sprintf
+          "Shell.in_dir: %s is not a directory" dir));
+      Spawn.Working_dir.Path dir
+    | None -> Spawn.Working_dir.Inherit
+  in
+  let devnull =
+    if Unix.isatty Unix.stdin
+    then Some (Unix.openfile "/dev/null" [Unix.O_RDONLY; Unix.O_CLOEXEC] 0)
+    else None in
+  let stdin = Option.value devnull ~default:Unix.stdin in
+  let pid =
+    Fun.protect ~finally:(fun () -> Option.iter Unix.close devnull) (fun () ->
+      Spawn.spawn ~cwd ~prog:"/bin/sh" ~argv:["/bin/sh"; "-c"; cmd]
+        ~stdin ~stdout ~stderr ~setpgid:Spawn.Pgid.new_process_group ())
+  in
+  remember_group pid;
+  remember pid;
+  pid
 
 (* Output nobody will look at goes to /dev/null rather than down a pipe wand
    then has to keep emptying: the child writes as fast as it likes and wand
@@ -463,23 +526,25 @@ let line_reader fd =
    Stopping it is the pattern `Shell.timeout` already uses: SIGTERM, then
    SIGKILL after the fixed five-second grace. The read end is closed first,
    so a command that is still writing takes EPIPE and usually goes on its
-   own -- which is how `head` stops `yes`. wand signals the command it
-   started and nothing below it: `sh -c "tail -f x"` leaves the `tail`
-   behind, exactly as `Shell.timeout` does.
+   own -- which is how `head` stops `yes`. The command runs in a process
+   group of its own (see `spawn_grouped`), and the signals go to the group,
+   so `tail -f x | grep y` ends whole rather than leaving both behind the
+   shell. `Shell.timeout` still signals only the command it started.
 
    The exit status is read only when the stream ran out on its own. A
    command wand killed because a `take` was satisfied did not fail -- wand
    ended it -- so its status is wand's own signal coming back, and reporting
    it would turn the ordinary early stop into an error. *)
-let spawn_err_in cmd =
-  let (r, w) = Unix.pipe ~cloexec:true () in
-  let pid = create_process_for cmd Unix.stdin Unix.stdout w in
-  Unix.close w;
-  remember pid;
-  (pid, r)
-
 let stream_command ?(err = false) cmd =
-  let (pid, out_r) = if err then spawn_err_in cmd else spawn_in cmd in
+  let (pid, out_r) =
+    let (r, w) = Unix.pipe ~cloexec:true () in
+    let pid =
+      Fun.protect ~finally:(fun () -> Unix.close w) (fun () ->
+        if err then spawn_grouped ~stdout:Unix.stdout ~stderr:w cmd
+        else spawn_grouped ~stdout:w ~stderr:Unix.stderr cmd)
+    in
+    (pid, r)
+  in
   let next_line = line_reader out_r in
   let pull () =
     match next_line () with
@@ -500,7 +565,7 @@ let stream_command ?(err = false) cmd =
         Sched.pause 20;
         wait_until deadline
       end else begin
-        (try Unix.kill pid Sys.sigkill with Unix.Unix_error _ -> ());
+        signal_child pid Sys.sigkill;
         ignore (wait_for_it ())
       end
     | (_, _) -> forget pid
@@ -512,7 +577,15 @@ let stream_command ?(err = false) cmd =
       waited := true;
       close_noerr out_r;
       if early then begin
-        (try Unix.kill pid Sys.sigterm with Unix.Unix_error _ -> ());
+        (* The whole group, and with SIGKILL after the grace below: what
+           the shell started goes with it. Twice, a moment apart: a child
+           the shell was forking as the first signal came does not get it,
+           and outlived the shell. The shell is not reaped until
+           `wait_until`, so its group still exists for the second signal
+           and its id cannot have gone to anyone else. *)
+        signal_child pid Sys.sigterm;
+        Sched.pause 50;
+        signal_child pid Sys.sigterm;
         wait_until (Unix.gettimeofday () +. timeout_grace)
       end else
         match wait_for_it () with

@@ -44,6 +44,7 @@ depends: [
   "ocamlfind" {= "1.9.9~preview"}
   "re" {= "1.14.0"}
   "rresult" {= "0.7.0"}
+  "spawn" {= "v0.17.0"}
   "stdlib-shims" {= "0.3.0"}
   "toml" {= "7.1.0"}
   "topkg" {= "1.1.1"}
