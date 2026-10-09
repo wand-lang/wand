@@ -160,9 +160,34 @@ let test_trace_overlaps () =
   Alcotest.(check bool) (Printf.sprintf "ten traced commands in %dms" took)
     true (took < 1500)
 
+(* An implementation that raises an OCaml exception, not a wand one, inside
+   `Par.map`. The default handler raised it beside the continuation, which
+   abandoned the item, and the call waited for it for ever. It now comes
+   back out of the call, as it does without `Par`. The alarm turns a hang
+   into a failure. *)
+exception Hung
+
+let test_a_foreign_exception_in_par_comes_back () =
+  let boom = Evaluator.performing "Test!boom" (fun _ -> invalid_arg "boom") in
+  let old = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Hung)) in
+  ignore (Unix.alarm 10);
+  let outcome =
+    match Runner.run_with_default_handler (fun () ->
+            Evaluator.par_run 2 boom [Evaluator.VInt 1; Evaluator.VInt 2]
+              ~collect:true) with
+    | _ -> "returned"
+    | exception Invalid_argument m -> m
+    | exception Hung -> "hung"
+  in
+  ignore (Unix.alarm 0);
+  Sys.set_signal Sys.sigalrm old;
+  Alcotest.(check string) "the exception comes back" "boom" outcome
+
 let () =
   Alcotest.run "sched" [
     "sched", [
+      Alcotest.test_case "a foreign exception in Par comes back" `Quick
+        test_a_foreign_exception_in_par_comes_back;
       Alcotest.test_case "sleeps overlap" `Quick test_sleeps_overlap;
       Alcotest.test_case "a pipe wakes its reader" `Quick test_pipe_wakes_reader;
       Alcotest.test_case "yield interleaves" `Quick test_yield_interleaves;

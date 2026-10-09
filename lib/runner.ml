@@ -2052,9 +2052,12 @@ let rec run_with_default_handler (thunk : unit -> value) : value =
               (* Back through the continuation, not raised beside it: an
                  exception raised here would abandon the body rather than
                  unwind it, and every `with` the body is holding would go
-                 unreleased. That is how `exit` skipped cleanup. *)
-              | exception ((EvalError _ | Interrupted _) as e) ->
-                Effect.Deep.discontinue k e)
+                 unreleased. That is how `exit` skipped cleanup. Every
+                 exception, not only wand's own: an OCaml one from an
+                 implementation -- `Random.int` raised `Invalid_argument`
+                 for a large range -- abandoned an item inside `Par.map`,
+                 which then waited for it for ever. *)
+              | exception e -> Effect.Deep.discontinue k e)
           | _ -> None
   in
   try

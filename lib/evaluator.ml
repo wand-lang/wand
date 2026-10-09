@@ -3270,7 +3270,7 @@ let random_ready () =
    and clamping here is what keeps that module free of Raise. *)
 let random_below n =
   random_ready ();
-  if n < 1 then 0 else Stdlib.Random.int n
+  if n < 1 then 0 else Stdlib.Random.full_int n
 
 (* Wake every fiber waiting on [c], to test its value again. *)
 let wake_waiters c =

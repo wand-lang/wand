@@ -85,3 +85,11 @@ group "a pinned seed" (fn () -> [
     let b = (Random.seed 2; draws 20 (fn () -> Random.int 0 1000000));
     t.ok (a != b))
 ])
+
+-- A range of 2^30 or more is a range like any other. OCaml's `Random.int`
+-- refuses one, and the refusal ended the program where `try` could not
+-- see it.
+
+test "a wide range draws inside it" (fn t ->
+  let x = Random.int 0 4000000000;
+  t.ok (x >= 0 && x < 4000000000))
