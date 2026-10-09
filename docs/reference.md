@@ -4133,6 +4133,12 @@ needs a version the cache does not have fetches it: a shallow clone of the
 tag into `~/.cache/wand/pkg/<host>/<path>@<version>` (`$XDG_CACHE_HOME` moves
 it). The copy has no `.git`, and its files are read-only. `git` does the
 HTTPS and uses your git credentials. Fetching a module runs none of its code.
+A tag that holds a symbolic link, or a path with a `.` or `..` segment, is
+refused.
+
+The language server fetches nothing: opening a file in an editor does not
+reach the hosts its `wand.pkg` names. A version the cache does not have is
+reported there, and `wand p tidy` in a terminal fetches it.
 
 The sum section of `wand.pkg` holds one line for each version the build
 reads, with the hash of its files:

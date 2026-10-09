@@ -393,6 +393,18 @@ let test_a_link_in_a_package_is_refused () =
       (List.filter (fun n -> String.starts_with ~prefix:".fetch-" n)
          (Array.to_list (Sys.readdir (Filename.dirname cached)))))
 
+(* With fetching off, as the language server has it, a version missing
+   from the cache is reported and nothing is cloned. *)
+let test_no_fetch_when_it_is_off () =
+  with_remote (fun ~app ~repo:_ ->
+    write (Filename.concat app "wand.pkg") (app_mod "1.4.0");
+    Package.fetch_allowed := false;
+    Fun.protect ~finally:(fun () -> Package.fetch_allowed := true) (fun () ->
+      error_says "it says to fetch it" "Run `wand p tidy`"
+        (run_in app "main.wand" "import https://x.dev/me/json\njson.parse \"x\""));
+    Alcotest.(check bool) "and nothing was cloned" false
+      (Sys.file_exists (Package.cache_dir (entry_of "https://x.dev/me/json" "1.4.0"))))
+
 (* A requirement can come from any package's wand.pkg, so where its clone
    lands is not up to the path: one with `..` is refused. *)
 let test_a_dot_segment_is_refused () =
@@ -876,6 +888,8 @@ let () =
       Alcotest.test_case "a link in a package is refused" `Quick
         (fun () -> if git_present then test_a_link_in_a_package_is_refused () else Alcotest.skip ());
       Alcotest.test_case "a dot segment is refused" `Quick test_a_dot_segment_is_refused;
+      Alcotest.test_case "no fetch when it is off" `Quick
+        (fun () -> if git_present then test_no_fetch_when_it_is_off () else Alcotest.skip ());
     ];
     "the build", [
       Alcotest.test_case "minimal version selection" `Quick

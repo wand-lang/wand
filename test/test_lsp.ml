@@ -709,11 +709,29 @@ let test_the_server_answers_a_bad_body_and_reads_on () =
       Alcotest.(check bool) "the bad body was answered with -32700" true
         (Lint.contains written "-32700"))
 
+(* Opening a file is not a request to reach the hosts its wand.pkg names:
+   the server turns fetching off for the rest of the process. *)
+let test_the_server_fetches_nothing () =
+  let path = Filename.temp_file "wand_lsp_in" ".bin" in
+  let out = Filename.temp_file "wand_lsp_out" ".bin" in
+  Out_channel.with_open_bin path (fun oc ->
+    Lsp.write_message oc (request 1 "shutdown" `Null);
+    Lsp.write_message oc (notif "exit" `Null));
+  Fun.protect
+    ~finally:(fun () ->
+      Package.fetch_allowed := true;
+      List.iter (fun f -> try Sys.remove f with Sys_error _ -> ()) [path; out])
+    (fun () ->
+      ignore (In_channel.with_open_bin path (fun ic ->
+        Out_channel.with_open_bin out (fun oc -> Lsp.serve ic oc)));
+      Alcotest.(check bool) "fetching is off" false !Package.fetch_allowed)
+
 let () =
   Alcotest.run "lsp" [
     "lifecycle", [
       Alcotest.test_case "initialize"            `Quick test_initialize;
       Alcotest.test_case "shutdown then exit"    `Quick test_shutdown_then_exit;
+      Alcotest.test_case "the server fetches nothing" `Quick test_the_server_fetches_nothing;
       Alcotest.test_case "exit without shutdown" `Quick test_exit_without_shutdown;
       Alcotest.test_case "unknown method"        `Quick test_unknown_method;
     ];

@@ -599,6 +599,13 @@ let fetch r =
 
 let hashes : (string, string) Hashtbl.t = Hashtbl.create 4
 
+(* Whether a version missing from the cache may be fetched. The language
+   server turns this off: opening a file in an editor is not a request to
+   reach the hosts its wand.pkg names, and a repository opened to read it
+   would otherwise clone whatever it requires. A command typed at a
+   terminal still fetches. *)
+let fetch_allowed = ref true
+
 (* The hash of a version in the cache, fetching it first when it is not
    there. Hashed once a run. *)
 let cached_hash r =
@@ -609,6 +616,10 @@ let cached_hash r =
     let h =
       if Sys.file_exists dir
       then tree_hash ~name:(Printf.sprintf "%s %s" r.path r.version) dir
+      else if not !fetch_allowed then
+        raise (Unresolved (Printf.sprintf
+          "%s %s is not in the package cache, and the editor fetches nothing. \
+           Run `wand p tidy` in a terminal to fetch it" r.path r.version))
       else fetch r in
     Hashtbl.replace hashes dir h;
     h

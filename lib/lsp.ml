@@ -972,6 +972,7 @@ let handle (st : state) (msg : J.t) : state * J.t list =
 (* ── The stdio instantiation ─────────────────────────────────────────────── *)
 
 let serve ic oc : int =
+  Package.fetch_allowed := false;
   set_binary_mode_in ic true;
   set_binary_mode_out oc true;
   let rec loop st =
