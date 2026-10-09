@@ -295,3 +295,20 @@ test "and JSON.of refuses one" (fn t ->
   | Error why -> t.ok (String.contains? "infinite" why))
 test "a number in range still reads" (fn t ->
   t.eq "1e+300" (JSON.stringify (JSON.parse! "1e300")))
+
+-- An integer past an Int's range is kept as its digits, so one such field
+-- does not make the whole document an Error.
+let big = `{"id": 12345678901234567890, "n": 1}`
+
+test "a document with an integer past an Int's range parses" (fn t ->
+  t.ok (Result.ok? (JSON.parse big)))
+test "and writes the integer back exactly" (fn t ->
+  t.eq `{"id":12345678901234567890,"n":1}` (JSON.stringify (JSON.parse! big)))
+test "the other fields read as before" (fn t ->
+  t.eq (Ok 1) (JSON.decode (Decode.field "n" Decode.int) (JSON.parse! big)))
+test "the integer reads exactly as text" (fn t ->
+  t.eq
+    (Ok "12345678901234567890")
+    (JSON.decode (Decode.field "id" Decode.string) (JSON.parse! big)))
+test "and is no Int" (fn t ->
+  t.ok (Result.error? (JSON.get_int (JSON.field! "id" (JSON.parse! big)))))

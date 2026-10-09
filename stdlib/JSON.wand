@@ -2,9 +2,13 @@ uses {FS.Read}
 
 -- Parse a JSON string.  Returns Ok JSON or Error message.
 --
--- A number too large to hold reads as infinity, which JSON has no way to
--- write, so it is an Error here rather than a value that cannot be written
--- back out.
+-- A number with a fraction or an exponent that is too large to hold reads
+-- as infinity, which JSON has no way to write, so it is an Error here
+-- rather than a value that cannot be written back out.
+--
+-- An integer past an Int's range is kept as its digits: `stringify`
+-- writes it back exactly, `get_int` says it is out of range, and
+-- `Decode.string` reads it as text, which is how a 64-bit id is read.
 --
 -- >> JSON.parse `{"a": 1}`
 -- Ok({"a":1}) : Result String JSON

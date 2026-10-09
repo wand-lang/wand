@@ -255,7 +255,7 @@ type value =
   | VVersion  of string
   | VSize     of string
   | VRegex         of Re.re
-  | VJson          of Yojson.Basic.t
+  | VJson          of Yojson.Safe.t
   | VToml          of Toml.Types.value
   (* Restricted to string keys, YAML 1.2 core's value space is JSON's,
      so a document needs no representation of its own. It stays a
@@ -896,7 +896,7 @@ let rec render ~quote v =
   | VCommand (cmd, _, None) -> "$*(" ^ cmd ^ ")"
   | VCommand (cmd, _, Some dir) ->
     "Shell.in_dir " ^ dir ^ " $*(" ^ cmd ^ ")"
-  | VJson j     -> Yojson.Basic.to_string j
+  | VJson j     -> Yojson.Safe.to_string j
   | VYaml y     -> Yojson.Basic.to_string y
   (* A TOML value shows the way the rest of the language shows the same
      shapes: a table like a map, an array like a list. What it does not show
@@ -4626,6 +4626,25 @@ let rec json_is_finite (j : Yojson.Basic.t) =
 let unwritable_number =
   "a number here is infinite or NaN, which a JSON value cannot hold"
 
+(* A JSON text as a value. Read as `Yojson.Safe`, which keeps an integer past
+   an Int's range as its digits: read as `Basic`, one such number -- a
+   64-bit id, which API output is full of -- made the whole document an
+   Error, whether or not the script read that field (#101). *)
+(* A tree built by the encoders, which work in `Basic`, as a JSON value. *)
+let json_of_basic (j : Yojson.Basic.t) : Yojson.Safe.t = (j :> Yojson.Safe.t)
+
+let json_read s : (Yojson.Safe.t, string) result =
+  let rec check (j : Yojson.Safe.t) =
+    match j with
+    | `Float f when not (Float.is_finite f) -> Some unwritable_number
+    | `List xs -> List.find_map check xs
+    | `Assoc kv -> List.find_map (fun (_, v) -> check v) kv
+    | _ -> None
+  in
+  match Yojson.Safe.from_string s with
+  | j -> (match check j with None -> Ok j | Some why -> Error why)
+  | exception Yojson.Json_error msg -> Error msg
+
 let expected what path j =
   match j with
   (* A string that failed is worth quoting: the reader wants to see what was
@@ -7207,29 +7226,33 @@ let stdlib_eval_env : env = [
   ("json_is_null",   VBuiltin (function VJson `Null -> VBool true | VJson _ -> VBool false | _ -> raise (EvalError "json_is_null: expected JSON")));
   ("json_get_bool",  VBuiltin (function
     | VJson (`Bool b) -> VConstr (Ctor.Builtin "Ok", [VBool b])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected bool, got " ^ Yojson.Basic.to_string j)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected bool, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_bool: expected JSON")));
   ("json_get_int",   VBuiltin (function
     | VJson (`Int n) -> VConstr (Ctor.Builtin "Ok", [VInt n])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected int, got " ^ Yojson.Basic.to_string j)])
+    | VJson (`Intlit digits) ->
+      VConstr (Ctor.Builtin "Error", [VString (Printf.sprintf
+        "%s is past the range of an Int; JSON.stringify has its digits" digits)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected int, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_int: expected JSON")));
   ("json_get_float", VBuiltin (function
     | VJson (`Float f) -> VConstr (Ctor.Builtin "Ok", [VFloat f])
     | VJson (`Int n)   -> VConstr (Ctor.Builtin "Ok", [VFloat (float_of_int n)])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected float, got " ^ Yojson.Basic.to_string j)])
+    | VJson (`Intlit digits) -> VConstr (Ctor.Builtin "Ok", [VFloat (float_of_string digits)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected float, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_float: expected JSON")));
   ("json_get_string", VBuiltin (function
     | VJson (`String s) -> VConstr (Ctor.Builtin "Ok", [VString s])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected string, got " ^ Yojson.Basic.to_string j)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected string, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_string: expected JSON")));
   ("json_get_array", VBuiltin (function
     | VJson (`List vs) -> VConstr (Ctor.Builtin "Ok", [VList (List.map (fun j -> VJson j) vs)])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected array, got " ^ Yojson.Basic.to_string j)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected array, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_array: expected JSON")));
   ("json_get_object", VBuiltin (function
     | VJson (`Assoc kvs) ->
       VConstr (Ctor.Builtin "Ok", [VMap (vmap_of_list (List.map (fun (k, j) -> (k, VJson j)) kvs))])
-    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected object, got " ^ Yojson.Basic.to_string j)])
+    | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected object, got " ^ Yojson.Safe.to_string j)])
     | _ -> raise (EvalError "json_get_object: expected JSON")));
   ("json_field", VBuiltin (fun key ->
     VBuiltin (function
@@ -7238,7 +7261,7 @@ let stdlib_eval_env : env = [
         (match assoc_last k kvs with
          | Some j -> VConstr (Ctor.Builtin "Ok", [VJson j])
          | None   -> VConstr (Ctor.Builtin "Error", [VString ("no field: " ^ k)]))
-      | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected object, got " ^ Yojson.Basic.to_string j)])
+      | VJson j -> VConstr (Ctor.Builtin "Error", [VString ("expected object, got " ^ Yojson.Safe.to_string j)])
       | _ -> raise (EvalError "json_field: expected JSON"))));
   (* ── YAML ──────────────────────────────────────────────────────────────
      Read-only. `Yaml_read` resolves scalars against the 1.2 core schema
@@ -7342,19 +7365,15 @@ let stdlib_eval_env : env = [
   ("json_parse", VBuiltin (function
     | VString s ->
       charge_bytes (String.length s);
-      (try
-         let j = Yojson.Basic.from_string s in
-         if json_is_finite j then VConstr (Ctor.Builtin "Ok", [VJson j])
-         else VConstr (Ctor.Builtin "Error", [VString unwritable_number])
-       with Yojson.Json_error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
+      (match json_read s with
+       | Ok j -> VConstr (Ctor.Builtin "Ok", [VJson j])
+       | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
     | _ -> raise (EvalError "json_parse: expected String")));
   ("json_parse_exn", VBuiltin (function
     | VString s ->
-      (try
-         let j = Yojson.Basic.from_string s in
-         if json_is_finite j then VJson j
-         else raise (EvalError ("json_parse: " ^ unwritable_number))
-       with Yojson.Json_error msg -> raise (EvalError ("json_parse: " ^ msg)))
+      (match json_read s with
+       | Ok j -> VJson j
+       | Error msg -> raise (EvalError ("json_parse: " ^ msg)))
     | _ -> raise (EvalError "json_parse_exn: expected String")));
   ("json_field_exn", VBuiltin (fun key ->
     VBuiltin (function
@@ -7363,16 +7382,16 @@ let stdlib_eval_env : env = [
         (match assoc_last k kvs with
          | Some j -> VJson j
          | None   -> raise (EvalError ("json_field_exn: no field: " ^ k)))
-      | VJson j -> raise (EvalError ("json_field_exn: expected object, got " ^ Yojson.Basic.to_string j))
+      | VJson j -> raise (EvalError ("json_field_exn: expected object, got " ^ Yojson.Safe.to_string j))
       | _ -> raise (EvalError "json_field_exn: expected JSON"))));
   ("json_stringify", VBuiltin (function
     | VJson j ->
-      let s = Yojson.Basic.to_string j in
+      let s = Yojson.Safe.to_string j in
       charge_bytes (String.length s);
       VString s
     | _ -> raise (EvalError "json_stringify: expected JSON")));
   ("json_stringify_pretty", VBuiltin (function
-    | VJson j -> VString (Yojson.Basic.pretty_to_string j)
+    | VJson j -> VString (Yojson.Safe.pretty_to_string j)
     | _ -> raise (EvalError "json_stringify_pretty: expected JSON")));
   (* TOML primitives *)
   ("toml_parse", VBuiltin (function
@@ -7743,7 +7762,7 @@ let rec decoder_of_type_expr venv (te : type_expr) :
     | "CIDR"     -> scalar_decoder "decode_cidr"
     | "Port"     -> scalar_decoder "decode_port"
     (* A `JSON` field holds whatever the document holds there. *)
-    | "JSON"     -> (fun j _ -> Ok (VJson j))
+    | "JSON"     -> (fun j _ -> Ok (VJson (j : Yojson.Basic.t :> Yojson.Safe.t)))
     | tname ->
       (* Another named type: looked up when a field is decoded, so a type may
          mention itself. *)
@@ -7984,7 +8003,7 @@ and json_of_typed venv (te : type_expr) (v : value) : Yojson.Basic.t =
     (match List.assoc_opt name venv with
      | Some f ->
        (match apply f v with
-        | VJson j -> j
+        | VJson j -> Yojson.Safe.to_basic j
         | other   -> json_of_value other)
      | None -> json_of_value v)
   (* An alias is written as what it names. *)
@@ -8004,10 +8023,10 @@ and json_of_typed venv (te : type_expr) (v : value) : Yojson.Basic.t =
      | (Some tname, args) when Hashtbl.mem derivable tname ->
        let arg_encoders =
          List.map (fun a ->
-           VBuiltin (fun x -> VJson (json_of_typed venv a x))) args
+           VBuiltin (fun x -> VJson (json_of_typed venv a x : Yojson.Basic.t :> Yojson.Safe.t))) args
        in
        (match encoded_with tname arg_encoders v with
-        | VJson j -> j
+        | VJson j -> Yojson.Safe.to_basic j
         | other -> json_of_value other)
      | _ -> json_of_value v)
   | _ -> json_of_value v
@@ -8028,7 +8047,9 @@ and json_of_value (v : value) : Yojson.Basic.t =
   | VPort n -> `Int n
   | VList vs -> `List (List.map json_of_value vs)
   | VMap kvs_m -> let kvs = vmap_list kvs_m in `Assoc (List.map (fun (k, v) -> (k, json_of_value v)) kvs)
-  | VJson j -> j
+  (* An integer past an Int's range comes out as its digits in a string,
+     which is how `Yojson.Safe.to_basic` keeps it whole. *)
+  | VJson j -> Yojson.Safe.to_basic j
   | VConstr (Ctor.Builtin "None", []) -> `Null
   | VConstr (Ctor.Builtin "Some", [x]) -> json_of_value x
   | VConstr (ctor, vals) when Hashtbl.mem sum_of_ctor ctor ->
@@ -8063,7 +8084,7 @@ and sum_json venv shape c vals =
 
 and encoded_with tname arg_encoders v =
   match Hashtbl.find_opt derivable_sums tname, v with
-  | Some shape, VConstr (c, vals) -> VJson (sum_json [] shape c vals)
+  | Some shape, VConstr (c, vals) -> VJson (json_of_basic (sum_json [] shape c vals))
   | _ ->
   match Hashtbl.find_opt derivable tname with
   | None -> raise (EvalError (Printf.sprintf "no encoder for type '%s'" tname))
@@ -8084,8 +8105,8 @@ and encoded_with tname arg_encoders v =
            | Some name, x -> [(doc_key vc name, json_of_typed venv te x)]
            | None, _ -> []) fields vals)
        in
-       VJson (`Assoc pairs)
-     | _ -> VJson (json_of_value v))
+       VJson (json_of_basic (`Assoc pairs))
+     | _ -> VJson (json_of_basic (json_of_value v)))
 
 (* What `T.encoder` is worth: a function from the type, after one encoder per
    parameter. Encoding cannot fail, so these are plain functions to JSON. *)
@@ -8430,7 +8451,9 @@ let decode_builtins : env = [
     let inner = as_decoder "json_decode" d in
     VBuiltin (function
       | VJson j ->
-        (match inner j [] with
+        (* Decoded in `Basic`, where an integer past an Int's range is its
+           digits in a string: `Decode.string` reads such an id exactly. *)
+        (match inner (Yojson.Safe.to_basic j) [] with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
          | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
       | _ -> raise (EvalError "json_decode: expected JSON"))));
@@ -8685,9 +8708,9 @@ let toml_document v =
 let serialise_builtins : env = [
   ("json_of", VBuiltin (fun v ->
     match json_of_value v with
-    | j -> VConstr (Ctor.Builtin "Ok", [VJson j])
+    | j -> VConstr (Ctor.Builtin "Ok", [VJson (json_of_basic j)])
     | exception EvalError m -> VConstr (Ctor.Builtin "Error", [VString m])));
-  ("json_of_exn", VBuiltin (fun v -> VJson (json_of_value v)));
+  ("json_of_exn", VBuiltin (fun v -> VJson (json_of_basic (json_of_value v))));
   (* A YAML document holds the same tree a JSON one does, so a value is
      written as YAML the way `JSON.of` writes it: keys, spellings, and a
      field holding None left out. *)
@@ -8698,7 +8721,7 @@ let serialise_builtins : env = [
   ("yaml_of_exn", VBuiltin (fun v -> VYaml (json_of_value v)));
   (* The two hold the same tree, so this cannot fail. *)
   ("yaml_of_json", VBuiltin (function
-    | VJson j -> VYaml j
+    | VJson j -> VYaml (Yojson.Safe.to_basic j)
     | _ -> raise (EvalError "yaml_of_json: expected JSON")));
   ("toml_of", VBuiltin (fun v ->
     match toml_document v with

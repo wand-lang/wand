@@ -38,6 +38,7 @@
 - `Random.int` takes any range (#85).
 - `Par.map` no longer hangs on an OCaml exception (#86).
 - A stream stopped early ends its whole command, through a process group (#91).
+- `JSON.parse` keeps an integer past the `Int` range as its digits (#101).
 - A dry run reads a withheld write under any spelling of its path (#87).
 - A `Size` too large for an Int raises; `String.to_size` and `to_duration` refuse one (#89).
 - `--strict` and `--lint` work before a script path; `wand i` refuses unknown options (#106).
