@@ -139,13 +139,17 @@ let bytes s = str_bytes s
 -- "42" : String
 let of_int n = int_to_str n
 
--- Parse a string as an integer. Returns Ok n or Error msg.
+-- Parse a string as an integer: an optional `-` and decimal digits, with
+-- the space around them ignored. Returns Ok n or Error msg.
 --
 -- >> String.to_int "42"
 -- Ok(42) : Result String Int
 --
 -- >> String.to_int "x"
 -- Error("cannot parse \"x\" as Int") : Result String Int
+--
+-- >> String.to_int "0x1F"
+-- Error("cannot parse \"0x1F\" as Int") : Result String Int
 let to_int s = str_to_int s
 
 -- The same as `String.to_int`, raising the reason instead of

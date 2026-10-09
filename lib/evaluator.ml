@@ -5785,9 +5785,19 @@ let stdlib_eval_env : env = [
       | VFloat f -> VString (Printf.sprintf "%.*f" (max 0 digits) f)
       | _ -> raise (EvalError "float_format: expected Float"))
     | _ -> raise (EvalError "float_format: expected Int")));
+  (* An optional `-` and decimal digits, with the space around them trimmed,
+     since a capture ends in a newline. OCaml's own reading also takes
+     `0x1F`, `0b101`, `0o17`, `0u5`, `1_000` and `+5`, so a script reading a
+     count, a port or a `Content-Length` took text no other program would
+     read as that number. *)
   ("str_to_int", VBuiltin (function
     | VString s ->
-      (match int_of_string_opt (String.trim s) with
+      let t = String.trim s in
+      let digits = if String.starts_with ~prefix:"-" t
+        then String.sub t 1 (String.length t - 1) else t in
+      let decimal = digits <> ""
+        && String.for_all (fun c -> c >= '0' && c <= '9') digits in
+      (match if decimal then int_of_string_opt t else None with
        | Some n -> VConstr (Ctor.Builtin "Ok",    [VInt n])
        | None   -> VConstr (Ctor.Builtin "Error", [VString (Printf.sprintf "cannot parse %S as Int" s)]))
     | _ -> raise (EvalError "str_to_int: expected String")));
