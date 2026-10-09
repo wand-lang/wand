@@ -1233,7 +1233,16 @@ let guard_shell cmd =
           "this command uses shell control flow ('%s'), which the \
            manifest's %s cannot bound; write the loop in wand, or declare \
            bare Shell" kw (Shell_scan.render_label ("Shell", Some allow))))
-      | _ -> ())
+      (* Here the line is resolved, so a word that is still Dynamic is one a
+         substitution makes -- `$(echo whoami)` as a command -- and what it
+         runs is known only to the shell. Let through, it was the plainest
+         way past the list. *)
+      | Shell_scan.Dynamic ->
+        raise (EvalError (Printf.sprintf
+          "this command's first word is the output of a command, which the \
+           manifest's %s cannot bound; name the command, or declare bare Shell"
+          (Shell_scan.render_label ("Shell", Some allow))))
+      | Shell_scan.Literal _ -> ())
       (Shell_scan.scan_string cmd).Shell_scan.words
 
 (* ── The transport ───────────────────────────────────────────────────────

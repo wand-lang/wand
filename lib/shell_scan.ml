@@ -61,16 +61,33 @@ let scan (segs : seg list) : scan =
   let expecting = ref true in      (* the next word is a command word *)
   let skip_target = ref false in   (* the next word is a redirection target *)
   let raw_tail = ref false in
+  (* The rest of a `NAME=$(...)` prefix after its substitution closes: still
+     an assignment, so the next word is still the command word. *)
+  let assign_tail = ref false in
+  (* Everything before the word's first `=` is plain text: no quote, no
+     backslash, no hole, no substitution. The shell takes a word as an
+     assignment only when its name is plain, so `a'v'=b` is the command
+     `av=b`; the buffer holds the text with the quoting gone, and read alone
+     it said assignment, which hid that command from the list. *)
+  let name_plain = ref true in
+  let mark_name () =
+    if not (String.contains (Buffer.contents buf) '=') then name_plain := false in
+  let assignment w = is_assignment w && !name_plain in
   let finish_word () =
     let w = Buffer.contents buf in
     Buffer.clear buf;
     let dynamic = !has_hole in
     has_hole := false;
-    if w = "" && not dynamic then ()
+    let assign = assignment w in
+    name_plain := true;
+    if !assign_tail then assign_tail := false
+    else if w = "" && not dynamic then ()
     else if !skip_target then skip_target := false
     else if not !expecting then ()
+    (* Before the hole test: with the name plain, a hole is in the value,
+       and the word is still a prefix. *)
+    else if assign then ()  (* still expecting the command word *)
     else if dynamic then (words := Dynamic :: !words; expecting := false)
-    else if is_assignment w then ()  (* still expecting the command word *)
     else if List.mem w reserved then
       (words := Compound w :: !words; expecting := false)
     else (words := Literal w :: !words; expecting := false)
@@ -90,24 +107,34 @@ let scan (segs : seg list) : scan =
     let n = String.length text in
     let i = ref 0 in
     let quote = ref ' ' in         (* ' ', '\'' or '"' *)
-    let nested = ref [] in         (* the quoting each open context suspended *)
+    (* The quoting each open context suspended, and whether it opened in
+       the value of a `NAME=` prefix. *)
+    let nested = ref [] in
     let in_backtick = ref false in
     let peek k = if !i + k < n then text.[!i + k] else '\000' in
     let enter () =
       (* What runs inside starts a command line of its own; what the context
-         yields is text this word cannot be read from. *)
-      has_hole := true;
-      finish_word ();
-      nested := !quote :: !nested;
+         yields is text this word cannot be read from -- unless the word is
+         a `NAME=` prefix, whose value runs nothing and leaves the command
+         word still to come. Read as a command word, `x=$(echo) whoami`
+         hid whoami behind a Dynamic word that nothing checked. *)
+      let assign =
+        !expecting && not !skip_target && assignment (Buffer.contents buf) in
+      if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
+      else (has_hole := true; finish_word ());
+      nested := (!quote, assign) :: !nested;
       quote := ' ';
       expecting := true
     in
     let leave () =
       finish_word ();
-      (match !nested with
-       | q :: rest -> quote := q; nested := rest
-       | [] -> quote := ' ');
-      expecting := false
+      let resume =
+        match !nested with
+        | (q, a) :: rest -> quote := q; nested := rest; a
+        | [] -> quote := ' '; false
+      in
+      if resume then (assign_tail := true; expecting := true)
+      else expecting := false
     in
     (* `$((...))` is arithmetic, not a command: sh evaluates it and runs
        nothing, so there is nothing here to check -- when it closes with
@@ -129,7 +156,7 @@ let scan (segs : seg list) : scan =
       let closed_as_arithmetic =
         !depth = 0 && !i >= 2 && text.[!i - 1] = ')' && text.[!i - 2] = ')'
       in
-      if closed_as_arithmetic then has_hole := true
+      if closed_as_arithmetic then (mark_name (); has_hole := true)
       else begin
         i := start + 2;
         enter ()
@@ -156,7 +183,7 @@ let scan (segs : seg list) : scan =
         end
       end else
         match c with
-        | '\'' | '"' -> quote := c; incr i
+        | '\'' | '"' -> mark_name (); quote := c; incr i
         | '`' ->
           if !in_backtick then (leave (); in_backtick := false)
           else (enter (); in_backtick := true);
@@ -164,14 +191,14 @@ let scan (segs : seg list) : scan =
         | '$' when peek 1 = '(' && peek 2 = '(' -> skip_arithmetic ()
         | '$' when peek 1 = '(' -> enter (); i := !i + 2
         | '\\' when !i + 1 < n ->
-          Buffer.add_char buf (peek 1); i := !i + 2
+          mark_name (); Buffer.add_char buf (peek 1); i := !i + 2
         | ' ' | '\t' -> finish_word (); incr i
         (* A newline separates two commands, exactly as `;` does. Read as
            whitespace, the word after one was never a command position, so
            neither the allowlist check nor the check at spawn ever saw it:
            `$(echo %!{c})` with a newline in `c` ran whatever followed. *)
         | '\n' -> finish_word (); expecting := true; incr i
-        | '(' -> finish_word (); nested := !quote :: !nested;
+        | '(' -> finish_word (); nested := (!quote, false) :: !nested;
                  expecting := true; incr i
         | ')' -> leave (); incr i
         | '|' ->
@@ -203,7 +230,7 @@ let scan (segs : seg list) : scan =
      List.iter (fun seg ->
        match seg with
        | Lit text -> scan_lit text
-       | QuotedHole -> has_hole := true
+       | QuotedHole -> mark_name (); has_hole := true
        | RawHole ->
          (* Shell source arrives here at runtime; nothing after it can be
             read structurally from the written text. The spawn-time rescan

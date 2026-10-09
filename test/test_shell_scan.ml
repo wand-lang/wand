@@ -64,7 +64,21 @@ let test_assignments () =
   check "several prefixes" "A=1 B=2 make" [Literal "make"];
   check "assignment only" "FOO=1" [];
   check "assignment after command is an argument" "env A=1 cmd"
-    [Literal "env"]
+    [Literal "env"];
+  (* A substitution in a prefix's value runs, and the command word is still
+     to come. Read as a Dynamic command word, `x=$(echo) whoami` hid
+     whoami. *)
+  check "a substitution in a prefix's value" "X=$(date) git log"
+    [Literal "date"; Literal "git"];
+  check "the prefix goes on after its substitution" "X=$(date)b git"
+    [Literal "date"; Literal "git"];
+  (* The shell reads a word as an assignment only when its name is plain. *)
+  check "a quoted name is a command" "a'v'=b echo" [Literal "av=b"];
+  check "an escaped name is a command" "a\\v=b echo" [Literal "av=b"];
+  check_segs "a hole in a name is a command"
+    [Lit "a"; QuotedHole; Lit "=b echo"] [Dynamic] false;
+  check_segs "a hole in a value is a prefix"
+    [Lit "x="; QuotedHole; Lit " git"] [Literal "git"] false
 
 let test_redirections () =
   check "leading redirect" "> /tmp/x echo hi" [Literal "echo"];
@@ -200,7 +214,15 @@ let test_spawn_check () =
      let outcomes = Par.map 2 r [\"echo\", \"printf\", \"echo\"]\n\
      let show o = match o with | Ok v -> v | Error _ -> \"refused\"\n\
      List.map show outcomes |> (fn ws -> String.join \",\" ws)"
-    "hi,refused,hi"
+    "hi,refused,hi";
+  (* Resolved, the line still has a word that only the shell knows: the
+     output of a substitution in command position. *)
+  run "a command word made by a substitution is refused"
+    "uses {Shell(echo)}\nimport String\nlet r c = $($(echo %{c}))\n\
+     match try r \"whoami\" with\n\
+     | Ok _ -> \"ran\"\n\
+     | Error why -> if String.contains? \"output of a command\" why then \"refused\" else why"
+    "refused"
 
 (* The direct-exec fast path: which command lines mean exactly their words,
    so the runner may execvp them instead of paying a shell startup. Every
