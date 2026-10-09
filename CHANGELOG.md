@@ -5,17 +5,17 @@
 ### Added
 
 - `Net.listen_on` serves on one address (GHSA-x4q8-rp45-2qxc).
-- `!` siblings for `URL.of_string`, `URL.join`, `URL.decode`, `IPv4.of_string`, `CIDR.of_string`, `Version.of_string`, `Glob.of_string` and `Regex.compile` (#106).
-- `CSV.parse!` and `CSV.parse_with!` (#107).
+- `!` siblings for `URL.of_string`, `URL.join`, `URL.decode`, `IPv4.of_string`, `CIDR.of_string`, `Version.of_string`, `Glob.of_string` and `Regex.compile` (#107).
+- `CSV.parse!` and `CSV.parse_with!` (#108).
 
 ### Changed
 
-- `CSV.parse` and `CSV.parse_with` answer a `Result` (#107).
+- `CSV.parse` and `CSV.parse_with` answer a `Result` (#108).
 - A run checks a script before its imports run, and runs them inside the rehearsal (GHSA-fcqc-f3xg-j87f, GHSA-4wpv-627h-m9rf).
 - A connection ends at a line over 1MB or 60 seconds idle (GHSA-x4q8-rp45-2qxc).
 - The language server fetches no packages (GHSA-428f-6pj6-2p65).
 - A language-server check stops after 5 seconds (#92).
-- `**/` in a glob matches zero directories too (#101).
+- `**/` in a glob matches zero directories too (#102).
 - `wand d --load` and `wand t -e --load` read the file without running it (GHSA-xrf7-r8rq-93q6).
 - `Float.round`, `floor` and `ceil` raise for NaN, infinity and values out of range (#95).
 - A negative `Duration` or `Size` raises (#96).
@@ -39,22 +39,22 @@
 - `Par.map` no longer hangs on an OCaml exception (#86).
 - A dry run reads a withheld write under any spelling of its path (#87).
 - A `Size` too large for an Int raises; `String.to_size` and `to_duration` refuse one (#89).
-- `--strict` and `--lint` work before a script path; `wand i` refuses unknown options (#105).
+- `--strict` and `--lint` work before a script path; `wand i` refuses unknown options (#106).
 - The "did you mean" hint is single-quoted (#90).
 - The timeout watchdog retries an interrupted wait (#93).
 - Dates and times that do not exist are refused (#94).
 - `URL.with_hostname` takes a host name only; a URL needs a host and a valid port (#97).
 - `List` functions run on lists of any length (#100).
-- `check_fmt` and `check_docs` fail when they check nothing (#102).
-- CSV, Base64, CIDR, `Env.read`, `Path.normalize` and `String.reverse` edge cases (#107).
+- `check_fmt` and `check_docs` fail when they check nothing (#103).
+- CSV, Base64, CIDR, `Env.read`, `Path.normalize` and `String.reverse` edge cases (#108).
 - Six unused functions removed (#110).
 
 ### Documentation
 
 - `HTTP.header_list` says it answers one value (#99).
 - Comments and docs that disagreed with the code (#109).
-- `verify-archives` and `provision-host` do what their comments say (#104).
-- Byte-escape tests moved to `test_lexer.ml` (#103).
+- `verify-archives` and `provision-host` do what their comments say (#105).
+- Byte-escape tests moved to `test_lexer.ml` (#104).
 
 ## [0.102.0] - 2026-10-06
 
