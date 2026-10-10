@@ -4251,7 +4251,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
     when (match qualified_type_head e with
           | Some _ ->
             List.mem label ["decoder"; "encoder"; "usage"; "parser";
-                            "spec"; "reader"]
+                            "spec"; "reader"; "all"]
           | None -> false) ->
     let (m, tname) = Option.get (qualified_type_head e) in
     let (own, tenv') = module_first tenv m in
@@ -4325,6 +4325,24 @@ let rec infer tenv (env : env) (e : expr) : typ =
                             TApp (TName "CommandLine",
                                   TName (canonical_type_name tname))))
                | _ -> refuse "it has no fields"))
+         | None -> None)
+      | None, Constr tname, "all" ->
+        (match List.assoc_opt (canonical_type_name tname) tenv with
+         | Some tdef ->
+           let refuse why =
+             raise (TypeError (Printf.sprintf
+               "type '%s' has no derived all: %s" (short_type_name tname) why))
+           in
+           (match tdef with
+            | Variants (_, [], ctors) ->
+              (match List.find_opt (fun (c : ctor_def) -> c.fields <> []) ctors with
+               | Some c ->
+                 refuse (Printf.sprintf
+                   "constructor '%s' holds a value, so a list cannot name \
+                    every value of the type" c.name)
+               | None -> Some (TList (TName (canonical_type_name tname))))
+            | Variants _ -> refuse "it takes a type parameter"
+            | Alias _ -> refuse "it is an alias; take 'all' from the type it names")
          | None -> None)
       | None, Constr tname, (("decoder" | "encoder") as which) ->
         (match List.assoc_opt (canonical_type_name tname) tenv with

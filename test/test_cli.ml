@@ -47,6 +47,23 @@ let test_eval_holes () =
   | Ok (_, _) -> Alcotest.fail "eval hole: expected RHoles"
   | Error m   -> Alcotest.failf "eval hole error: %s" m
 
+(* A type declared in a session has its derived members, as one declared in
+   a file does. *)
+let test_eval_derived_members () =
+  let sess = make_sess () in
+  let sess = match Runner.run_session sess "type Kind = A | B" with
+    | Ok (s, _) -> s
+    | Error m -> Alcotest.failf "declare: %s" m
+  in
+  (match Runner.run_session sess "Kind.all" with
+   | Ok (_, Runner.RVal ("[A, B]", "List Kind")) -> ()
+   | Ok (_, _) -> Alcotest.fail "Kind.all: unexpected result"
+   | Error m -> Alcotest.failf "Kind.all: %s" m);
+  (match Runner.run_session sess "JSON.decode Kind.decoder (JSON.of_string \"B\")" with
+   | Ok (_, Runner.RVal ("Ok(B)", _)) -> ()
+   | Ok (_, _) -> Alcotest.fail "Kind.decoder: unexpected result"
+   | Error m -> Alcotest.failf "Kind.decoder: %s" m)
+
 (* ── wand t (typecheck) ──────────────────────────────────────────────────── *)
 
 let test_type () =
@@ -1365,6 +1382,8 @@ let () =
     "eval", [
       Alcotest.test_case "eval expressions" `Quick test_eval;
       Alcotest.test_case "eval holes"       `Quick test_eval_holes;
+      Alcotest.test_case "a session type has its derived members" `Quick
+        test_eval_derived_members;
       Alcotest.test_case "incremental pattern match" `Quick test_incremental_pattern_match;
     ];
     "type", [

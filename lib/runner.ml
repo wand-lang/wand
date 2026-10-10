@@ -4408,8 +4408,13 @@ let run_session ?(evaluate = true) (sess : session) (src : string)
                 in
                 env_ref := (name, v) :: !env_ref) im.Ast.im_binds
             | Ast.TLInterface _ -> ()
-            | Ast.TLType (Ast.Alias _, _) -> ()
-            | Ast.TLType (Ast.Variants (tname, _, ctors), _) ->
+            | Ast.TLType ((Ast.Alias (aname, _, _) as tdef), _) ->
+              Evaluator.register_derivable ~ident:(fun c -> Ctor.Local c)
+                [aname] tdef
+            | Ast.TLType ((Ast.Variants (tname, _, ctors) as tdef), _) ->
+              Evaluator.register_derivable
+                ~ident:(fun c -> Ctor.Local (Ctor.make_key ~type_name:tname c))
+                [tname] tdef;
               List.iter (fun ctor ->
                 let k = Ctor.make_key ~type_name:tname ctor.Ast.name in
                 let ident = Ctor.Local k in

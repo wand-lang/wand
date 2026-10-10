@@ -387,3 +387,32 @@ test "five values are listed in full" (fn t ->
   t.eq
     (Error `expected one of Alpha, Bravo, Charlie, Delta, Echo, got "Foxtrot"`)
     (JSON.decode Five.decoder (JSON.parse! `"Foxtrot"`)))
+
+-- ── all ─────────────────────────────────────────────────────────────────
+
+-- A sum whose constructors hold no value has as many values as it has
+-- constructors, so `T.all` lists them. A hand-written list misses a
+-- constructor added later, and nothing says so.
+
+type Kind = Flaky | Infra | Dependency | Settings | CodeBug | Other
+
+test "all lists every constructor, in the order the type declares them" (fn t ->
+  t.eq [Flaky, Infra, Dependency, Settings, CodeBug, Other] Kind.all)
+
+test "and that is the order a sort puts them in" (fn t ->
+  t.eq Kind.all (List.sort (List.reverse Kind.all)))
+
+type One = Only
+
+test "a sum of one constructor lists that one" (fn t -> t.eq [Only] One.all)
+
+type Policy = Never_ "Never" | Always_ "Always"
+
+test "a constructor with a spelling is listed as the constructor" (fn t ->
+  t.eq [Never_, Always_] Policy.all)
+
+test "and the encoder writes each one's spelling" (fn t ->
+  t.eq `["Never","Always"]` (JSON.stringify (JSON.of! Policy.all)))
+
+test "all is reached through the module that declares the type" (fn t ->
+  t.eq [A.Running, A.Stopped] A.Phase.all)

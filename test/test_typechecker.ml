@@ -586,6 +586,22 @@ let test_one_armed_if () =
 (* A type that is not a single-constructor record has no shape a decoder
    could read. Naming one has to say which of those it is, since "no field
    'decoder'" would send the reader looking for a field. *)
+(* `T.all` lists the values of a sum, so only a sum whose constructors hold
+   nothing has a list to give. *)
+let test_all_needs_a_sum_of_words () =
+  err_contains "a constructor that holds a value"
+    "type Shape = Circle Int | Dot\nlet d = Shape.all"
+    "type 'Shape' has no derived all: constructor 'Circle' holds a value";
+  err_contains "a record"
+    "type P(a: Int)\nlet d = P.all"
+    "type 'P' has no derived all: constructor 'P' holds a value";
+  err_contains "a generic sum"
+    "type E 'a = L | R\nlet d = E.all"
+    "type 'E' has no derived all: it takes a type parameter";
+  err_contains "an alias"
+    "type K = A | B\ntype J = K\nlet d = J.all"
+    "type 'J' has no derived all: it is an alias"
+
 let test_underivable_types_say_why () =
   (* A sum is read without a tag, so each refusal says why the document
      could not tell its constructors apart. *)
@@ -2615,6 +2631,7 @@ let () =
     ];
     "derived decoders", [
       Alcotest.test_case "underivable types say why" `Quick test_underivable_types_say_why;
+      Alcotest.test_case "all needs a sum of words" `Quick test_all_needs_a_sum_of_words;
       Alcotest.test_case "built-in constructor names are taken" `Quick
         test_builtin_constructor_names_are_taken;
       Alcotest.test_case "an annotation mismatch has a position" `Quick

@@ -146,6 +146,10 @@ type sum_shape =
 
 let derivable_sums : (string, sum_shape) Hashtbl.t = Hashtbl.create 8
 
+(* The constructors of a sum where none holds a value, in the order the
+   declaration writes them: what `T.all` answers. *)
+let derivable_alls : (string, Ctor.t list) Hashtbl.t = Hashtbl.create 8
+
 (* The same shape by constructor, for a value encoded where its type is not
    written down: `JSON.of (I 1)`. *)
 let sum_of_ctor : (Ctor.t, sum_shape) Hashtbl.t = Hashtbl.create 8
@@ -172,12 +176,17 @@ let register_derivable ~ident keys (tdef : type_def) =
   List.iter (fun k ->
     Hashtbl.remove derivable k;
     Hashtbl.remove derivable_sums k;
+    Hashtbl.remove derivable_alls k;
     Hashtbl.remove derivable_aliases k) keys;
   let put tbl v = List.iter (fun k -> Hashtbl.replace tbl k v) keys in
   let put_sum shape ctors =
     put derivable_sums shape;
     List.iter (fun c -> Hashtbl.replace sum_of_ctor c shape) ctors
   in
+  (match tdef with
+   | Variants (_, [], ctors) when List.for_all (fun c -> c.fields = []) ctors ->
+     put derivable_alls (List.map (fun c -> ident c.name) ctors)
+   | _ -> ());
   match tdef with
   | Variants (_, params, [ctor])
     when ctor.fields <> [] && List.for_all (fun (n, _) -> n <> None) ctor.fields ->
@@ -2618,7 +2627,9 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
              | _ -> None)
           | _ -> None
         in
-        let known k = Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k in
+        let known k =
+          Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k
+          || Hashtbl.mem derivable_alls k in
         (match owned with
          | Some k when known k -> Some k
          | _ -> if known tname then Some tname else None)
@@ -2630,7 +2641,9 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
        with two modules that each declare `type State` one decoded into the
        other's. (#64) *)
     let own_key tname =
-      let known k = Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k in
+      let known k =
+        Hashtbl.mem derivable k || Hashtbl.mem derivable_sums k
+        || Hashtbl.mem derivable_alls k in
       match lookup_var tname env with
       | Some (VConstr (c, _)) | Some (VPartialConstr (c, _, _)) ->
         (match Ctor.modul c with
@@ -2670,6 +2683,13 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      | Constr tname, "encoder"
        when Hashtbl.mem derivable tname || Hashtbl.mem derivable_sums tname ->
        !derive_encoder (own_key tname)
+     | Qualified (m, inner), "all" when qualified_key m inner <> None ->
+       let k = Option.get (qualified_key m inner) in
+       VList (List.map (fun c -> VConstr (c, []))
+                (Option.value (Hashtbl.find_opt derivable_alls k) ~default:[]))
+     | Constr tname, "all" when Hashtbl.mem derivable_alls (own_key tname) ->
+       VList (List.map (fun c -> VConstr (c, []))
+                (Hashtbl.find derivable_alls (own_key tname)))
      | Constr tname, "usage" when Hashtbl.mem derivable tname ->
        !derive_usage (own_key tname)
      | Constr tname, "parser" when Hashtbl.mem derivable tname ->

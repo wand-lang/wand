@@ -6,6 +6,7 @@
 
 - `Int`, `Float`, `Bool`, `DateTime`, `Duration`, `Size` and `Port` read text with `of_string` and `of_string!`.
 - `Decode.run` and `Decode.lines` read text with a decoder.
+- A sum whose constructors hold no value derives `T.all`, the list of its constructors (#111).
 
 ### Removed
 
@@ -17,6 +18,10 @@
 - `HTTP.header_list`: use `HTTP.header`.
 - `Args.parse_with`: use `Args.read` with `T.parser`.
 - `Int.divmod`: write `(a / b, a % b)`.
+
+### Fixed
+
+- A type declared in the REPL or with `-e` has its derived members, such as `T.decoder`.
 
 ## [0.103.0] - 2026-10-10
 

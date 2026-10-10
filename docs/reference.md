@@ -2743,6 +2743,28 @@ There is a worked example of each in `examples/`:
 `T.encoder` comes from the same fields. A type states its shape once, and
 both directions follow.
 
+A sum whose constructors hold no value has one more derived member, `T.all`.
+It lists every constructor, in the order the type declares them. That is
+also the order `List.sort` puts them in:
+
+```ocaml
+type Kind = Flaky | Infra | Dependency | Other
+
+Kind.all           -- [Flaky, Infra, Dependency, Other] : List Kind
+```
+
+Use it where a list of every value is sent or shown, such as the allowed
+answers to a question. A list written by hand misses a constructor that is
+added later, and no check finds the gap. A sum with a constructor that holds
+a value has no `all`, and the error names that constructor:
+
+```ocaml
+type Shape = Circle Int | Dot
+Shape.all
+-- type 'Shape' has no derived all: constructor 'Circle' holds a value, so a
+-- list cannot name every value of the type
+```
+
 `T.usage` and `T.parser` come from the same fields. They describe the
 command line that reads the type. Neither takes an argument for a type
 parameter.
