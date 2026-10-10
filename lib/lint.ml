@@ -667,6 +667,53 @@ let names_of_item_types (item : Ast.top_item) : string list =
 (* `own_env` holds the program's own top-level bindings, already inferred, so
    the type-directed rules read what the checker concluded rather than
    re-deriving it. *)
+(* V-BIDI1: the bidirectional control characters, by their UTF-8 bytes and
+   the Unicode names a message prints. These reorder the glyphs around them,
+   so source reads one way and runs another. In code they are a lex error;
+   in a string or a comment they survive to here, and the author is warned.
+   Scanned over the raw source, with line and column counted as the lexer
+   counts them, so a finding points where the reader can look. *)
+let bidi_controls = [
+  ("\xe2\x80\x8e", "U+200E LEFT-TO-RIGHT MARK");
+  ("\xe2\x80\x8f", "U+200F RIGHT-TO-LEFT MARK");
+  ("\xe2\x80\xaa", "U+202A LEFT-TO-RIGHT EMBEDDING");
+  ("\xe2\x80\xab", "U+202B RIGHT-TO-LEFT EMBEDDING");
+  ("\xe2\x80\xac", "U+202C POP DIRECTIONAL FORMATTING");
+  ("\xe2\x80\xad", "U+202D LEFT-TO-RIGHT OVERRIDE");
+  ("\xe2\x80\xae", "U+202E RIGHT-TO-LEFT OVERRIDE");
+  ("\xe2\x81\xa6", "U+2066 LEFT-TO-RIGHT ISOLATE");
+  ("\xe2\x81\xa7", "U+2067 RIGHT-TO-LEFT ISOLATE");
+  ("\xe2\x81\xa8", "U+2068 FIRST STRONG ISOLATE");
+  ("\xe2\x81\xa9", "U+2069 POP DIRECTIONAL ISOLATE");
+  ("\xd8\x9c",     "U+061C ARABIC LETTER MARK");
+]
+
+let bidi_findings ?source () =
+  match source with
+  | None -> []
+  | Some src ->
+    let n = String.length src in
+    let found = ref [] in
+    let line = ref 1 and col = ref 1 and i = ref 0 in
+    while !i < n do
+      let hit =
+        List.find_opt (fun (bytes, _) ->
+          let bn = String.length bytes in
+          !i + bn <= n && String.sub src !i bn = bytes) bidi_controls
+      in
+      match hit with
+      | Some (bytes, name) ->
+        found := { rule = Lint_rules.V_BIDI1;
+                   loc = Token.point !line !col !i;
+                   text = Lint_rules.bidi1 ~name; fix = None } :: !found;
+        (* The control is one character, whatever its byte length. *)
+        i := !i + String.length bytes; incr col
+      | None ->
+        (if src.[!i] = '\n' then (incr line; col := 1) else incr col);
+        incr i
+    done;
+    List.rev !found
+
 (* V-CTOR1: the bare constructors the typechecker read as the matched
    type's. A pattern carries no position of its own, so the name is found in
    the source from the `match` onward: the first use of it, bare, not yet
@@ -729,7 +776,8 @@ let ctor1_findings ?source () =
 let rec check ?source ?(expression = false) (prog : Ast.program)
     (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =
-  ctor1_findings ?source () @ check_items ?source ~expression prog item_locs own_env
+  bidi_findings ?source () @ ctor1_findings ?source ()
+  @ check_items ?source ~expression prog item_locs own_env
 
 and check_items ?source ~expression (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =

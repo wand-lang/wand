@@ -34,6 +34,7 @@ type id =
   | A_BIND1    (* `let _ =` over a Unit value dismisses a failure that is not there *)
   | V_MOD1     (* a module is bound to a name in lower case *)
   | A_IF1      (* a `match` over a Bool says what an `if` or `unless` says *)
+  | V_BIDI1    (* a bidi control in a string or comment hides how the source reads *)
 
 (* The prefix says what a finding will do to you, so a rule ID printed in a
    terminal answers that on its own -- the same reason a raising function is
@@ -190,6 +191,14 @@ let all = [
      the match is correct, and exhaustive. *)
   { id = A_IF1;    code = "A-IF1";
     summary = "a `match` over a Bool says what an `if` or `unless` says";
+    kind = Advisory };
+  (* A left-to-right or right-to-left override reorders the glyphs around it,
+     so a reviewer reads one thing and the compiler another -- the "Trojan
+     Source" trick. In code it is a lex error; in a string or a comment it
+     survives, and the reader is told it is there. A warning: a string may
+     hold real bidirectional text on purpose. *)
+  { id = V_BIDI1;  code = "V-BIDI1";
+    summary = "a bidirectional control character hides how the source reads";
     kind = Advisory };
 ]
 
@@ -422,3 +431,13 @@ let if1 ~empty =
   | `Neither ->
     "a `match` over a Bool is an `if` -- write `if <value> then` with the \
      `true` arm, and `else` with the `false` arm"
+
+(* `name` is the character's Unicode label, so the message says which one it
+   found without printing the character itself -- printing it would move the
+   message's own glyphs around. *)
+let bidi1 ~name =
+  Printf.sprintf
+    "a bidirectional control character (%s) is here; it reorders the \
+     characters around it, so the source reads one way and runs another -- \
+     take it out, or write it as an escape in a string if the text needs it"
+    name

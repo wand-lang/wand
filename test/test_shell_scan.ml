@@ -355,6 +355,19 @@ let test_hole_safety () =
   run_err "a String in arithmetic is a type error"
     "uses {Shell(echo)}\nlet n = \"5\"\n$(echo $(( %{n} + 1 )))" "expected Int"
 
+(* A raw control byte in a command is refused, and no diagnostic prints one
+   to the terminal: an ESC in a command word cleared the screen and hid the
+   text after it. *)
+let test_control_bytes () =
+  let src = "uses {Shell(git)}\n$(ev\x1b[2mil status)" in
+  (match Runner.run_string src with
+   | Error m ->
+     if not (Lint.contains m "control byte") then
+       Alcotest.failf "wrong error: %s" m;
+     if String.contains m '\x1b' then
+       Alcotest.failf "the diagnostic still carries a raw ESC: %S" m
+   | Ok v -> Alcotest.failf "expected a refusal, got %s" v)
+
 let () =
   Alcotest.run "shell scan" [
     "arithmetic", [
@@ -366,6 +379,9 @@ let () =
     ];
     "a %{} value is data", [
       Alcotest.test_case "quoted for its context or refused" `Slow test_hole_safety;
+    ];
+    "control bytes", [
+      Alcotest.test_case "refused, and not echoed" `Slow test_control_bytes;
     ];
     "positions", [
       Alcotest.test_case "single"       `Quick test_single;

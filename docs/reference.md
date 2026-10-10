@@ -7942,6 +7942,7 @@ punish the safer choice.
 | `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
 | `V-CTOR1` | a `match` arm names bare a constructor that another type in scope shares — write the type, as in `PullPolicy.Always`; `wand t --fix` writes it |
 | `A-IF1` | a `match` has only the arms `true` and `false` — write `if`, or `unless` where the `true` arm is `()` |
+| `V-BIDI1` | a bidirectional control character is in a string or comment — it reorders the glyphs around it, so the source reads one way and runs another; take it out, or write it as an escape where the text needs it |
 | `A-BIND1` | a `let _ =` binds a value that is `Unit`, so the binder dismisses a failure that is not there — write the statement on its own, sequenced with `;` where it sits in a body |
 | `A-USES1` | a manifest permits an effect the file does not use, or a binary no command runs |
 | `V-USES2` | a file performs effects and declares no manifest |

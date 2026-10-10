@@ -7,6 +7,7 @@
 - `Net.listen_on` serves on one address (security).
 - `!` siblings for `URL.of_string`, `URL.join`, `URL.decode`, `IPv4.of_string`, `CIDR.of_string`, `Version.of_string`, `Glob.of_string` and `Regex.compile` (#107).
 - `CSV.parse!` and `CSV.parse_with!` (#108).
+- `V-BIDI1` warns about a bidirectional control character in a string or comment (security).
 
 ### Changed
 
@@ -27,6 +28,7 @@
 - A `%{x}` value is quoted for the shell context it lands in, through nested substitutions and arithmetic, and refused where none is safe -- backticks, `$'...'`, a heredoc body (security).
 - The command-word scan finds commands inside arithmetic, `$'...'` and `#` comments, and reads process substitution and `[[`/`((`, so none slips past a narrowed `Shell(...)` (security).
 - A command word made by a substitution is refused under a `Shell(...)` list (security).
+- Diagnostics escape control bytes, and a command cannot hold one, so a crafted file cannot drive the terminal through `wand t` or `--fix` (security).
 - An interface member with no effects written is pure (security).
 - Command words an import runs as it loads are checked against `Shell(...)` (security).
 - A package with a symbolic link, or a path with `.` or `..`, is refused (security).

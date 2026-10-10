@@ -77,6 +77,20 @@ let all d = d :: d.others
    the label dropped for a plain failure. Everything that still hands the
    caller a string renders it from here, so the text output cannot drift
    from the structured form. *)
+(* A diagnostic quotes the source it is about, and a terminal reads control
+   bytes in what it prints: an ESC in a command word cleared the screen and
+   hid the text after it. The bytes wand's own messages use -- newline and
+   tab -- are kept; every other C0 control and DEL is shown as `\xNN`, so
+   the message reads as text and runs nothing. *)
+let sanitize s =
+  let buf = Buffer.create (String.length s) in
+  String.iter (fun c ->
+    let n = Char.code c in
+    if (n < 0x20 && c <> '\n' && c <> '\t') || n = 0x7f
+    then Buffer.add_string buf (Printf.sprintf "\\x%02x" n)
+    else Buffer.add_char buf c) s;
+  Buffer.contents buf
+
 let legacy d =
   let label = match d.code with
     | "E-LEX"   -> "lex error: "
@@ -90,7 +104,7 @@ let legacy d =
     | Some l -> Printf.sprintf "%d:%d: " l.Token.line l.Token.col
     | None   -> ""
   in
-  label ^ pos ^ d.message
+  sanitize (label ^ pos ^ d.message)
 
 let escape_json s =
   let buf = Buffer.create (String.length s + 8) in

@@ -415,6 +415,16 @@ let test_shell2 () =
     "uses {Shell}\nlet a = $(echo one \\\n  two)\na";
   silent "one line" "uses {Shell}\nlet a = $(echo one two)\na"
 
+(* A bidirectional override in a string or a comment: the glyphs read one
+   way and the source runs another. A warning, since a string may hold real
+   bidirectional text. `\xe2\x80\xae` is U+202E, the right-to-left override.*)
+let test_bidi1 () =
+  fires "an override in a string"
+    "let x = \"a\xe2\x80\xaeb\"\nx" "V-BIDI1";
+  fires "an override in a comment"
+    "-- a\xe2\x80\xae comment\nlet x = 1\nx" "V-BIDI1";
+  silent "a string with no control" "let x = \"plain\"\nx"
+
 (* ── V-SHELL3 and A-SHELL2: what Shell.inspect promises ─────────────────── *)
 
 (* `Shell.inspect` runs its command in a rehearsal, on the script's word
@@ -940,6 +950,7 @@ let () =
     ];
     "catalog", [
       Alcotest.test_case "V-SHELL2"     `Quick test_shell2;
+      Alcotest.test_case "V-BIDI1"      `Quick test_bidi1;
       Alcotest.test_case "kinds"        `Quick test_kinds;
       Alcotest.test_case "unique codes" `Quick test_registry_codes_unique;
     ];

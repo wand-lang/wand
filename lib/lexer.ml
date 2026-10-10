@@ -390,6 +390,15 @@ let read_run_cmd ?(form = "$()") s =
       quote := c; Buffer.add_char buf c; loop ()
     | c when c = !quote ->
       quote := ' '; Buffer.add_char buf c; loop ()
+    (* A raw control byte -- an ESC most of all -- has no place in source: a
+       diagnostic that quoted the command would print it to the terminal,
+       which reads it as an escape sequence and clears the screen or hides
+       what follows. A command that needs one builds it from a value. Tab
+       and the newline a line break leaves are the exceptions. *)
+    | c when (Char.code c < 0x20 && c <> '\t' && c <> '\n') || c = '\x7f' ->
+      raise (Fail (Printf.sprintf
+        "a command cannot hold the control byte \\x%02x; build it from a \
+         value with %%{...} if you need one" (Char.code c)))
     | c -> Buffer.add_char buf c; loop ()
   in
   loop ()

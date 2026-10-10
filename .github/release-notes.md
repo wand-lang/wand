@@ -30,6 +30,8 @@ Upgrading.
 - An interface member written with no effects is now pure, so a module that
   performs effects can no longer implement it; write the effects on the
   member.
+- A raw control byte in a `$(...)` command is now a lex error; build a
+  command that needs one from a value with `%{...}`.
 
 ### Added
 
@@ -38,6 +40,8 @@ Upgrading.
   `IPv4.of_string`, `CIDR.of_string`, `Version.of_string`, `Glob.of_string`
   and `Regex.compile`.
 - `CSV.parse!` and `CSV.parse_with!`.
+- `V-BIDI1`, which warns about a bidirectional control character in a string
+  or comment.
 
 ### Changed
 
@@ -65,6 +69,8 @@ Upgrading.
 - Security: `--dry-run` withholds `Net.listen` and `Net.write`,
   `FS.write_atomic` keeps its temp file private, and `FS.copy`/`copy_tree`
   refuse a copy onto or into the source.
+- Security: diagnostics escape control bytes, so a crafted file cannot drive
+  the terminal through a `wand t` message.
 - A connection ends at a line over 1MB or 60 seconds idle, and a stream
   stopped early ends its whole command.
 - `Random.int` takes any range, and `Par.map` no longer hangs on an OCaml
