@@ -86,6 +86,11 @@ type pat =
      constraint on the pattern under it, not a pattern of its own. *)
   | PAnnot        of pat * type_expr
   | PMap          of (string * pat) list
+  (* A `match` arm's pattern and where it was written. A pattern has no
+     position of its own, so V-CTOR1 searched the source for the name and
+     could find it in a guard instead (#109). Only an arm's pattern is
+     wrapped, and only once; everything else sees through it. *)
+  | PLocated      of Token.loc * pat
 
 (* Which of the two spellings a binding comes back as. `let x = 1 in e` and
    the block binding `(let x = 1; e)` bind the same name over the same body,
@@ -246,6 +251,11 @@ let rec qualify_ctor_expr t (e : expr) : expr option =
   | App (f, x) -> Option.map (fun f' -> App (f', x)) (qualify_ctor_expr t f)
   | _ -> None
 
+(* The pattern under an arm's position. *)
+let rec strip_pat = function
+  | PLocated (_, p) -> strip_pat p
+  | p -> p
+
 let rec qualify_ctor_pat t (p : pat) : pat option =
   let key n = t ^ "." ^ n in
   match p with
@@ -254,6 +264,8 @@ let rec qualify_ctor_pat t (p : pat) : pat option =
   | PConstrBare (n, ids) -> Some (PConstrBare (key n, ids))
   | PAnnot (inner, te) ->
     Option.map (fun p' -> PAnnot (p', te)) (qualify_ctor_pat t inner)
+  | PLocated (loc, inner) ->
+    Option.map (fun p' -> PLocated (loc, p')) (qualify_ctor_pat t inner)
   | _ -> None
 
 (* ── Pretty-print ─────────────────────────────────────────────────────────── *)
@@ -269,7 +281,7 @@ let rec pat_names (p : pat) =
   | PConstrNamed (_, kvs) | PMap kvs ->
     List.concat_map (fun (_, p) -> pat_names p) kvs
   | PConstrBare (_, ids) -> ids
-  | PAnnot (p, _) -> pat_names p
+  | PAnnot (p, _) | PLocated (_, p) -> pat_names p
   | _ -> []
 
 let rec strip_located = function
@@ -322,6 +334,7 @@ let rec show_pat : pat -> string = function
   | PMap kvs ->
     "{" ^ String.concat ", " (List.map (fun (k, p) -> k ^ " = " ^ show_pat p) kvs) ^ "}"
   | PAnnot (p, _)  -> show_pat p
+  | PLocated (_, p) -> show_pat p
 
 let rec show : expr -> string = function
   | Int n      -> string_of_int n

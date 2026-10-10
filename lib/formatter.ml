@@ -399,6 +399,7 @@ let rec emit_pat (p : pat) : string = match p with
     c ^ "(" ^ String.concat ", " entries ^ ")"
   | PConstrBare (c, ids) -> c ^ "(" ^ String.concat ", " ids ^ ")"
   | PQualified (m, p) -> m ^ "." ^ emit_pat p
+  | PLocated (_, p) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
        no identifier to pun into, so it always carries its pattern. *)

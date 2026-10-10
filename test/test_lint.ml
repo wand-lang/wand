@@ -494,6 +494,22 @@ let test_ctor1 () =
               \  | _ -> 2\n\
               w")
     "V-CTOR1";
+  (* Found where the arm's pattern is, not by the first spelling of the name
+     after the `match`: that was inside a string in the arm above, and the
+     fix would have rewritten the string (#109). *)
+  let in_string =
+    decls ^ "let p = PullPolicy.Always\n\
+             let w = match p with\n\
+             \  | Always -> \"Never again\"\n\
+             \  | Never -> \"x\"\n\
+             \  | IfNotPresent -> \"y\"\n\
+             w" in
+  let never = List.find (fun (f : Lint.finding) ->
+      f.Lint.rule = Lint_rules.V_CTOR1
+      && f.Lint.fix = Some (Diag.Replace { from_ = "Never"; to_ = "PullPolicy.Never" }))
+      (findings in_string) in
+  Alcotest.(check (pair int int)) "the arm's own Never, not the string's" (6, 5)
+    (never.Lint.loc.Token.line, never.Lint.loc.Token.col);
   Alcotest.(check bool) "V-CTOR1 must be fixed under --strict" true
     (Lint_rules.kind Lint_rules.V_CTOR1 = Lint_rules.Violation)
 

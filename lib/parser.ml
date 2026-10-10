@@ -1943,7 +1943,11 @@ and match_ s =
   while !continue_ do
     if peek s = Token.Pipe then begin
       ignore (advance s);
-      let p = pat_ s in
+      (* Taken before the pattern is read: the arguments of a constructor
+         are evaluated right to left, so written inline this was the
+         position after it. *)
+      let at = peek_loc s in
+      let p = PLocated (at, pat_ s) in
       let guard =
         if peek s = Token.When then begin
           ignore (advance s);

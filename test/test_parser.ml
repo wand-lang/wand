@@ -115,7 +115,7 @@ let expr_pats src =
   match parse src with
   | Fn (ps, _) -> String.concat " " (List.map pat_text ps)
   | Let (_, Fn (ps, _), _, _) -> String.concat " " (List.map pat_text ps)
-  | Match (_, (p, _, _) :: _) -> pat_text p
+  | Match (_, (p, _, _) :: _) -> pat_text (Ast.strip_pat p)
   | With (_, p, _) -> pat_text p
   | e -> Alcotest.failf "no pattern in: %s" (Ast.show e)
 
@@ -697,7 +697,7 @@ let test_named_field_arrow () =
 let test_annotated_payload_pattern () =
   let pat_of src =
     match parse src with
-    | Match (_, (p, _, _) :: _) -> p
+    | Match (_, (p, _, _) :: _) -> Ast.strip_pat p
     | e -> Alcotest.failf "no match pattern in: %s" (Ast.show e)
   in
   (* `show_pat` prints through an annotation, so these read the node. *)

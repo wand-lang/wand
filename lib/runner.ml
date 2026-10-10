@@ -2229,7 +2229,8 @@ let empty_import_env =
 (* ── Multi-clause merging ─────────────────────────────────────────────────── *)
 
 (* True for patterns that unconditionally match (no structural constraint). *)
-let is_catchall_pat = function
+let is_catchall_pat p =
+  match Ast.strip_pat p with
   | Ast.PVar _ | Ast.Wild -> true
   | _ -> false
 

@@ -2799,6 +2799,7 @@ let rec pat_is_refutable tenv (p : pat) =
   | PQualified (_, p) -> pat_is_refutable tenv p
   (* An annotation constrains the type, and a type cannot fail to match. *)
   | PAnnot (p, _)  -> pat_is_refutable tenv p
+  | PLocated (_, p) -> pat_is_refutable tenv p
   | _              -> true
 
 (* ── The shape of a command line ──────────────────────────────────────────
@@ -3064,6 +3065,13 @@ let type_qualified_expr tenv m inner =
 
 let rec infer_pat tenv (p : pat) t (env : env) : env =
   match p with
+  (* Where the arm's pattern is, so what is found in it -- a bare
+     constructor read as the matched type's, an error -- is placed there. *)
+  | PLocated (loc, inner) ->
+    let saved = !cur_loc in
+    cur_loc := Some loc;
+    Fun.protect ~finally:(fun () -> cur_loc := saved)
+      (fun () -> infer_pat tenv inner t env)
   | PVar name  -> record_local name t; (name, Mono t) :: env
   | Wild       -> env
   | Int _      -> unify_expected ~expected:t ~got:TInt;      env
@@ -3254,7 +3262,7 @@ let infer_pat_let tenv (p : pat) t scheme (env : env) : env =
 
 let rec is_wild_pat = function
   | PVar _ | Wild -> true
-  | PAnnot (p, _) -> is_wild_pat p
+  | PAnnot (p, _) | PLocated (_, p) -> is_wild_pat p
   | _ -> false
 
 (* A generic type like `Option 'a` instantiates to `TApp (TName "Option", arg)`;
@@ -3333,7 +3341,7 @@ let rec match_against_ctor ?(tenv = []) name arity (p : pat) =
   let ctor_of n = ctor_name_for tenv n in
   match p with
   | _ when is_wild_pat p -> `Wildcard
-  | PAnnot (inner, _) -> match_against_ctor ~tenv name arity inner
+  | PAnnot (inner, _) | PLocated (_, inner) -> match_against_ctor ~tenv name arity inner
   | Bool b -> if (b && name = "true") || (not b && name = "false") then `Match [] else `NoMatch
   | Unit -> `Match []
   | PTuple ps -> `Match ps
@@ -6832,7 +6840,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
           | PMap kvs | PConstrNamed (_, kvs) ->
             List.concat_map (fun (_, p) -> names p) kvs
           | PConstr (_, ps) -> List.concat_map names ps
-          | PAnnot (p, _) -> names p
+          | PAnnot (p, _) | PLocated (_, p) -> names p
           | _ -> []
         in
         List.map (fun n -> (n, loc)) (names pat)

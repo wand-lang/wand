@@ -280,7 +280,7 @@ let bool_match_arms (scrutinee : Ast.expr) (cases : Ast.case list) =
   else
     match cases with
     | [(p1, None, b1); (p2, None, b2)] ->
-      (match p1, p2 with
+      (match Ast.strip_pat p1, Ast.strip_pat p2 with
        | Ast.Bool true, (Ast.Bool false | Ast.Wild) -> Some (b1, b2)
        | Ast.Bool false, (Ast.Bool true | Ast.Wild) -> Some (b2, b1)
        | _ -> None)
@@ -545,6 +545,7 @@ and names_of_pat (p : Ast.pat) : string list =
   | Ast.PCons (h, t) -> names_of_pat h @ names_of_pat t
   | Ast.PMap kvs -> List.concat_map (fun (_, p) -> names_of_pat p) kvs
   | Ast.PAnnot (p, te) -> names_of_pat p @ names_of_type_expr te
+  | Ast.PLocated (_, p) -> names_of_pat p
   (* A binder introduces a name rather than using one, so it contributes
      nothing: an import is not kept alive by something else shadowing it. *)
   | _ -> []
@@ -635,6 +636,7 @@ let names_of_item_types (item : Ast.top_item) : string list =
   and te_of_pat (p : Ast.pat) =
     match p with
     | Ast.PAnnot (p, te) -> te_of_pat p @ names_of_type_expr te
+    | Ast.PLocated (_, p) -> te_of_pat p
     | Ast.PTuple ps | Ast.PList ps | Ast.PConstr (_, ps) -> List.concat_map te_of_pat ps
     | Ast.PCons (h, t) -> te_of_pat h @ te_of_pat t
     | Ast.PConstrNamed (_, kvs) | Ast.PMap kvs ->
@@ -681,12 +683,15 @@ let ctor1_findings ?source () =
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
     || (c >= '0' && c <= '9') || c = '_' || c = '!' || c = '?'
   in
-  let find_from line name =
+  (* From where the arm's pattern begins, which the parser now records: the
+     name is the first one there, and not one in a guard or a body above. *)
+  let find_from line col name =
     let n = String.length name in
     let rec scan_line li =
       if li >= Array.length lines then None
       else
         let text = lines.(li) in
+        let start = if li = line - 1 then max 0 (col - 1) else 0 in
         let rec scan i =
           if i + n > String.length text then None
           else if String.sub text i n = name
@@ -696,7 +701,7 @@ let ctor1_findings ?source () =
           then (Hashtbl.replace claimed (li, i) (); Some (li + 1, i + 1))
           else scan (i + 1)
         in
-        match scan 0 with
+        match scan start with
         | Some p -> Some p
         | None -> scan_line (li + 1)
     in
@@ -704,8 +709,9 @@ let ctor1_findings ?source () =
   in
   List.rev_map (fun (loc, name, type_name) ->
     let text = Lint_rules.ctor1 ~name ~type_name in
-    let from_line = match loc with Some l -> l.Token.line | None -> 1 in
-    match find_from from_line name with
+    let (from_line, from_col) = match loc with
+      | Some l -> (l.Token.line, l.Token.col) | None -> (1, 1) in
+    match find_from from_line from_col name with
     | Some (line, col) ->
       { rule = Lint_rules.V_CTOR1;
         loc = { (Token.point line col 0) with

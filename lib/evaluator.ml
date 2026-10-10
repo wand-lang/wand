@@ -2132,6 +2132,7 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
   (* A type annotation says nothing about which values match: it is checked
      before the program runs, and the pattern under it does the matching. *)
   | PAnnot (p, _), v -> try_match ~prefix p v env
+  | PLocated (_, p), v -> try_match ~prefix p v env
   | PCons (hp, tp), VList (v :: vs) ->
     (match try_match ~prefix hp v env with
      | None      -> None
