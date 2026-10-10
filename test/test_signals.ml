@@ -118,7 +118,7 @@ let r =
   let acquire = fn () ->
     let () = FS.write_file! (Path.of_string held) "x" in
     let () = FS.write_file! (Path.of_string "%s") held in
-    let _ = List.length (List.range 0 500000) in
+    let _ = List.fold_left (fn a _ -> a + 1) 0 (List.range 0 500000) in
     held
   in
   let release = fn h -> FS.delete! (Path.of_string h) in

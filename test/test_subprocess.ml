@@ -174,8 +174,16 @@ let test_an_early_stop_ends_the_whole_command () =
     Wand.Runner.stream_command (Printf.sprintf "echo a; sleep %s | cat" marker) in
   ignore (pull ());
   finish true;
-  Unix.sleepf 0.3;
-  let left = count () in
+  (* The shell is reaped by `finish`, but the `sleep` it started is in the
+     group and, once signalled, is reparented to init and reaped there -- so
+     it can outlast `finish` by a moment on a loaded machine. Poll for it to
+     go rather than guess a sleep. *)
+  let rec wait tries =
+    if count () = 0 then 0
+    else if tries = 0 then count ()
+    else (Unix.sleepf 0.1; wait (tries - 1))
+  in
+  let left = wait 50 in
   if left > 0 then
     ignore (Sys.command ("pkill -f 'sleep " ^ marker ^ "'"));
   Alcotest.(check int) "nothing it started is left" 0 left
