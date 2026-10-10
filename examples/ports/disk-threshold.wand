@@ -1,6 +1,7 @@
 uses {IO, Shell(df)}
 
 import IO
+import Int
 import List
 import String
 
@@ -24,7 +25,7 @@ import String
 let usage row =
   match String.words row with
   | [_, _, _, _, capacity, mount] -> (
-    match String.to_int (String.replace "%" "" capacity) with
+    match Int.of_string (String.replace "%" "" capacity) with
     | Ok percent -> Some(mount, percent)
     | Error _ -> None
   )

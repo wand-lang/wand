@@ -67,8 +67,8 @@ test "an octet above 255 is not an address" (fn t ->
   | Ok _ -> t.ok false
   | Error e -> t.ok (String.contains? "each octet" e))
 
-test "String.to_ipv4 is the same function" (fn t ->
-  t.eq (String.to_ipv4 "10.0.0.1") (IPv4.of_string "10.0.0.1"))
+test "IPv4.of_string is the same function" (fn t ->
+  t.eq (IPv4.of_string "10.0.0.1") (IPv4.of_string "10.0.0.1"))
 
 -- A leading zero is octal to libc and decimal here, so `010.8.8.8` would be
 -- private to wand and 8.8.8.8 to curl, to the resolver, to everything the

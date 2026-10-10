@@ -4,16 +4,15 @@ import Decode
 import IO
 import List
 import Result
-import Shell
 
 -- git prints a count on a line of its own. A repo with no upstream prints
 -- nothing at all, so a count that cannot be read is zero rather than a
 -- failure.
-let count out = Result.default 0 (Shell.decode Decode.int out)
+let count out = Result.default 0 (Decode.run Decode.int out)
 
 -- One entry per line. An empty capture is no entries -- not one empty
 -- entry, which is the mistake a line count invites.
-let entries out = Result.default [] (Shell.lines Decode.string out)
+let entries out = Result.default [] (Decode.lines Decode.string out)
 
 let branch = $(git branch --show-current)
 let dirty = List.length (entries $(git status --porcelain))

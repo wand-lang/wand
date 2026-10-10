@@ -55,12 +55,6 @@ let fold_right f xs acc = fold_left (fn a x -> f x a) acc (_onto xs [])
 -- 3 : Int
 let length xs = list_length xs
 
--- Concatenate two lists.
---
--- >> List.append [1, 2] [3]
--- [1, 2, 3] : List Int
-let append xs ys = _onto (_onto xs []) ys
-
 -- Reverse a list.
 --
 -- >> List.reverse [1, 2, 3]
@@ -265,7 +259,7 @@ let range lo hi = list_range lo hi
 -- [1, 2, 3] : List Int
 let flatten xs = list_flatten xs
 
--- Concatenate two lists. Alias for append.
+-- Concatenate two lists.
 --
 -- >> List.concat [1, 2] [3]
 -- [1, 2, 3] : List Int

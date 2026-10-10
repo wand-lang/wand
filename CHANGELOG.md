@@ -1,6 +1,24 @@
 # Changelog
 
-## [0.103.0] - Unreleased
+## [0.104.0] - Unreleased
+
+### Added
+
+- `Int`, `Float`, `Bool`, `DateTime`, `Duration`, `Size` and `Port` read text with `of_string` and `of_string!`.
+- `Decode.run` and `Decode.lines` read text with a decoder.
+
+### Removed
+
+- `String.to_*`: use the type's own `of_string`. `String.to_int s` is now `Int.of_string s`.
+- `Shell.decode` and `Shell.lines`: use `Decode.run` and `Decode.lines`.
+- `List.append`: use `List.concat`.
+- `Path.dirname`: use `Path.parent`.
+- `Duration.add` and `Duration.sub`: use `+` and `-`.
+- `HTTP.header_list`: use `HTTP.header`.
+- `Args.parse_with`: use `Args.read` with `T.parser`.
+- `Int.divmod`: write `(a / b, a % b)`.
+
+## [0.103.0] - 2026-10-10
 
 ### Added
 

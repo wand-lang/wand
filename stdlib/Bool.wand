@@ -1,0 +1,19 @@
+import Result
+
+-- Reading a Bool from text.
+--
+-- `&&`, `||` and `!` are the operations on a Bool, so what is here is the
+-- one conversion an operator does not spell.
+
+-- Read "true" or "false", in any case.
+--
+-- >> Bool.of_string "TRUE"
+-- Ok(true) : Result String Bool
+let of_string s = str_to_bool s
+
+-- The same as `Bool.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Bool.of_string! "TRUE"
+-- true : Bool
+let of_string! s = Result.get! (of_string s)

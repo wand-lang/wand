@@ -1,12 +1,13 @@
 uses {Clock, FS.Read, FS.Write, Net, Net.Listen}
 
+import Decode
 import FS
+import Int
 import List
 import Map
 import Net
 import Par
 import Result
-import Shell
 import Size
 import String
 import URL
@@ -105,26 +106,14 @@ let post! url body = request! Request(url = url, method = POST, body = body)
 -- true : Bool
 let post url body = try post! url body
 
--- One header's value as a list: one element when the response has the
--- header, none when it does not. A response's headers are a Map, so a
--- header sent more than once -- `set-cookie` is the one that matters --
--- keeps only the last value it was sent with, here and in `header` alike.
---
--- >> HTTP.header_list "Accept" HTTP.Response(status = 200, headers = {accept = "a"}, body = "")
--- ["a"] : List String
-let header_list name (r: Response) =
-  match header name r with
-  | Some v -> [v]
-  | None -> []
-
--- Read a response body as one value, the way `Shell.decode` reads a
--- capture. There is no `get_json`: the reading happens in one place, with a
+-- Read a response body as one value, the way `Decode.run` reads any
+-- text. There is no `get_json`: the reading happens in one place, with a
 -- message that says what was wrong, rather than a chain of scrapes that
 -- each assume the last one worked.
 --
 -- >> HTTP.decode Decode.int HTTP.Response(status = 200, headers = {}, body = "42")
 -- Ok(42) : Result String Int
-let decode d (r: Response) = Shell.decode d r.body
+let decode d (r: Response) = Decode.run d r.body
 
 -- Fetch a URL straight into a file. Raises if the exchange did not happen
 -- or the server did not answer 2xx.
@@ -284,7 +273,7 @@ let _body_length pairs = (
   )
   | (_, []) -> Ok 0
   | (_, [(_, n)]) -> (
-    match String.to_int n with
+    match Int.of_string n with
     | Ok length when length >= 0 -> Ok length
     | _ -> Error (400, "the Content-Length is not a number")
   )

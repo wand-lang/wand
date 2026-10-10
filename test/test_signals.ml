@@ -284,13 +284,13 @@ let test_http_server_drains () =
   Sys.remove marker;
   let src = Printf.sprintf
     "uses {Clock, FS.Write, Net.Listen}\n\
-     import Clock\nimport FS\nimport HTTP\nimport Path\nimport String\n\
+     import Clock\nimport FS\nimport HTTP\nimport Path\nimport Port\nimport String\n\
      let route (req: HTTP.Incoming) = (\n\
        FS.write_file! (Path.of_string %S) \"started\";\n\
        Clock.sleep 1s;\n\
        HTTP.reply 200 \"finished\"\n\
      )\n\
-     HTTP.serve! HTTP.Server(port = String.to_port! \":%d\", limit = 4, grace = 5s) route\n"
+     HTTP.serve! HTTP.Server(port = Port.of_string! \":%d\", limit = 4, grace = 5s) route\n"
     marker port in
   let path = Filename.temp_file "wand_drain" ".wand" in
   Out_channel.with_open_text path (fun oc -> output_string oc src);

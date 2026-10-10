@@ -19,12 +19,6 @@ let parent p = path_parent p
 -- hosts : Path
 let basename p = path_basename p
 
--- Alias for parent: return the directory portion of a path.
---
--- >> Path.dirname /etc/hosts
--- /etc : Path
-let dirname p = path_parent p
-
 -- Return the file extension including the leading dot, or "" if none.
 --
 -- >> Path.extension ./notes.txt

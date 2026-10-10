@@ -43,7 +43,7 @@ let backoff attempts =
     else (
       let capped = if d > 30s then 30s else d;
       Clock.sleep capped;
-      Duration.add capped (step (Duration.add d d) (n - 1))
+      capped + step (d + d) (n - 1)
     );
   step 1s attempts
 

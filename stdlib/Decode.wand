@@ -3,7 +3,7 @@
 -- A `Decoder a` says how to read an `a` out of a document. It is a value:
 -- it can be named, passed to a function, and used against three inputs.
 -- Running one is a backend's job -- `JSON.decode`, `TOML.decode`,
--- `CSV.rows`, `Shell.lines` -- and every backend presents what it read in
+-- `CSV.rows`, `Decode.lines` -- and every backend presents what it read in
 -- the same shape, so these combinators serve all of them.
 --
 --     let pod =
@@ -227,3 +227,23 @@ let cidr = decode_cidr
 -- >> JSON.decode Decode.port (JSON.parse! "8080")
 -- Ok(:8080) : Result String Port
 let port = decode_port
+
+-- ── Text ───────────────────────────────────────────────────────────────
+
+-- Read a whole text as one value, ignoring the space around it.
+--
+-- Text with no shape of its own -- a command's output, a response body --
+-- is read here, in one place, with a message that says what was wrong:
+--
+--     let ahead = Decode.run Decode.int $(git rev-list --count HEAD)
+--
+-- >> Decode.run Decode.int " 42\n"
+-- Ok(42) : Result String Int
+let run d text = shell_decode d text
+
+-- Read one value per line. `$()` strips the trailing newline, so a capture
+-- with nothing in it is no lines rather than one empty line.
+--
+-- >> Decode.lines Decode.int "1\n2"
+-- Ok([1, 2]) : Result String (List Int)
+let lines d text = shell_lines d text

@@ -468,7 +468,7 @@ let read_path_body s prefix =
 
 (* ── Globs ──────────────────────────────────────────────────────────────── *)
 
-(* What separates a glob from a path, held here so `String.to_glob` and the
+(* What separates a glob from a path, held here so `Glob.of_string` and the
    scanner answer the same question. `read_path_body` decides between the
    two by whether it saw a `*`, `?` or `[`, and this is that rule read from
    the other side: text with none of them is a path, and calling it a glob
@@ -497,7 +497,7 @@ let glob_error text =
    Note `,` and `;` are on this list. They are legal in a URL and illegal in
    a URL *literal*, which is not a contradiction: `read_url` stops at them
    because they are the punctuation of the expression the literal sits in,
-   and that is a rule about writing one down. `String.to_url` is the way to
+   and that is a rule about writing one down. `URL.of_string` is the way to
    spell the ones the literal cannot, and it is the reason this predicate is
    separate from the scanner that ends the token. *)
 let is_url_char c =
@@ -511,10 +511,10 @@ let is_url_char c =
       | _ -> false)
 
 (* Whether text is a URL, and why not when it is not. The one place that
-   decides, so a literal, `String.to_url` and `Decode.url` cannot disagree
+   decides, so a literal, `URL.of_string` and `Decode.url` cannot disagree
    about the same text -- the same reason `read_port` holds the port range.
 
-   `String.to_url` used to decide by handing the string back to the lexer and
+   `URL.of_string` used to decide by handing the string back to the lexer and
    asking whether it came out as a single URL token. That made the literal's
    punctuation rule into a rule about URLs themselves: `https://x/a?b=1,2` is
    a perfectly good URL, and there was no way to build one, because the
@@ -595,7 +595,7 @@ let read_url s scheme =
     Buffer.add_char buf (advance s)
   done;
   let text = Buffer.contents buf in
-  (* Checked here as well as in `String.to_url`, so the literal is not the
+  (* Checked here as well as in `URL.of_string`, so the literal is not the
      more permissive of the two. A literal cannot hold a space -- the loop
      above ends at one -- but it can reach `|` and `^`, and a value the
      checked constructor rejects should not be writable straight into the
@@ -605,7 +605,7 @@ let read_url s scheme =
 
 (* ── Versions ───────────────────────────────────────────────────────────── *)
 
-(* The grammar `String.to_version` and `Decode.version` are checked against,
+(* The grammar `Version.of_string` and `Decode.version` are checked against,
    held here for the reason `url_error` and the port range are: one rule, so
    three readers of the same text cannot disagree about it.
 
@@ -779,7 +779,7 @@ let is_instant_char c =
    that turns one into seconds maps any numbers to some instant, so
    `2024-02-30` came back as March the 1st and `T25:61:61Z` as the next
    day: a typo in a date read as a different date. Checked here, where
-   both the literal and `String.to_datetime` read one. *)
+   both the literal and `DateTime.of_string` read one. *)
 let instant_error text =
   let n = String.length text in
   let num at len =
@@ -908,7 +908,7 @@ let read_numeric s first_char =
               Buffer.add_char pre (advance s)
             done;
             let text = base ^ Buffer.contents pre in
-            (* Checked against the same grammar `String.to_version` uses, for
+            (* Checked against the same grammar `Version.of_string` uses, for
                the reason the URL literal is: the literal must not be able to
                write a value the checked constructor would refuse. It used to
                admit `_` in a prerelease and a leading zero in a number, and
@@ -1085,7 +1085,7 @@ let read_ident s first_char =
 
 (* A port is a number from 0 to 65535. Outside that it is not a port, and a
    program that says so is wrong about something. Checked here rather than at
-   each reader, so a literal, `String.to_port` and `Decode.port` cannot
+   each reader, so a literal, `Port.of_string` and `Decode.port` cannot
    disagree about the same number -- they all come through this. *)
 let read_port s =
   let buf = Buffer.create 5 in

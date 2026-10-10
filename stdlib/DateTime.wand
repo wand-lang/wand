@@ -1,3 +1,5 @@
+import Result
+
 -- Taking an instant apart, and building one.
 --
 -- There is one instant type and one resolution, the second. `2026-08-22`
@@ -109,6 +111,20 @@ let date_string d = dt_date_string d
 -- >> DateTime.time_string 2026-08-22T14:30:00Z
 -- "14:30:00" : String
 let time_string d = dt_time_string d
+
+-- Read an instant, written either way: "2024-01-15T14:30:00Z" or the bare
+-- day "2024-01-15", which is midnight UTC.
+--
+-- >> DateTime.of_string "2026-08-22"
+-- Ok(2026-08-22T00:00:00Z) : Result String DateTime
+let of_string s = str_to_datetime s
+
+-- The same as `DateTime.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> DateTime.of_string! "2026-08-22"
+-- 2026-08-22T00:00:00Z : DateTime
+let of_string! s = Result.get! (of_string s)
 
 implement Ord DateTime =
   -- The larger of two instants.

@@ -29,17 +29,17 @@ test "to_ms 500ms" (fn t -> t.eq 500 (Duration.to_ms 500ms))
 -- ── add ─────────────────────────────────────────────────────────────────
 
 test "add hours + minutes" (fn t ->
-  t.eq "1h30m" (Duration.format (Duration.add (Duration.hours 1) (Duration.minutes 30))))
+  t.eq "1h30m" (Duration.format (Duration.hours 1 + Duration.minutes 30)))
 test "add seconds + seconds" (fn t ->
-  t.eq "1m15s" (Duration.format (Duration.add (Duration.seconds 30) (Duration.seconds 45))))
-test "add zero" (fn t -> t.eq "5m" (Duration.format (Duration.add 5min Duration.zero)))
+  t.eq "1m15s" (Duration.format (Duration.seconds 30 + Duration.seconds 45)))
+test "add zero" (fn t -> t.eq "5m" (Duration.format (5min + Duration.zero)))
 
 -- ── sub ─────────────────────────────────────────────────────────────────
 
 test "sub hours - minutes" (fn t ->
-  t.eq "1h30m" (Duration.format (Duration.sub (Duration.hours 2) (Duration.minutes 30))))
+  t.eq "1h30m" (Duration.format (Duration.hours 2 - Duration.minutes 30)))
 test "sub clamp to zero" (fn t ->
-  t.eq "0s" (Duration.format (Duration.sub (Duration.minutes 1) (Duration.hours 1))))
+  t.eq "0s" (Duration.format (Duration.minutes 1 - Duration.hours 1)))
 
 -- ── scale ───────────────────────────────────────────────────────────────
 
@@ -80,14 +80,13 @@ test "the three relations agree" (fn t ->
 -- ── + and - ─────────────────────────────────────────────────────────────
 
 test "the operator adds" (fn t -> t.eq 1h30m (1h + 30min))
-test "and matches Duration.add" (fn t -> t.eq (Duration.add 1h 30min) (1h + 30min))
 test "the operator subtracts" (fn t -> t.eq 30min (1h - 30min))
 test "a difference below zero floors" (fn t -> t.eq 0s (5s - 10s))
 
 -- A duration too large for an Int is an Error when it is read, not a value
 -- that raises the first time it is used.
 test "reading one too large is an Error" (fn t ->
-  t.ok (Result.error? (String.to_duration "9999999999999999999h")))
+  t.ok (Result.error? (Duration.of_string "9999999999999999999h")))
 
 -- A Duration is 0s or more. A negative count used to come back as its size
 -- with no sign: `Duration.seconds (-5)` was 5s.

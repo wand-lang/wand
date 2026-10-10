@@ -7,7 +7,7 @@ import Result
 -- what it is; this module carries what it holds.
 --
 -- Every accessor is total. The value is a URL already -- a literal, or
--- String.to_url having checked one -- so a part it does not have answers ""
+-- URL.of_string having checked one -- so a part it does not have answers ""
 -- or None rather than an error. `https://example.com` has no port, no query
 -- and no fragment, and none of that is a failure.
 
@@ -129,10 +129,9 @@ let to_string u = url_to_str u
 
 -- The URL that text spells, or an error saying what is wrong with it.
 --
--- The same function as String.to_url, named from this side. A URL holding a
--- `,` or a `;` can only be built this way: both are legal in a URL and end a
--- URL *literal*, because they are the punctuation of the expression around
--- it.
+-- A URL holding a `,` or a `;` can only be built this way: both are legal
+-- in a URL and end a URL *literal*, because they are the punctuation of the
+-- expression around it.
 --
 -- >> URL.of_string "https://example.com/a?b=1,2"
 -- Ok(https://example.com/a?b=1,2) : Result String URL

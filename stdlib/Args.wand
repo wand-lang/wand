@@ -39,7 +39,7 @@ let _name_of arg = String.slice 2 (String.length arg) arg
 
 -- `--key=value` is unambiguous on its own. Anything else needs to know
 -- whether the flag takes a value, which is the one fact a list of strings
--- cannot supply -- hence `parse_with`.
+-- cannot supply. A `Parser` carries it, as its `spec`.
 let _inline? arg = String.contains? "=" arg
 
 let _inline_pair arg =
@@ -80,7 +80,7 @@ let _object_of_spec spec args =
   let set k v (fields, repeats) =
     if _repeated? spec k
     then (fields,
-          Map.update k [] (fn vs -> List.append vs [v]) repeats)
+          Map.update k [] (fn vs -> List.concat vs [v]) repeats)
     else (Map.set k (JSON.of_string v) fields, repeats)
   in let go acc positional args =
     match args with
@@ -88,8 +88,8 @@ let _object_of_spec spec args =
     -- `--` ends the flags. What follows is positional whatever it looks
     -- like, which is the only way to pass an argument that begins with two
     -- dashes.
-    | ["--" :: rest] -> Ok(acc, List.append positional rest)
-    | [arg :: rest] when !(_flag? arg) -> go acc (List.append positional [arg]) rest
+    | ["--" :: rest] -> Ok(acc, List.concat positional rest)
+    | [arg :: rest] when !(_flag? arg) -> go acc (List.concat positional [arg]) rest
     -- Only flags get past the guard above, so `=` here means `--key=value`.
     | [arg :: rest] when _inline? arg -> (
       let (k, v) = _inline_pair arg in go (set k v acc) positional rest
@@ -126,39 +126,11 @@ let _object_of_spec spec args =
         (Map.set _positional_key (JSON.of_list (List.map JSON.of_string positional)) gathered)
     ))
 
-let _object_of flags args =
-  _object_of_spec (Map.from_list (List.map (fn f -> (f, "switch")) flags)) args
-
 -- ── Parsing ─────────────────────────────────────────────────────────────
 
--- Read arguments, naming the flags that take no value. Those become
--- `true` when present, and are absent otherwise -- and a `Bool` field a
--- document does not carry reads as `false`, so a switch needs nothing
--- else said about it.
---
--- Args.parse_with ["verbose"] Opts.decoder (Proc.args ())
---
--- Which flags are boolean is the only fact a list of strings cannot
--- reveal: without it, `--message -5` and a flag followed by a positional
--- are the same shape. Everything else the type already says -- including
--- this one, which is what `read` is for: a list written by hand drifts
--- the way any second copy does.
---
--- >> Args.parse_with ["v"] (Decode.field "v" Decode.bool) ["--v"]
--- Ok(true) : Result String Bool
---
--- Without the declaration the same flag is read as one that wants a value:
---
--- >> Args.parse (Decode.field "v" Decode.bool) ["--v"]
--- Error("--v expects a value") : Result String Bool
-let parse_with flags decoder args =
-  _object_of flags args |> Result.and_then (JSON.decode decoder)
-
 -- Read arguments with a decoder. Every flag is assumed to take a value:
--- `--port 8080` and `--port=8080` are the same thing. Use `parse_with`
--- when some flags are on/off.
---
--- `--port 8080` and `--port=8080` are the same argument written twice:
+-- `--port 8080` and `--port=8080` are the same argument written twice. Use
+-- `read` when some flags are on/off:
 --
 -- >> Args.parse (Decode.field "port" Decode.port) ["--port", "8080"]
 -- Ok(:8080) : Result String Port
@@ -171,7 +143,8 @@ let parse_with flags decoder args =
 --
 -- >> Args.parse (Decode.optional "port" Decode.port) []
 -- Ok(None) : Result String (Option Port)
-let parse decoder args = parse_with [] decoder args
+let parse decoder args =
+  _object_of_spec Map.empty args |> Result.and_then (JSON.decode decoder)
 
 -- Read arguments against a type's own account of its command line.
 --

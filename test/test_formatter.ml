@@ -1267,7 +1267,7 @@ let test_a_wide_arm_chain_goes_below () =
      \  match s with\n\
      \  | \"\" -> Ok 0\n\
      \  | s ->\n\
-     \    String.to_int s\n\
+     \    Int.of_string s\n\
      \    |> Result.map (fn n -> if n >= 0 then (n * 1000000, 1) else (1, n * 1000000000))\n"
   in
   Alcotest.(check string) "the layout is kept" src (fmt src);
@@ -1276,11 +1276,11 @@ let test_a_wide_arm_chain_goes_below () =
     "let f () =\n\
      \  handle g () with\n\
      \  | Shell!run cmd k ->\n\
-     \    String.to_int cmd\n\
+     \    Int.of_string cmd\n\
      \    |> Result.map (fn n -> if n >= 0 then (n * 1000000, 1) else (1, n * 1000000000))\n"
   in
   assert_contains "a handle arm too" (fmt handle_src)
-    "| Shell!run cmd k ->\n    String.to_int cmd\n    |> Result.map";
+    "| Shell!run cmd k ->\n    Int.of_string cmd\n    |> Result.map";
   assert_idempotent "a wide handle arm chain" handle_src
 
 (* A chain of `&&` or `||` too wide for its line breaks as a pipeline does,

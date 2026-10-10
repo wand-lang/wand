@@ -358,7 +358,7 @@ today at midnight is `Clock.now () |> DateTime.day_start`.
 - Inside a command, `%{x}` splices a value quoted as one argument — use it for data. `%!{x}` splices text to be read *as shell source* — only for text that is deliberately shell (a flag string, a pipeline fragment).
 - `report |> $?(mail ops@example.com)` pipes the left value to the command's stdin.
 - `Shell.stream cmd` reads a command's output line by line — the answer for `tail -f` and friends, which `$()` cannot bound. Stopping the read kills the command; an early stop ignores its exit code.
-- Parse captures with `Shell.lines`, `Shell.decode` — not by hand.
+- Parse captures with `Decode.lines`, `Decode.run` — not by hand.
 
 ### Names and errors
 
@@ -380,7 +380,7 @@ reaches the world does run. That is what lets `test/wand/test_ports.wand`
 test `examples/ports/` without running any of them.
 
 Stdlib modules: List, String, Regex, Map, FS, Resource, Stream, Path, IO,
-Float, Int, Proc, Env, CSV, JSON, TOML, YAML, Duration, Size, Clock,
+Bool, Float, Int, Proc, Env, CSV, JSON, TOML, YAML, Duration, Size, Clock,
 DateTime, Par, Shell, Decode, Args, Test, Option, Result, Hash, Digest,
 Base64, HTTP, URL, Glob, IPv4, CIDR, Port, Version, Random, Shared, Net. Every function
 comes from a module: printing is

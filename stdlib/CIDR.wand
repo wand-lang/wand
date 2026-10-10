@@ -72,8 +72,6 @@ let to_string net = cidr_to_str net
 
 -- The network that text spells, or an error saying why it is not one.
 --
--- The same function as String.to_cidr, named from this side.
---
 -- >> CIDR.of_string "10.0.0.0/8"
 -- Ok(10.0.0.0/8) : Result String CIDR
 --

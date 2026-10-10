@@ -211,15 +211,15 @@ test "text that is not a URL says why" (fn t ->
 
 -- ── the constructor, and the decoder ───────────────────────────────────
 
--- `String.to_url` used to decide by handing the text back to the lexer and
+-- `URL.of_string` used to decide by handing the text back to the lexer and
 -- asking whether it came out as one URL token. That turned the literal's
 -- punctuation rule into a rule about URLs, so a legal URL had no way to be
 -- built, and it answered the lexer's complaint rather than its own.
-test "String.to_url and URL.of_string are the same function" (fn t ->
-  t.eq (String.to_url "https://a.com/a?b=1,2") (URL.of_string "https://a.com/a?b=1,2"))
+test "URL.of_string and URL.of_string are the same function" (fn t ->
+  t.eq (URL.of_string "https://a.com/a?b=1,2") (URL.of_string "https://a.com/a?b=1,2"))
 
 test "a scheme that is not http says so, in its own words" (fn t ->
-  match String.to_url "ftp://a.com" with
+  match URL.of_string "ftp://a.com" with
   | Ok _ -> t.ok false
   | Error e -> t.ok (String.contains? "begins with http:// or https://" e))
 

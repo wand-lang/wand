@@ -178,7 +178,7 @@ let test_foreign_members () =
   expect_error "FS.read_lines" "import FS\nFS.read_lines /tmp/x"
     "FS.read_file! reads the whole file";
   expect_error "int_of_string" "int_of_string \"4\""
-    "String.to_int reads an Int out of a String"
+    "Int.of_string reads an Int out of a String"
 
 let test_discovery_pointers () =
   (* When no correction is known, the error hands over the enumerator --

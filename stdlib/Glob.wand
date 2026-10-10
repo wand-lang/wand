@@ -46,10 +46,9 @@ let to_string g = glob_to_str g
 
 -- The glob that text spells, or an error saying why it is not one.
 --
--- The same function as String.to_glob, named from this side. It is the only
--- way to build a glob from text, and the only way to write one that begins
--- with a bare name: `src/**/*.ts` as a literal reads as a variable called
--- `src`, so a literal has to be written `./src/**/*.ts`.
+-- It is the only way to build a glob from text, and the only way to write
+-- one that begins with a bare name: `src/**/*.ts` as a literal reads as a
+-- variable called `src`, so a literal has to be written `./src/**/*.ts`.
 --
 -- Text with no `*`, `?` or `[` is refused. It names one file, which is what
 -- a Path is for.

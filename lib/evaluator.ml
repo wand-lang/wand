@@ -1115,7 +1115,7 @@ let ambient_net_allow : string list option Domain.DLS.key =
 
 (* The `Net(...)` bound of the file whose top level is running. A URL
    literal carries the bound of the file it was written in; a URL the run
-   computed -- `String.to_url`, `URL.join` -- has no literal to carry one,
+   computed -- `URL.of_string`, `URL.join` -- has no literal to carry one,
    so it takes this one when it is made, and a request built from an
    unbounded URL at an unbounded site (the standard library's `HTTP.get`)
    is checked against it at the send. The runner sets it around a program's
@@ -4179,7 +4179,7 @@ let to_domain ?shown name build s =
 
 (* An `Ok` from `to_domain` whose value cannot be used -- a Size or a
    Duration too large for an Int -- turned into the `Error` using it would
-   raise. `String.to_duration "9999999999999999999h"` answered `Ok`, and the
+   raise. `Duration.of_string "9999999999999999999h"` answered `Ok`, and the
    value raised at the first comparison. *)
 let checked_domain check r =
   match r with
@@ -4537,7 +4537,7 @@ let url_resolve base reference =
                  && String.sub reference 0 (String.length p) = p in
   if reference = "" then Ok base
   (* An absolute reference is a URL in its own right and is checked as one,
-     so `URL.join` cannot produce something `String.to_url` would refuse. *)
+     so `URL.join` cannot produce something `URL.of_string` would refuse. *)
   else if starts "http://" || starts "https://" then
     (match Lexer.url_error reference with
      | None -> Ok reference
@@ -4660,7 +4660,7 @@ let expected what path j =
 (* A decoder reads a value out of text, and never the other way round.
    Backends that carry types -- JSON, TOML -- hand over an Int as an Int;
    backends that do not -- a CSV cell, a line of output -- hand over the
-   text, and `Decode.int` reads it exactly as `String.to_int` would. So one
+   text, and `Decode.int` reads it exactly as `Int.of_string` would. So one
    decoder serves a document and a command's output both.
 
    The reverse is not allowed: `Decode.string` does not accept a number and
@@ -6069,7 +6069,7 @@ let stdlib_eval_env : env = [
       (match String.split_on_char '.' a with
        | [w; x; y; z] ->
          VTuple (List.map (fun p -> VInt (int_of_string p)) [w; x; y; z])
-       (* Unreachable: the literal and `String.to_ipv4` both require four. *)
+       (* Unreachable: the literal and `IPv4.of_string` both require four. *)
        | _ -> raise (EvalError ("ipv4_octets: not four octets: " ^ a)))
     | _ -> raise (EvalError "ipv4_octets: expected IPv4")));
   (* The address as the number it is. Every question about a network -- what
@@ -6762,16 +6762,6 @@ let stdlib_eval_env : env = [
   ("dur_weeks",   VBuiltin (function
     | VInt n -> duration_of_ms (mul_ovf n 604800000)
     | _ -> raise (EvalError "dur_weeks: expected Int")));
-  ("dur_add", VBuiltin (function
-    | VDuration a -> VBuiltin (function
-      | VDuration b -> VDuration (format_dur_ms (add_ovf (parse_dur_ms a) (parse_dur_ms b)))
-      | _ -> raise (EvalError "dur_add: expected Duration"))
-    | _ -> raise (EvalError "dur_add: expected Duration")));
-  ("dur_sub", VBuiltin (function
-    | VDuration a -> VBuiltin (function
-      | VDuration b -> VDuration (format_dur_ms (max 0 (parse_dur_ms a - parse_dur_ms b)))
-      | _ -> raise (EvalError "dur_sub: expected Duration"))
-    | _ -> raise (EvalError "dur_sub: expected Duration")));
   ("dur_scale", VBuiltin (function
     | VInt n -> VBuiltin (function
       | VDuration d -> duration_of_ms (mul_ovf n (parse_dur_ms d))

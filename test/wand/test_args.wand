@@ -57,7 +57,14 @@ test "a missing flag names the field" (fn t ->
 
 -- ── Flags that take no value ────────────────────────────────────────────
 
-let verbose args = Args.parse_with ["verbose"] (Decode.optional "verbose" Decode.bool) args
+let verbose args =
+  Args.read
+    Args.Parser(
+      spec = {verbose = "switch"},
+      reader = Decode.optional "verbose" Decode.bool,
+      usage = ""
+    )
+    args
 
 test "a named boolean flag is true when present" (fn t ->
   t.eq (Ok (Some true)) (verbose ["--verbose"]))
@@ -65,7 +72,7 @@ test "a named boolean flag is true when present" (fn t ->
 test "and absent otherwise" (fn t -> t.eq (Ok None) (verbose []))
 
 -- Without the name, a flag takes whatever follows -- which is the whole
--- reason `parse_with` exists.
+-- reason a `Parser` carries a spec.
 test "an undeclared flag consumes the next argument" (fn t ->
   t.eq
     (Ok (Some "deploy.wand"))
@@ -139,7 +146,13 @@ test "and what came before it is still positional" (fn t ->
   t.eq (Ok ["a", "--b"]) (Args.parse _rest ["a", "--", "--b"]))
 
 test "a flag before it is still a flag" (fn t ->
-  t.eq (Ok true) (Args.parse_with ["v"] (Decode.field "v" Decode.bool) ["--v", "--", "x"]))
+  t.eq
+    (Ok true)
+    (Args.read Args.Parser(spec = {v = "switch"}, reader = Decode.field "v" Decode.bool, usage = "") [
+      "--v",
+      "--",
+      "x"
+    ]))
 
 test "`--` alone leaves nothing after it" (fn t -> t.eq (Ok []) (Args.parse _rest ["--"]))
 

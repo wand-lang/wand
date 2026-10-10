@@ -1,3 +1,5 @@
+import Result
+
 -- The port number, without the colon.
 --
 -- The colon is the literal's punctuation, and it stays in every string a
@@ -21,6 +23,19 @@ let to_int p = port_to_int p
 -- >> Port.of_int 70000
 -- Error("invalid port 70000: must be 0-65535") : Result String Port
 let of_int n = port_of_int n
+
+-- Read a port, written as a literal is: ":8080".
+--
+-- >> Port.of_string ":8080"
+-- Ok(:8080) : Result String Port
+let of_string s = str_to_port s
+
+-- The same as `Port.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Port.of_string! ":8080"
+-- :8080 : Port
+let of_string! s = Result.get! (of_string s)
 
 implement Ord Port =
   -- The larger of two Ports.

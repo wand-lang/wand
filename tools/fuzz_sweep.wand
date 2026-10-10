@@ -3,6 +3,7 @@ uses {Env, FS.Read, FS.Write, IO, Proc, Shell}
 import Env
 import FS
 import IO
+import Int
 import List
 import Option
 import Par
@@ -45,7 +46,7 @@ let fuzz_exe =
 -- refuses over a typo.
 let int_env name fallback =
   Env.get name
-  |> Option.and_then (fn s -> String.to_int s |> Result.to_option)
+  |> Option.and_then (fn s -> Int.of_string s |> Result.to_option)
   |> Option.default fallback
 
 -- Six seeds of five minutes each finds what one seed of thirty does not:

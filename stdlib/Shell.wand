@@ -2,18 +2,6 @@ uses {Clock, Shell}
 
 import Resource
 
--- Reading what a command wrote.
---
--- A command's output has no types of its own -- it is text, and the shape
--- is whatever the command decided. These two run a decoder over it, so the
--- reading is done in one place with a message that says what was wrong,
--- rather than by a chain of scrapes that each assume the last one worked.
---
---     let ahead = Shell.decode Decode.int $(git rev-list --count HEAD)
---
--- `Decode.int` reads the digits, because a decoder reads a value out of
--- text. See `Decode`.
-
 -- Whether a command succeeded: its exit code is zero.
 --
 -- `$?(cmd)` gives a `ShellResult`, and the first thing a script asks of
@@ -34,19 +22,6 @@ let ok? (r: ShellResult) = r.code == 0
 -- >> Shell.failed? $?(exit 3)
 -- true : Bool
 let failed? (r: ShellResult) = r.code != 0
-
--- Read the whole capture as one value, ignoring surrounding whitespace.
---
--- >> Shell.decode Decode.int $?(echo 42).stdout
--- Ok(42) : Result String Int
-let decode d out = shell_decode d out
-
--- Read one value per line. `$()` strips the trailing newline, so a capture
--- with nothing in it is no lines rather than one empty line.
---
--- >> Shell.lines Decode.int "1\n2"
--- Ok([1, 2]) : Result String (List Int)
-let lines d out = shell_lines d out
 
 -- Run `thunk` with a deadline on each command it runs. A command that has
 -- not finished in `d` is sent SIGTERM, and SIGKILL five seconds later.

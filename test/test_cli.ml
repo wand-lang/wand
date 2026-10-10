@@ -849,9 +849,9 @@ let test_wand_d_marks_interfaces () =
     let (code, out) = wand_out ~dir:d ["d"; "Int"] in
     Alcotest.(check int) "it lists" 0 code;
     Alcotest.(check bool) "a member of Ord is marked" true
-      (contains_sub out "Int.max       : Int -> Int -> Int [Ord]");
+      (contains_sub out "Int.max        : Int -> Int -> Int [Ord]");
     Alcotest.(check bool) "and one that is not is left alone" true
-      (contains_sub out "Int.abs       : Int -> Int\n");
+      (contains_sub out "Int.abs        : Int -> Int\n");
     (* One member on its own puts it on the signature, where the index puts
        it too, rather than in a slot of its own. *)
     let (_, out) = wand_out ~dir:d ["d"; "Int.max"] in
@@ -860,7 +860,7 @@ let test_wand_d_marks_interfaces () =
     (* The index carries it, and `--json` carries it as a field. *)
     let (_, out) = wand_out ~dir:d ["d"; "--index"] in
     Alcotest.(check bool) "the index carries it" true
-      (contains_sub out "Size.max      : Size -> Size -> Size [Ord]");
+      (contains_sub out "Size.max        : Size -> Size -> Size [Ord]");
     let (_, out) = wand_out ~dir:d ["d"; "--index"; "--json"] in
     Alcotest.(check bool) "as a field" true
       (contains_sub out "\"name\":\"Int.max\",\"type\":\"Int -> Int -> Int\",\"implements\":[\"Ord\"]");

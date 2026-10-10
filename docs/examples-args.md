@@ -57,11 +57,11 @@ one splits, so a value is free to contain more of them.
 
 Every flag is assumed to take a value, because whether it does is the one
 fact a list of strings cannot reveal: without being told, `--message -5` and
-a flag followed by a positional argument are the same shape. Name the ones
-that do not.
+a flag followed by a positional argument are the same shape. The type says
+which ones do not: a `Bool` field is a switch, and `Opts.parser` carries
+that to `Args.read`.
 
-An absent flag leaves its field missing rather than false, so the field is an
-`Option`.
+An absent switch reads as `false`.
 
 ```
 uses {IO}
@@ -69,14 +69,11 @@ uses {IO}
 import Args
 import IO
 import Proc
-import Option
 
-type Opts(verbose: Option Bool, force: Option Bool, target: String)
+type Opts(verbose: Bool = false, force: Bool = false, target: String)
 
-let on flag = Option.default false flag
-
-match Args.parse_with ["verbose", "force"] Opts.decoder (Proc.args ()) with
-| Ok o -> IO.println "target=%{o.target} verbose=%{on o.verbose} force=%{on o.force}"
+match Args.read Opts.parser (Proc.args ()) with
+| Ok o -> IO.println "target=%{o.target} verbose=%{o.verbose} force=%{o.force}"
 | Error e -> IO.println_err "usage: %{e}"
 ```
 
@@ -252,7 +249,9 @@ let job = (Decode.map2
   Flags.decoder
   (Decode.field "_" (Decode.list Decode.path)))
 
-match Args.parse_with ["rehearse"] job (Proc.args ()) with
+let parser = Args.Parser(spec = {rehearse = "switch"}, reader = job, usage = "")
+
+match Args.read parser (Proc.args ()) with
 | Ok (f, ps) ->
   let mode = if Option.default false f.rehearse then "rehearsing" else "running" in
   IO.println "%{mode} %{List.length ps} file(s) -> %{f.out} within %{f.timeout}"

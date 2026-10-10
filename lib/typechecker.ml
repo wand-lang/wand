@@ -7,7 +7,7 @@ open Ast
    still imports and runs -- it just becomes invisible to the tools, which is
    how `Test` went a long time with unreachable doc strings. *)
 let stdlib_module_names =
-  [ "List"; "String"; "Path"; "FS"; "IO"; "Float"; "Duration"; "Env"; "Map";
+  [ "Bool"; "List"; "String"; "Path"; "FS"; "IO"; "Float"; "Duration"; "Env"; "Map";
     "Regex"; "JSON"; "TOML"; "CSV"; "Option"; "Par"; "Resource"; "Stream";
     "Proc"; "Decode"; "Shell"; "Test"; "Args"; "Clock"; "Size"; "Port";
     "DateTime"; "Result"; "URL"; "Version"; "Glob"; "IPv4"; "CIDR";
@@ -1244,7 +1244,7 @@ let foreign_name_hint = function
                   'match x with | None -> ...'"
   | "begin" -> Some "expressions group with parentheses, not \
                      'begin ... end'"
-  | "int_of_string" -> Some "String.to_int reads an Int out of a String \
+  | "int_of_string" -> Some "Int.of_string reads an Int out of a String \
                              (as a Result); String.of_int goes the other way"
   | "string_of_int" | "string_of_float" ->
     Some "interpolation makes strings of anything: \"%{n}\""
@@ -1279,9 +1279,36 @@ let foreign_member_hint ns member =
     Some "the comparisons sit on each ordered type; write 'Int.max', \
           'Duration.min', 'Path.between?' etc. `Ord` declares the interface \
           they answer to"
-  | "Shell", ("run" | "run!" | "exec" | "exec!") ->
-    Some "commands run with $(...); Shell only reads their output \
-          (Shell.decode, Shell.lines)"
+  | "Shell", ("exec" | "exec!") -> Some "commands run with $(...)"
+  | "Shell", ("decode" | "lines") ->
+    Some (Printf.sprintf "use Decode.%s"
+            (if member = "decode" then "run" else "lines"))
+  | "String", "to_path" -> Some "use Path.of_string"
+  | "String", ("to_int" | "to_int!" | "to_float" | "to_float!"
+              | "to_bool" | "to_bool!" | "to_glob" | "to_glob!"
+              | "to_url" | "to_url!" | "to_ipv4" | "to_ipv4!"
+              | "to_cidr" | "to_cidr!" | "to_port" | "to_port!"
+              | "to_version" | "to_version!" | "to_size" | "to_size!"
+              | "to_datetime" | "to_datetime!" | "to_duration"
+              | "to_duration!") ->
+    let bang = String.ends_with ~suffix:"!" member in
+    let base = if bang then String.sub member 3 (String.length member - 4)
+      else String.sub member 3 (String.length member - 3) in
+    let modname = match base with
+      | "int" -> "Int" | "float" -> "Float" | "bool" -> "Bool"
+      | "glob" -> "Glob" | "url" -> "URL" | "ipv4" -> "IPv4"
+      | "cidr" -> "CIDR" | "port" -> "Port" | "version" -> "Version"
+      | "size" -> "Size" | "datetime" -> "DateTime" | _ -> "Duration" in
+    Some (Printf.sprintf "use %s.of_string%s (import %s)" modname
+            (if bang then "!" else "") modname)
+  | "List", "append" -> Some "use List.concat"
+  | "Path", "dirname" -> Some "use Path.parent"
+  | "Duration", "add" -> Some "use +: '30s + 1min'"
+  | "Duration", "sub" -> Some "use -: '2min - 30s'"
+  | "HTTP", "header_list" -> Some "use HTTP.header, which gives an Option"
+  | "Args", "parse_with" ->
+    Some "use Args.read with a Parser; 'T.parser' makes one from a type"
+  | "Int", "divmod" -> Some "write '(a / b, a % b)'"
   | _ -> None
 
 (* Named in unbound-name errors that have nothing better to offer: the
@@ -5611,8 +5638,6 @@ let stdlib_type_env : env = [
   ("dur_hours",   generalize [] ((TInt @-> TDuration)));
   ("dur_days",    generalize [] ((TInt @-> TDuration)));
   ("dur_weeks",   generalize [] ((TInt @-> TDuration)));
-  ("dur_add",     generalize [] ((TDuration @-> (TDuration @-> TDuration))));
-  ("dur_sub",     generalize [] ((TDuration @-> (TDuration @-> TDuration))));
   ("dur_scale",   generalize [] ((TInt @-> (TDuration @-> TDuration))));
   ("dur_format",  generalize [] ((TDuration @-> TString)));
   ("dur_to_ms",   generalize [] ((TDuration @-> TInt)));

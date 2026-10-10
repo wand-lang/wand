@@ -1,13 +1,14 @@
+import Result
+
 -- The Int operations that are not operators.
 --
 -- Arithmetic is written with `+ - * / %`, so what is left here is the
 -- handful of things an operator does not spell: distance from zero,
--- repeated multiplication, the two halves of a division at once, and the
--- ends of the range.
+-- repeated multiplication, the ends of the range, and reading one from
+-- text.
 --
--- Conversions are not here. wand puts a conversion on the type it
--- produces, so `String.of_int` writes an Int as text and `Float.of_int`
--- widens one, each under the module that owns the answer.
+-- A conversion is on the type it produces. `Int.of_string` reads an Int,
+-- `String.of_int` writes one as text, and `Float.of_int` widens one.
 --
 -- An Int is a machine word holding `Int.min_value` to `Int.max_value`.
 -- Arithmetic outside that range is a runtime error rather than a wrap,
@@ -40,18 +41,6 @@ let abs n = if n < 0 then 0 - n else n
 let pow _ 0 = 1
 let pow b e = if e < 0 then 1 / pow b (0 - e) else b * pow b (e - 1)
 
--- The quotient and the remainder of a division, in one pass.
---
--- Both truncate toward zero, as `/` and `%` do on their own, so the
--- remainder takes the sign of the dividend.
---
--- >> Int.divmod 17 5
--- (3, 2) : (Int, Int)
---
--- >> Int.divmod (-17) 5
--- (-3, -2) : (Int, Int)
-let divmod a b = (a / b, a % b)
-
 -- The largest Int.
 --
 -- >> Int.max_value
@@ -66,6 +55,26 @@ let max_value = 4611686018427387903
 -- >> Int.min_value
 -- -4611686018427387904 : Int
 let min_value = 0 - max_value - 1
+
+-- Read an integer: an optional `-` and decimal digits, with the space
+-- around them ignored.
+--
+-- >> Int.of_string "42"
+-- Ok(42) : Result String Int
+--
+-- >> Int.of_string "x"
+-- Error("cannot parse \"x\" as Int") : Result String Int
+--
+-- >> Int.of_string "0x1F"
+-- Error("cannot parse \"0x1F\" as Int") : Result String Int
+let of_string s = str_to_int s
+
+-- The same as `Int.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Int.of_string! "42"
+-- 42 : Int
+let of_string! s = Result.get! (of_string s)
 
 implement Ord Int =
   -- The larger of two Ints.

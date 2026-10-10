@@ -1436,8 +1436,7 @@ let header_lines head =
 (* A header name is case-insensitive on the wire and a `Map` is not, so the
    module lowercases on the way in and the reference says so. A request
    cannot repeat a header, which is fine for requests; a response genuinely
-   repeats `Set-Cookie`, and the last one wins here until `HTTP.header_list`
-   exists to answer that shape properly. *)
+   repeats `Set-Cookie`, and the last one wins here. *)
 let parse_headers lines =
   List.filter_map (fun line ->
     match String.index_opt line ':' with

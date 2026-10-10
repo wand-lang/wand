@@ -1,6 +1,5 @@
 import Result
 import Size
-import String
 
 let {test} = import Test
 
@@ -43,6 +42,6 @@ test "a size too large raises" (fn t -> t.raises (fn () -> Size.to_bytes 9000000
 test "and compares by raising" (fn t -> t.raises (fn () -> 9000000000GB > 1KB))
 test "a sum past it raises" (fn t -> t.raises (fn () -> 4000PB + 1000PB))
 test "reading one is an Error" (fn t ->
-  t.ok (Result.error? (String.to_size "9999999999999999999GB")))
+  t.ok (Result.error? (Size.of_string "9999999999999999999GB")))
 
 test "a negative count of bytes raises" (fn t -> t.raises (fn () -> Size.of_bytes (0 - 5)))

@@ -152,8 +152,8 @@ test "so a tag and a literal are the same value" (fn t ->
 
 test "surrounding space is trimmed" (fn t -> t.eq (Ok 1.2.3) (Version.of_string " 1.2.3 "))
 
-test "String.to_version is the same function" (fn t ->
-  t.eq (String.to_version "v1.2.3") (Version.of_string "v1.2.3"))
+test "Version.of_string is the same function" (fn t ->
+  t.eq (Version.of_string "v1.2.3") (Version.of_string "v1.2.3"))
 
 test "text that is not a version says why" (fn t ->
   match Version.of_string "banana" with

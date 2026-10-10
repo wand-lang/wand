@@ -80,10 +80,9 @@ let to_string v = version_to_str v
 
 -- The version that text spells, or an error saying what is wrong with it.
 --
--- The same function as String.to_version, named from this side. It reads
--- two spellings a literal cannot: build metadata, because `+` is the
--- addition operator, and a leading `v`, because that is how a git tag and a
--- release note write a version. The `v` is dropped -- the spec's FAQ calls
+-- It reads two spellings a literal cannot: build metadata, because `+` is
+-- the addition operator, and a leading `v`, because that is how a git tag
+-- and a release note write a version. The `v` is dropped -- the spec's FAQ calls
 -- it a prefix and not part of the version -- so `v1.2.3` and `1.2.3` are
 -- one value, not two that print differently.
 --

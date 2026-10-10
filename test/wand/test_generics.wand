@@ -1,6 +1,6 @@
 let {test} = import Test
+import Int
 import Option
-import String
 
 -- ── Parsing generic type declarations ──────────────────────────────────
 
@@ -83,7 +83,7 @@ type ParseError = UnexpectedToken String | UnexpectedEof
 
 let gparse s : Result ParseError Int =
   if s == "" then Error UnexpectedEof
-  else match String.to_int s with
+  else match Int.of_string s with
     | Ok n -> Ok n
     | Error _ -> Error (UnexpectedToken s)
 

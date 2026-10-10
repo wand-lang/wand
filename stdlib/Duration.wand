@@ -1,3 +1,5 @@
+import Result
+
 -- The zero duration.
 --
 -- >> Duration.zero
@@ -37,26 +39,6 @@ let days n = dur_days n
 -- 2w : Duration
 let weeks n = dur_weeks n
 
--- Add two durations.
---
--- `+` adds two durations as well, and means this.
---
--- >> Duration.add 30s 1min
--- 1m30s : Duration
-let add a b = dur_add a b
-
--- Subtract one duration from another.
---
--- No duration is below zero, so a subtraction that would go under floors
--- there.
---
--- >> Duration.sub 2min 30s
--- 1m30s : Duration
---
--- >> Duration.sub 30s 2min
--- 0s : Duration
-let sub a b = dur_sub a b
-
 -- Multiply a duration by a scalar. A Duration is 0s or more, so a negative
 -- scalar, like a negative count given to `seconds` and the rest, is a
 -- runtime error.
@@ -80,6 +62,19 @@ let format d = dur_format d
 -- >> Duration.to_ms 2min
 -- 120000 : Int
 let to_ms d = dur_to_ms d
+
+-- Read a duration, written as a literal is: "5min", "1h30m".
+--
+-- >> Duration.of_string "1h30m"
+-- Ok(1h30m) : Result String Duration
+let of_string s = str_to_duration s
+
+-- The same as `Duration.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Duration.of_string! "1h30m"
+-- 1h30m : Duration
+let of_string! s = Result.get! (of_string s)
 
 implement Ord Duration =
   -- The larger of two Durations.

@@ -2,11 +2,11 @@ uses {IO, Proc}
 
 import Float
 import IO
+import Int
 import Proc
 import Regex
 import Result
 import Stream
-import String
 
 -- What share of the requests failed, and is that too many.
 --
@@ -28,7 +28,7 @@ type Tally(ok: Int, failed: Int)
 -- not a request, and is not counted either way.
 let status line =
   match Regex.capture r/" ([0-9]{3}) / line with
-  | [_, code] -> Result.to_option (String.to_int code)
+  | [_, code] -> Result.to_option (Int.of_string code)
   | _ -> None
 
 let count_into (tally: Tally) line =

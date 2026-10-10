@@ -1,3 +1,5 @@
+import Result
+
 -- Crossing between the two members of Num.
 --
 -- Arithmetic never converts on its own -- `1.5 + 1` is a type error --
@@ -60,6 +62,19 @@ let abs f = float_abs f
 -- >> Float.format 2 1.5
 -- "1.50" : String
 let format digits f = float_format digits f
+
+-- Read a float.
+--
+-- >> Float.of_string "1.5"
+-- Ok(1.5) : Result String Float
+let of_string s = str_to_float s
+
+-- The same as `Float.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Float.of_string! "1.5"
+-- 1.5 : Float
+let of_string! s = Result.get! (of_string s)
 
 implement Ord Float =
   -- The larger of two Floats.

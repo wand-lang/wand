@@ -39,7 +39,7 @@ For what wand is and why, see the [README](../README.md).
 - [Packages](#packages)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
-  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result) · [Wand](#wand)
+  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Bool](#bool) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result) · [Wand](#wand)
 - [Testing](#testing)
 - [Comments](#comments)
 - [Style for scripts](#style-for-scripts)
@@ -138,8 +138,7 @@ scaling one by a number is a third type in the operator, which
 A sum of sizes is written in bytes, because a `Size` holds one unit and
 `100MB + 4KB` fills two. [`Size.format`](#size) is the readable spelling.
 Neither type has a value below zero, so a subtraction that would go under
-floors there: `5s - 10s` is `0s`, the answer
-[`Duration.sub`](#duration) already gives.
+floors there: `5s - 10s` is `0s`.
 
 ### Comparison and `Ord`
 
@@ -2617,15 +2616,15 @@ failure gives the rule, not only the refusal:
 .port: invalid port :65536: must be 0-65535
 ```
 
-That rule lives in one place, so a literal, `String.to_port` and
-`String.to_ipv4` all report it the same way, and `String.to_port` accepts
+That rule lives in one place, so a literal, `Port.of_string` and
+`IPv4.of_string` all report it the same way, and `Port.of_string` accepts
 the same two spellings.
 
 ### Text is read, never written
 
 A backend that carries types gives an `Int` as an `Int`. A backend without
 types gives the text, as a CSV cell does, or a line of output. Then
-`Decode.int` reads it as `String.to_int` reads it. So one decoder serves a
+`Decode.int` reads it as `Int.of_string` reads it. So one decoder serves a
 document and the output of a command:
 
 ```ocaml
@@ -2650,13 +2649,13 @@ above are the whole surface. Only the source of the data changes:
 JSON.decode  : Decoder 'a -> JSON   -> Result String 'a
 TOML.decode  : Decoder 'a -> TOML   -> Result String 'a
 CSV.rows     : Decoder 'a -> String -> Result String (List 'a)
-Shell.decode : Decoder 'a -> String -> Result String 'a
-Shell.lines  : Decoder 'a -> String -> Result String (List 'a)
+Decode.run : Decoder 'a -> String -> Result String 'a
+Decode.lines  : Decoder 'a -> String -> Result String (List 'a)
 ```
 
 The first row of a CSV names its columns. So you read a row by field name,
 as you read any record. Use `CSV.parse` for a file with no header row. For
-`Shell.lines`, `$()` removes the trailing newline. So a capture with nothing in
+`Decode.lines`, `$()` removes the trailing newline. So a capture with nothing in
 it gives no lines, not one empty line.
 
 A backend that reads one record per row, or per line, first says which
@@ -3584,7 +3583,7 @@ type ParseError = UnexpectedToken String | UnexpectedEof
 
 let parse s : Result ParseError Int =
   if s == "" then Error UnexpectedEof
-  else match String.to_int s with
+  else match Int.of_string s with
   | Ok n    -> Ok n
   | Error _ -> Error (UnexpectedToken s)
 ```
@@ -4410,7 +4409,6 @@ filter_map : ('a -> Option 'b ! 'e) -> List 'a -> List 'b ! 'e
 fold_left  : ('a -> 'b -> 'a ! 'e) -> 'a -> List 'b -> 'a ! 'e
 fold_right : ('a -> 'b -> 'b ! 'e) -> List 'a -> 'b -> 'b ! 'e
 length     : List 'a -> Int
-append     : List 'a -> List 'a -> List 'a
 reverse    : List 'a -> List 'a
 head       : List 'a -> Option 'a
 head!      : List 'a -> 'a ! {Raise}
@@ -4498,31 +4496,6 @@ words        : String -> List String
 word         : Int -> String -> Option String
 word!        : Int -> String -> String ! {Raise}
 of_int       : Int -> String
-to_int       : String -> Result String Int
-to_int!      : String -> Int ! {Raise}
-to_float     : String -> Result String Float
-to_float!    : String -> Float ! {Raise}
-to_bool      : String -> Result String Bool
-to_bool!     : String -> Bool ! {Raise}
-to_path      : String -> Path
-to_glob      : String -> Result String Glob
-to_glob!     : String -> Glob ! {Raise}
-to_url       : String -> Result String URL
-to_url!      : String -> URL ! {Raise}
-to_ipv4      : String -> Result String IPv4
-to_ipv4!     : String -> IPv4 ! {Raise}
-to_cidr      : String -> Result String CIDR
-to_cidr!     : String -> CIDR ! {Raise}
-to_port      : String -> Result String Port
-to_port!     : String -> Port ! {Raise}
-to_version   : String -> Result String Version
-to_version!  : String -> Version ! {Raise}
-to_size      : String -> Result String Size
-to_size!     : String -> Size ! {Raise}
-to_datetime  : String -> Result String DateTime
-to_datetime! : String -> DateTime ! {Raise}
-to_duration  : String -> Result String Duration
-to_duration! : String -> Duration ! {Raise}
 max          : String -> String -> String
 min          : String -> String -> String
 clamp        : String -> String -> String -> String
@@ -4540,7 +4513,7 @@ String.lines "a\n\nb\n"    -- ["a", "", "b"]
 String.lines ""            -- []
 ```
 
-`Shell.lines` reads the same way, and `$()` strips the trailing newline
+`Decode.lines` reads the same way, and `$()` strips the trailing newline
 before either of them sees it.
 
 `word` reads one of what `words` would return, and follows the same rule: a
@@ -4562,30 +4535,33 @@ character in half. `truncate` is the one that will not:
 [A `String` is bytes](#a-string-is-bytes) says which functions are safe on
 any input and why the model is the right one.
 
-The `to_*` family reads a value as a script writes it. Each one returns a
-`Result` that names the rule the text broke:
+A type reads itself from text with `of_string`, in its own module:
+`Int.of_string`, `Bool.of_string`, `Duration.of_string`, `Port.of_string`
+and the others. A conversion is on the type it produces, so `String.of_int`
+is the one in this module. Each `of_string` reads a value as a script writes
+it, and returns a `Result` that names the rule the text broke:
 
 ```ocaml
-String.to_duration "30s"      -- Ok 30s
-String.to_ipv4 "256.0.0.1"    -- Error (invalid IPv4 address: each octet must be 0–255)
-String.to_port ":99999"       -- Error (invalid port :99999: must be 0-65535)
+Duration.of_string "30s"      -- Ok 30s
+IPv4.of_string "256.0.0.1"    -- Error (invalid IPv4 address: each octet must be 0–255)
+Port.of_string ":99999"       -- Error (invalid port :99999: must be 0-65535)
 ```
 
-`to_port` also takes the bare number. `"8080"` and `":8080"` both read. That
-is what an environment variable, a config file or a flag holds. `Decode.port`
-accepts both for the same reason.
+`Port.of_string` also takes the bare number. `"8080"` and `":8080"` both
+read. That is what an environment variable, a config file or a flag holds.
+`Decode.port` accepts both for the same reason.
 
 Each fallible one has a raising sibling, as every fallible function does. The
 `!` answers with the value and raises the reason the plain name would have
 returned, so `try` gives that `Result` back:
 
 ```ocaml
-String.to_port! ":8080"       -- :8080
-String.to_port! ":99999"      -- raises: invalid port :99999: must be 0-65535
-try (String.to_port! ":99999")  -- Error (invalid port :99999: must be 0-65535)
+Port.of_string! ":8080"       -- :8080
+Port.of_string! ":99999"      -- raises: invalid port :99999: must be 0-65535
+try (Port.of_string! ":99999")  -- Error (invalid port :99999: must be 0-65535)
 ```
 
-`to_path` has none, because it cannot fail: any text is a path.
+`Path.of_string` has none, because it cannot fail: any text is a path.
 
 ### `Regex`
 
@@ -4947,7 +4923,6 @@ A resource pairs an acquire with a release. Only `with` runs one. See
 join           : Path -> Path -> Path
 parent         : Path -> Path
 basename       : Path -> Path
-dirname        : Path -> Path
 extension      : Path -> String
 with_extension : String -> Path -> Path
 absolute?      : Path -> Bool
@@ -4962,7 +4937,7 @@ clamp          : Path -> Path -> Path -> Path
 between?       : Path -> Path -> Path -> Bool
 ```
 
-`basename` returns a `Path`, as `parent` and `dirname` do. A basename is a
+`basename` returns a `Path`, as `parent` does. A basename is a
 relative path of one segment. You usually join it onto a directory next:
 
 ```ocaml
@@ -5166,6 +5141,8 @@ on          : Int -> Int -> Int -> Result String DateTime
 on!         : Int -> Int -> Int -> DateTime ! {Raise}
 date_string : DateTime -> String
 time_string : DateTime -> String
+of_string   : String -> Result String DateTime
+of_string!  : String -> DateTime ! {Raise}
 max         : DateTime -> DateTime -> DateTime
 min         : DateTime -> DateTime -> DateTime
 clamp       : DateTime -> DateTime -> DateTime -> DateTime
@@ -5187,8 +5164,8 @@ Clock.now () |> DateTime.day_start            -- today at midnight
 `weekday` is ISO 8601: Monday is 1 and Sunday is 7. A number rather than a
 variant, because it sorts and compares.
 
-`on` is the only builder, and it answers a `Result` because `2026 2 30` is
-not a day. A time of day goes on top as a `Duration`, since a `Duration`
+`on` builds one from numbers, and `of_string` from text. `on` answers a
+`Result` because `2026 2 30` is not a day. A time of day goes on top as a `Duration`, since a `Duration`
 already moves an instant:
 
 ```ocaml
@@ -5320,7 +5297,7 @@ import Random
 let roll = Random.int 1 6                  -- both ends included
 let host = Random.choose pool              -- Option, because a list can be empty
 let order = Random.shuffle tests
-let wait = Duration.add 1s (Duration.seconds (Random.int 0 30))
+let wait = 1s + Duration.seconds (Random.int 0 30)
 ```
 
 `seed` pins what the run draws, and a run that pins nothing starts from the
@@ -5501,7 +5478,6 @@ upload   : URL -> Path -> Result String HTTPResponse ! {FS.Read, Net}
 upload!  : URL -> Path -> HTTPResponse ! {FS.Read, Net, Raise}
 ok?      : HTTPResponse -> Bool
 header      : String -> HTTPResponse -> Option String
-header_list : String -> HTTPResponse -> List String
 decode   : Decoder 'a -> HTTPResponse -> Result String 'a
 serve!   : Server -> (Incoming -> HTTPResponse ! {Clock, Raise | 'e}) -> Unit ! {Clock, Net.Listen, Raise | 'e}
 reply       : Int -> String -> HTTPResponse
@@ -5567,15 +5543,15 @@ than a convenience.
 `FS.Read` and `download` declares `FS.Write`. A body that will not fit in
 memory has no answer yet.
 
-`decode` reads a body as one value, the way `Shell.decode` reads a capture.
+`decode` reads a body as one value, the way `Decode.run` reads any text.
 There is no `get_json`: the reading happens in one place, with a message
 that says what was wrong, rather than a chain of scrapes that each assume
 the last one worked.
 
 Header names are lowercased, because they are case-insensitive on the wire
-and a `Map` is not. `header` answers the last value of a name; a response
-that repeats one — `set-cookie` is the case that matters — is read with
-`header_list`.
+and a `Map` is not. `header` answers the last value of a name, so a
+response that repeats one — `set-cookie` is the case that matters — keeps
+only the last value.
 
 `timeout` is a field rather than a wrapper, unlike `Shell.timeout` and
 `Par.timeout`. A wrapper cannot differ per request inside a `Par.map` over a
@@ -5958,6 +5934,17 @@ type Container(image: String, name: String)
 type Spec(replicas: Int, containers: List Container)
 ```
 
+### `Bool`
+
+```ocaml
+of_string  : String -> Result String Bool
+of_string! : String -> Bool ! {Raise}
+```
+
+`&&`, `||` and `!` are the operations on a `Bool`, so this module holds the
+one conversion an operator does not spell. `of_string` reads `"true"` or
+`"false"`, in any case.
+
 ### `Float`
 
 ```ocaml
@@ -5967,6 +5954,8 @@ floor    : Float -> Int
 ceil     : Float -> Int
 abs      : Float -> Float
 format   : Int -> Float -> String
+of_string  : String -> Result String Float
+of_string! : String -> Float ! {Raise}
 max      : Float -> Float -> Float
 min      : Float -> Float -> Float
 clamp    : Float -> Float -> Float -> Float
@@ -5992,7 +5981,7 @@ Float.ceil 2.1          -- 3
 Float.abs (- 2.5)       -- 2.5
 ```
 
-`String.to_float` parses text. `JSON`, `TOML` and `Decode` read a float out
+`Float.of_string` parses text. `JSON`, `TOML` and `Decode` read a float out
 of a document.
 
 ### `Int`
@@ -6000,9 +5989,10 @@ of a document.
 ```ocaml
 abs       : Int -> Int
 pow       : Int -> Int -> Int ! 'e
-divmod    : Int -> Int -> (Int, Int)
 max_value : Int
 min_value : Int
+of_string  : String -> Result String Int
+of_string! : String -> Int ! {Raise}
 max       : Int -> Int -> Int
 min       : Int -> Int -> Int
 clamp     : Int -> Int -> Int -> Int
@@ -6010,13 +6000,12 @@ between?  : Int -> Int -> Int -> Bool
 ```
 
 What an operator does not spell. Arithmetic is `+ - * / %`, so this module
-is the remainder: distance from zero, repeated multiplication, both halves
-of a division at once, and the ends of the range.
+is the remainder: distance from zero, repeated multiplication, the ends of
+the range, and reading one from text.
 
 ```ocaml
 Int.abs (-7)            -- 7
 Int.pow 2 10            -- 1024
-Int.divmod 17 5         -- (3, 2)
 Int.max_value           -- 4611686018427387903
 ```
 
@@ -6028,18 +6017,14 @@ two for you.
 zero, so `Int.pow 2 (-1)` is `0`. A base of zero with a negative exponent
 divides by zero, exactly as writing that division would.
 
-`divmod` truncates toward zero in both halves, as `/` and `%` do on their
-own, so the remainder takes the sign of the dividend: `Int.divmod (-17) 5`
-is `(-3, -2)`.
-
 `max_value` and `min_value` name the range that
 [`Int`](#primitives) already documents. Arithmetic outside it is a runtime
 error rather than a wrap, and it is not the `Raise` effect.
 
 There is no `Int.to_string` and no `Int.to_float`. wand puts a conversion on
-the type it produces, so those are `String.of_int` and `Float.of_int`.
-`Int.of_string` is `String.to_int` under the same rule, and drawing a number
-is `Random.int`, which carries the effect that belongs with it.
+the type it produces, so those are `String.of_int` and `Float.of_int`, and
+`Int.of_string` reads an `Int` from text. Drawing a number is `Random.int`,
+which carries the effect that belongs with it.
 
 ### `Duration`
 
@@ -6050,11 +6035,11 @@ minutes  : Int -> Duration
 hours    : Int -> Duration
 days     : Int -> Duration
 weeks    : Int -> Duration
-add      : Duration -> Duration -> Duration
-sub      : Duration -> Duration -> Duration
 scale    : Int -> Duration -> Duration
 format   : Duration -> String
 to_ms    : Duration -> Int
+of_string  : String -> Result String Duration
+of_string! : String -> Duration ! {Raise}
 max      : Duration -> Duration -> Duration
 min      : Duration -> Duration -> Duration
 clamp    : Duration -> Duration -> Duration -> Duration
@@ -6067,6 +6052,8 @@ between? : Duration -> Duration -> Duration -> Bool
 to_bytes : Size -> Int
 of_bytes : Int -> Size
 format   : Size -> String
+of_string  : String -> Result String Size
+of_string! : String -> Size ! {Raise}
 max      : Size -> Size -> Size
 min      : Size -> Size -> Size
 clamp    : Size -> Size -> Size -> Size
@@ -6088,6 +6075,8 @@ it is: `FS.size! p < 4KB`.
 ```ocaml
 to_int   : Port -> Int
 of_int   : Int -> Result String Port
+of_string  : String -> Result String Port
+of_string! : String -> Port ! {Raise}
 max      : Port -> Port -> Port
 min      : Port -> Port -> Port
 clamp    : Port -> Port -> Port -> Port
@@ -6134,7 +6123,7 @@ gets in one octet at a time.
 every resolver reading the same text, so `010.8.8.8` there is 8.8.8.8. Read
 as decimal it is 10.8.8.8, which is private. A script that asks `private?`
 and then hands the text to a command would check one host and reach another,
-so wand refuses the spelling and there is one reading. `String.to_ipv4` and
+so wand refuses the spelling and there is one reading. `IPv4.of_string` and
 `CIDR.of_string` answer the same way, as does a literal.
 
 `private?` is the three RFC 1918 ranges — `10.0.0.0/8`, `172.16.0.0/12`,
@@ -6342,7 +6331,7 @@ what was typed. A repeated key keeps its last value, because that is what a
 `Map` holds; `query_list` answers every pair in the order the URL wrote them.
 `decode` is the one that leaves `+` alone.
 
-`of_string` is `String.to_url` named from this side, and it is the only way
+`of_string` is `URL.of_string` named from this side, and it is the only way
 to build some URLs. A `,` and a `;` are legal in a URL and both end a URL
 *literal*, because they are the punctuation of the expression around it — as
 do the brackets of an IPv6 host:
@@ -6647,8 +6636,6 @@ write!        : String -> Process -> Unit ! {Raise, Shell}
 close         : Process -> ShellResult ! {Shell}
 ok?     : ShellResult -> Bool
 failed? : ShellResult -> Bool
-decode  : Decoder 'a -> String -> Result String 'a
-lines   : Decoder 'a -> String -> Result String (List 'a)
 timeout : Duration -> (Unit -> 'a ! 'e) -> Result String 'a ! {Clock | 'e}
 ```
 
@@ -6739,7 +6726,7 @@ Three things to know:
   start.
 
 ```ocaml
-let ahead = Shell.decode Decode.int $(git rev-list --count HEAD)
+let ahead = Decode.run Decode.int $(git rev-list --count HEAD)
 ```
 
 ### `Hash`
@@ -6902,9 +6889,12 @@ datetime : Decoder DateTime
 ipv4     : Decoder IPv4
 cidr     : Decoder CIDR
 port     : Decoder Port
+run      : Decoder 'a -> String -> Result String 'a
+lines    : Decoder 'a -> String -> Result String (List 'a)
 ```
 
-`Decoder a` is an opaque type. Running a decoder is a backend's job:
+`Decoder a` is an opaque type. Running a decoder over a document is a
+backend's job:
 
 ```ocaml
 JSON.decode : Decoder 'a -> JSON -> Result String 'a
@@ -6912,15 +6902,23 @@ TOML.decode : Decoder 'a -> TOML -> Result String 'a
 Args.parse  : Decoder 'a -> List String -> Result String 'a
 ```
 
+`run` and `lines` read text that has no shape of its own, such as a
+command's output. `run` reads the whole text as one value, and ignores the
+space around it. `lines` reads one value per line:
+
+```ocaml
+Decode.run Decode.int $(git rev-list --count HEAD)    -- Ok 42
+Decode.lines Decode.int "1\n2"                         -- Ok [1, 2]
+```
+
 See [Decoders](#decoders).
 
 ### `Args`
 
 ```ocaml
-parse      : Decoder 'a -> List String -> Result String 'a
-parse_with : List String -> Decoder 'a -> List String -> Result String 'a
-read       : CommandLine 'a -> List String -> Result String 'a
-help?      : List String -> Bool
+parse : Decoder 'a -> List String -> Result String 'a
+read  : CommandLine 'a -> List String -> Result String 'a
+help? : List String -> Bool
 ```
 
 A command line is another boundary without types. wand reads it the same way
@@ -6940,20 +6938,13 @@ Args.parse Opts.decoder (Proc.args ())
 splits, so a value can hold more. wand assumes that each flag takes a value. A
 list of strings cannot show this one fact. Without the assumption,
 `--message -5` and a flag with a positional argument after it have the same
-shape. Name the flags that take no value:
+shape. A flag with nothing after it is an error: `--config expects a value`.
 
-```ocaml
-Args.parse_with ["verbose"] Opts.decoder (Proc.args ())
-```
-
-Each named flag is `true` when it is there and absent when it is not. A
-`Bool` field left out of the document reads as `false`. A flag with nothing
-after it is an error: `--config expects a value`.
-
-Whether a flag takes a value is not the only fact that argv cannot state. A
-flag written twice replaces its value. So `--name a --name b` is one name,
-written twice. A flag whose field is a `List` collects instead. The type
-states both facts, and `Opts.parser` carries them:
+The type states which flags take no value. A `Bool` field is a switch: it is
+`true` when it is there, and a `Bool` field left out of the document reads
+as `false`. A flag written twice replaces its value, so `--name a --name b`
+is one name, written twice. A flag whose field is a `List` collects
+instead. `Opts.parser` carries both facts, and `Args.read` takes it:
 
 ```ocaml
 type Opts(host : String, tag : List String, verbose : Bool = false)
@@ -6962,9 +6953,6 @@ Opts.parser.spec   -- {tag = "repeated", verbose = "switch"}
 
 Args.read Opts.parser (Proc.args ())
 ```
-
-`Args.read` is `parse_with` given the whole account. `parse_with` takes a
-list of switches alone.
 
 A flag that the spec calls repeated always holds a list. It holds one however
 many times it was written, including none. A flag written no times holds
@@ -7152,7 +7140,7 @@ returns the value, and raises the reason if it failed. A script uses it to
 write the `!` half of its own pair:
 
 ```ocaml
-let port_of s = if s == "" then Error "no port given" else String.to_int s
+let port_of s = if s == "" then Error "no port given" else Int.of_string s
 let port_of! s = Result.get! (port_of s)
 ```
 
@@ -7505,14 +7493,14 @@ no such line.
 
 `wand d --index` prints every module's members with their signatures, in one
 listing — the answer `wand d <Module>` gives, for each module in turn. It is
-the whole of the standard library's surface in 547 lines, which is what a
+the whole of the standard library's surface in 590 lines, which is what a
 reader who does not know the library yet needs in front of them:
 
 ```console
 $ wand d --index | head -3
-Args.help?      : List String -> Bool
-Args.parse      : Decoder 'a -> List String -> Result String 'a
-Args.parse_with : List String -> Decoder 'a -> List String -> Result String 'a
+Args.help? : List String -> Bool
+Args.parse : Decoder 'a -> List String -> Result String 'a
+Args.read  : CommandLine 'a -> List String -> Result String 'a
 ```
 
 The colons line up within a module and the column resets at the next. Not
@@ -7524,15 +7512,16 @@ in square brackets:
 
 ```console
 $ wand d Int
-Int.abs       : Int -> Int
-Int.between?  : Int -> Int -> Int -> Bool [Ord]
-Int.clamp     : Int -> Int -> Int -> Int [Ord]
-Int.divmod    : Int -> Int -> (Int, Int)
-Int.max       : Int -> Int -> Int [Ord]
-Int.max_value : Int
-Int.min       : Int -> Int -> Int [Ord]
-Int.min_value : Int
-Int.pow       : Int -> Int -> Int ! 'e
+Int.abs        : Int -> Int
+Int.between?   : Int -> Int -> Int -> Bool [Ord]
+Int.clamp      : Int -> Int -> Int -> Int [Ord]
+Int.max        : Int -> Int -> Int [Ord]
+Int.max_value  : Int
+Int.min        : Int -> Int -> Int [Ord]
+Int.min_value  : Int
+Int.of_string  : String -> Result String Int
+Int.of_string! : String -> Int ! {Raise}
+Int.pow        : Int -> Int -> Int ! 'e
 ```
 
 Square brackets because round ones are type application — `Int (Ord)` is how

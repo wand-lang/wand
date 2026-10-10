@@ -1,5 +1,4 @@
 import Result
-import String
 let {test, group} = import Test
 
 import DateTime
@@ -96,14 +95,14 @@ group "writing one out" (fn () -> [
 -- arithmetic behind an instant maps any numbers to some instant, so
 -- `2024-02-30` came back as March the 1st.
 test "a day past the month's end is an Error" (fn t ->
-  t.ok (Result.error? (String.to_datetime "2024-02-30")))
+  t.ok (Result.error? (DateTime.of_string "2024-02-30")))
 test "the 29th of February in a leap year is a day" (fn t ->
-  t.ok (Result.ok? (String.to_datetime "2024-02-29")))
+  t.ok (Result.ok? (DateTime.of_string "2024-02-29")))
 test "and not in another year" (fn t ->
-  t.ok (Result.error? (String.to_datetime "2023-02-29")))
+  t.ok (Result.error? (DateTime.of_string "2023-02-29")))
 test "a thirteenth month is an Error" (fn t ->
-  t.ok (Result.error? (String.to_datetime "2024-13-01")))
+  t.ok (Result.error? (DateTime.of_string "2024-13-01")))
 test "an hour past 23 is an Error" (fn t ->
-  t.ok (Result.error? (String.to_datetime "2024-01-15T24:00:00Z")))
+  t.ok (Result.error? (DateTime.of_string "2024-01-15T24:00:00Z")))
 test "an offset past 23 hours is an Error" (fn t ->
-  t.ok (Result.error? (String.to_datetime "2024-01-15T14:30:00+25:00")))
+  t.ok (Result.error? (DateTime.of_string "2024-01-15T14:30:00+25:00")))

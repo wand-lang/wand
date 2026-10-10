@@ -1,3 +1,5 @@
+import Result
+
 -- The size in bytes as an integer.
 --
 -- >> Size.to_bytes 10MB
@@ -17,6 +19,19 @@ let of_bytes n = size_of_bytes n
 -- >> Size.format 6466B
 -- "6.5KB" : String
 let format s = size_format s
+
+-- Read a size, written as a literal is: "10MB".
+--
+-- >> Size.of_string "10MB"
+-- Ok(10MB) : Result String Size
+let of_string s = str_to_size s
+
+-- The same as `Size.of_string`, raising the reason instead of answering
+-- with it.
+--
+-- >> Size.of_string! "10MB"
+-- 10MB : Size
+let of_string! s = Result.get! (of_string s)
 
 implement Ord Size =
   -- The larger of two Sizes.

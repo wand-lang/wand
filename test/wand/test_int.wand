@@ -19,15 +19,6 @@ test "pow of a negative base alternates" (fn t ->
 test "a negative exponent truncates to zero" (fn t -> t.eq 0 (Int.pow 2 (-1)))
 test "a negative exponent of one divides by one" (fn t -> t.eq 1 (Int.pow 1 (-5)))
 
--- ── divmod ──────────────────────────────────────────────────────────────
-
-test "divmod splits a division" (fn t -> t.eq (3, 2) (Int.divmod 17 5))
-test "divmod divides exactly" (fn t -> t.eq (4, 0) (Int.divmod 20 5))
-test "divmod truncates toward zero" (fn t -> t.eq (-3, -2) (Int.divmod (-17) 5))
-
--- The two halves agree with the operators they stand for.
-test "divmod agrees with / and %" (fn t -> t.eq (17 / 5, 17 % 5) (Int.divmod 17 5))
-
 -- ── the ends of the range ───────────────────────────────────────────────
 
 test "max_value is the largest literal" (fn t -> t.eq 4611686018427387903 Int.max_value)

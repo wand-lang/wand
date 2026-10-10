@@ -268,7 +268,7 @@ let at instant thunk =
 -- (5s, ()) : (Duration, Unit)
 let with_clock thunk =
   handle (fn () -> (0ms, thunk ())) () with
-  | Clock!sleep d k -> (let (so_far, v) = k (); (Duration.add so_far d, v))
+  | Clock!sleep d k -> (let (so_far, v) = k (); (so_far + d, v))
 
 -- Run `thunk` with every lock taken, without touching the filesystem.
 -- `FS.lock` answers `Ok`, `FS.lock!` returns the path, and nothing is

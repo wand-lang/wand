@@ -1,6 +1,19 @@
 let {test} = import Test
+import Bool
+import CIDR
+import DateTime
+import Duration
+import Float
+import Glob
+import IPv4
+import Int
 import List
+import Path
+import Port
+import Size
 import String
+import URL
+import Version
 
 -- ── length / empty? ─────────────────────────────────────────────────
 
@@ -115,16 +128,16 @@ test "bytes counts what length counts" (fn t ->
 -- ── of_int / to_int / to_float ─────────────────────────────────────────
 
 test "of_int" (fn t -> t.eq "42" (String.of_int 42))
-test "to_int ok" (fn t -> t.eq (Ok 123) (String.to_int "123"))
+test "to_int ok" (fn t -> t.eq (Ok 123) (Int.of_string "123"))
 test "of_int negative" (fn t -> t.eq "-7" (String.of_int (-7)))
-test "to_float ok" (fn t -> t.eq (Ok 3.14) (String.to_float "3.14"))
-test "to_float int-like" (fn t -> t.eq (Ok 42.0) (String.to_float "42"))
+test "to_float ok" (fn t -> t.eq (Ok 3.14) (Float.of_string "3.14"))
+test "to_float int-like" (fn t -> t.eq (Ok 42.0) (Float.of_string "42"))
 test "to_int err" (fn t ->
-  match String.to_int "abc" with
+  match Int.of_string "abc" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 test "to_float err" (fn t ->
-  match String.to_float "abc" with
+  match Float.of_string "abc" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 
@@ -174,88 +187,88 @@ test "pipe" (fn t ->
 
 -- ── to_bool / to_path ──────────────────────────────────────────────────
 
-test "to_bool true" (fn t -> t.eq (Ok true) (String.to_bool "true"))
-test "to_bool false" (fn t -> t.eq (Ok false) (String.to_bool "False"))
+test "to_bool true" (fn t -> t.eq (Ok true) (Bool.of_string "true"))
+test "to_bool false" (fn t -> t.eq (Ok false) (Bool.of_string "False"))
 test "to_bool err" (fn t ->
-  match String.to_bool "yes" with
+  match Bool.of_string "yes" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
-test "to_path" (fn t -> t.eq /tmp/foo (String.to_path "/tmp/foo"))
+test "to_path" (fn t -> t.eq /tmp/foo (Path.of_string "/tmp/foo"))
 
 -- ── domain type parsers ─────────────────────────────────────────────────
 
 test "to_url ok" (fn t ->
-  match String.to_url "https://example.com" with
+  match URL.of_string "https://example.com" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_url err" (fn t ->
-  match String.to_url "not-a-url" with
+  match URL.of_string "not-a-url" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 test "to_ipv4 ok" (fn t ->
-  match String.to_ipv4 "192.168.1.1" with
+  match IPv4.of_string "192.168.1.1" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_ipv4 err" (fn t ->
-  match String.to_ipv4 "999.0.0.1" with
+  match IPv4.of_string "999.0.0.1" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 test "to_cidr ok" (fn t ->
-  match String.to_cidr "10.0.0.0/8" with
+  match CIDR.of_string "10.0.0.0/8" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_port ok" (fn t ->
-  match String.to_port ":8080" with
+  match Port.of_string ":8080" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 -- Both spellings read: `:8080` is wand's own notation, and the bare number
 -- is what an environment variable or a config file holds.
 test "to_port takes the bare number too" (fn t ->
-  t.eq (String.to_port ":8080") (String.to_port "8080"))
+  t.eq (Port.of_string ":8080") (Port.of_string "8080"))
 
 test "to_port err" (fn t ->
-  match String.to_port "http" with
+  match Port.of_string "http" with
   | Ok _ -> t.ok false
   | Error msg -> t.eq `cannot parse "http" as Port` msg)
 
 test "to_port out of range says which rule was broken" (fn t ->
-  match String.to_port ":99999" with
+  match Port.of_string ":99999" with
   | Ok _ -> t.ok false
   | Error msg -> t.eq "invalid port :99999: must be 0-65535" msg)
 
 test "and an octet out of range does too" (fn t ->
-  match String.to_ipv4 "256.0.0.1" with
+  match IPv4.of_string "256.0.0.1" with
   | Ok _ -> t.ok false
   | Error msg -> t.eq "invalid IPv4 address: each octet must be 0–255" msg)
 test "to_version ok" (fn t ->
-  match String.to_version "1.2.3" with
+  match Version.of_string "1.2.3" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_size ok" (fn t ->
-  match String.to_size "10MB" with
+  match Size.of_string "10MB" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_size err" (fn t ->
-  match String.to_size "abc" with
+  match Size.of_string "abc" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 -- One instant type, so one parser, reading either spelling.
 test "to_datetime reads a bare day as midnight" (fn t ->
-  t.eq (Ok 2024-01-15T00:00:00Z) (String.to_datetime "2024-01-15"))
+  t.eq (Ok 2024-01-15T00:00:00Z) (DateTime.of_string "2024-01-15"))
 test "to_datetime err" (fn t ->
-  match String.to_datetime "01/15/2024" with
+  match DateTime.of_string "01/15/2024" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 test "to_datetime ok" (fn t ->
-  match String.to_datetime "2024-01-15T14:30:00Z" with
+  match DateTime.of_string "2024-01-15T14:30:00Z" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_duration ok" (fn t ->
-  match String.to_duration "5min" with
+  match Duration.of_string "5min" with
   | Ok _ -> t.ok true
   | Error _ -> t.ok false)
 test "to_duration err" (fn t ->
-  match String.to_duration "abc" with
+  match Duration.of_string "abc" with
   | Ok _ -> t.ok false
   | Error _ -> t.ok true)
 
@@ -289,22 +302,22 @@ test "no words at all" (fn t -> t.eq (None, []) (String.word 0 "   ", String.wor
 -- the plain name answers with Ok, and raises the same reason where it
 -- answers with Error.
 
-test "to_int!" (fn t -> t.eq 42 (String.to_int! "42"))
-test "to_float!" (fn t -> t.eq 1.5 (String.to_float! "1.5"))
-test "to_bool!" (fn t -> t.ok (String.to_bool! "TRUE"))
-test "to_glob!" (fn t -> t.eq (Ok *.wand) (try String.to_glob! "*.wand"))
-test "to_url!" (fn t -> t.eq https://example.com (String.to_url! "https://example.com"))
-test "to_ipv4!" (fn t -> t.eq 192.168.1.1 (String.to_ipv4! "192.168.1.1"))
-test "to_cidr!" (fn t -> t.eq 10.0.0.0/8 (String.to_cidr! "10.0.0.0/8"))
-test "to_port!" (fn t -> t.eq :8080 (String.to_port! ":8080"))
-test "to_version!" (fn t -> t.eq 1.2.3 (String.to_version! "1.2.3"))
-test "to_size!" (fn t -> t.eq 10MB (String.to_size! "10MB"))
-test "to_datetime!" (fn t -> t.eq 2026-08-22 (String.to_datetime! "2026-08-22"))
-test "to_duration!" (fn t -> t.eq 1h30m (String.to_duration! "1h30m"))
+test "to_int!" (fn t -> t.eq 42 (Int.of_string! "42"))
+test "to_float!" (fn t -> t.eq 1.5 (Float.of_string! "1.5"))
+test "to_bool!" (fn t -> t.ok (Bool.of_string! "TRUE"))
+test "to_glob!" (fn t -> t.eq (Ok *.wand) (try Glob.of_string! "*.wand"))
+test "to_url!" (fn t -> t.eq https://example.com (URL.of_string! "https://example.com"))
+test "to_ipv4!" (fn t -> t.eq 192.168.1.1 (IPv4.of_string! "192.168.1.1"))
+test "to_cidr!" (fn t -> t.eq 10.0.0.0/8 (CIDR.of_string! "10.0.0.0/8"))
+test "to_port!" (fn t -> t.eq :8080 (Port.of_string! ":8080"))
+test "to_version!" (fn t -> t.eq 1.2.3 (Version.of_string! "1.2.3"))
+test "to_size!" (fn t -> t.eq 10MB (Size.of_string! "10MB"))
+test "to_datetime!" (fn t -> t.eq 2026-08-22 (DateTime.of_string! "2026-08-22"))
+test "to_duration!" (fn t -> t.eq 1h30m (Duration.of_string! "1h30m"))
 
-test "a bad parse raises" (fn t -> t.raises (fn () -> String.to_int! "abc"))
+test "a bad parse raises" (fn t -> t.raises (fn () -> Int.of_string! "abc"))
 
 -- The reason is the one the plain name would have answered with, passed
 -- through rather than rewritten.
 test "and raises the reason the pair reports" (fn t ->
-  t.eq (String.to_int "abc") (try String.to_int! "abc"))
+  t.eq (Int.of_string "abc") (try Int.of_string! "abc"))

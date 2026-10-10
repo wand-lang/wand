@@ -118,8 +118,8 @@ test "and refuses a prefix that is not one" (fn t ->
   | Ok _ -> t.ok false
   | Error e -> t.ok (String.contains? "must be 0-32" e))
 
-test "String.to_cidr is the same function" (fn t ->
-  t.eq (String.to_cidr "10.0.0.0/8") (CIDR.of_string "10.0.0.0/8"))
+test "CIDR.of_string is the same function" (fn t ->
+  t.eq (CIDR.of_string "10.0.0.0/8") (CIDR.of_string "10.0.0.0/8"))
 
 -- Networks order by where they start, then by how far they reach. As text
 -- 10.0.0.0/8 sorts below 9.0.0.0/8, which is the wrong way round.

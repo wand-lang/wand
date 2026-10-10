@@ -3,7 +3,6 @@ import Decode
 import JSON
 import CSV
 import Map
-import Shell
 import String
 import TOML
 
@@ -166,17 +165,16 @@ test "CSV says which row was wrong" (fn t ->
     (Error "[0].hosts: no such field")
     (CSV.rows (Decode.field "hosts" Decode.string) src))
 
-test "one line, one value" (fn t -> t.eq (Ok [1, 2, 3]) (Shell.lines Decode.int "1\n2\n3"))
+test "one line, one value" (fn t -> t.eq (Ok [1, 2, 3]) (Decode.lines Decode.int "1\n2\n3"))
 
 -- $() strips the trailing newline, so nothing captured is no lines. A hand
 -- written count reports one here, and every caller has to remember.
-test "an empty capture is no lines" (fn t -> t.eq (Ok []) (Shell.lines Decode.string ""))
+test "an empty capture is no lines" (fn t -> t.eq (Ok []) (Decode.lines Decode.string ""))
 
-test "the whole capture as one value" (fn t ->
-  t.eq (Ok 42) (Shell.decode Decode.int "42\n"))
+test "the whole capture as one value" (fn t -> t.eq (Ok 42) (Decode.run Decode.int "42\n"))
 
 test "and the line that could not be read is named" (fn t ->
-  t.eq (Error `[2]: expected Int, got "x"`) (Shell.lines Decode.int "1\n2\nx"))
+  t.eq (Error `[2]: expected Int, got "x"`) (Decode.lines Decode.int "1\n2\nx"))
 
 -- A field that may not be there. The distinction that matters is between a
 -- field that is absent and a field that is there and wrong: the first is an

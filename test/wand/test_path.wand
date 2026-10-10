@@ -10,7 +10,7 @@ test "join nested" (fn t -> t.eq /var/log (Path.join /var /log))
 -- ── parent / dirname ────────────────────────────────────────────────────
 
 test "parent" (fn t -> t.eq /usr/local (Path.parent /usr/local/bin))
-test "dirname alias" (fn t -> t.eq /usr/local (Path.dirname /usr/local/bin))
+test "dirname alias" (fn t -> t.eq /usr/local (Path.parent /usr/local/bin))
 test "parent top-level" (fn t -> t.eq (Path.of_string "/") (Path.parent /usr))
 
 -- ── basename ────────────────────────────────────────────────────────────

@@ -148,8 +148,9 @@ let computed_url_source manifest text =
 import HTTP
 import IO
 import String
+import URL
 let () =
-  match String.to_url "%s" with
+  match URL.of_string "%s" with
   | Ok u -> IO.println "%%{try HTTP.get u}"
   | Error e -> IO.println e|} manifest text
 

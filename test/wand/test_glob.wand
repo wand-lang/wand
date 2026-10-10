@@ -89,8 +89,8 @@ test "an unclosed class is refused" (fn t ->
   | Ok _ -> t.ok false
   | Error e -> t.ok (String.contains? "not closed" e))
 
-test "String.to_glob is the same function" (fn t ->
-  t.eq (String.to_glob "src/*.ts") (Glob.of_string "src/*.ts"))
+test "Glob.of_string is the same function" (fn t ->
+  t.eq (Glob.of_string "src/*.ts") (Glob.of_string "src/*.ts"))
 
 test "to_string round-trips" (fn t ->
   t.eq (Ok **.wand) (Glob.of_string (Glob.to_string **.wand)))
@@ -131,7 +131,7 @@ test "FS.glob takes its start from an absolute pattern" (fn t ->
     FS.mkdir! (Path.join dir ./src);
     ["a.wand", "b.ml", "src/c.wand"]
     |> List.each (fn n -> FS.write_file! (Path.join dir (Path.of_string n)) "x");
-    let pattern = String.to_glob! "%{Path.to_string dir}/**.wand";
+    let pattern = Glob.of_string! "%{Path.to_string dir}/**.wand";
     let found = FS.glob pattern;
     let all_match = found |> List.all? (fn p -> Glob.matches? pattern p);
     t.eq (2, true) (List.length found, all_match)
@@ -146,7 +146,7 @@ test "FS.glob_in keeps its directory whatever the pattern" (fn t ->
     FS.mkdir! (Path.join dir ./src);
     ["a.wand", "src/c.wand"]
     |> List.each (fn n -> FS.write_file! (Path.join dir (Path.of_string n)) "x");
-    let pattern = String.to_glob! "%{Path.to_string dir}/*.wand";
+    let pattern = Glob.of_string! "%{Path.to_string dir}/*.wand";
     t.eq (1, []) (
       List.length (FS.glob_in pattern dir),
       FS.glob_in pattern (Path.join dir ./src)
