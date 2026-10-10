@@ -4961,7 +4961,117 @@ let typecheck_session (sess : session) (src : string) : (repl_result, Diag.t) re
 (* A package's public interface, one line a type or member, in the
    `wand d --index` format: each module named by its path under the package
    root, its types, then its members. `modules` is (name, absolute path). *)
-let interface_lines ~root (modules : (string * string) list) : (string list, Diag.t) result =
+(* What a file's imports name, as the interface writes it: the module's path
+   under the package root, a URL without its scheme, or a standard library
+   module's name. `file` is the file's path, absolute or under `root`, and
+   `requires` maps a `require` entry's name to its URL. The first list is
+   for a module bound whole, the second for a name selected from one. *)
+let interface_imports ~root ~requires ~file (prog : Ast.program) =
+  let schemeless u =
+    let rec go i =
+      if i + 3 > String.length u then u
+      else if String.sub u i 3 = "://" then String.sub u (i + 3) (String.length u - i - 3)
+      else go (i + 1)
+    in
+    go 0
+  in
+  let module_path = function
+    | Ast.StdlibModule n -> n
+    | Ast.ModuleURL u -> schemeless u
+    | Ast.ModuleAlias n ->
+      (match List.assoc_opt n requires with Some u -> schemeless u | None -> n)
+    | Ast.UserPath p ->
+      let full =
+        if Filename.is_relative p then Filename.concat (Filename.dirname file) p else p in
+      let full = Module_types.lexical_normalize full in
+      let full =
+        if Filename.check_suffix full ".wand" then Filename.chop_suffix full ".wand" else full in
+      let root = Module_types.lexical_normalize root in
+      let n = String.length root in
+      if String.length full > n + 1 && String.sub full 0 (n + 1) = root ^ "/"
+      then String.sub full (n + 1) (String.length full - n - 1)
+      else full
+  in
+  List.fold_left (fun (whole, picked) item ->
+    match item with
+    | Ast.TLImport k ->
+      (match Parser.import_name k with
+       | Some n -> ((n, module_path k) :: whole, picked)
+       | None -> (whole, picked))
+    | Ast.TLLet (n, [], body) ->
+      (match Module_types.import_kind_of body with
+       | Some k -> ((n, module_path k) :: whole, picked)
+       | None -> (whole, picked))
+    | Ast.TLLetPat (Ast.PMap fields, body) ->
+      (match Module_types.import_kind_of body with
+       | Some k ->
+         (whole, List.filter_map (fun (key, p) -> match p with
+            | Ast.PVar v -> Some (v, (module_path k, key))
+            | _ -> None) fields @ picked)
+       | None -> (whole, picked))
+    | _ -> (whole, picked)) ([], []) prog.Ast.items
+
+(* A type declaration with every name it reaches through an import written
+   as `interface_imports` says. *)
+let interface_tdef (whole, picked) (tdef : Ast.type_def) =
+  let rec te = function
+    | Ast.TEName n as t ->
+      (match List.assoc_opt n picked with
+       | Some (m, orig) -> Ast.TEQual (m, orig)
+       | None -> t)
+    | Ast.TEQual (m, n) as t ->
+      (match List.assoc_opt m whole with
+       | Some p -> Ast.TEQual (p, n)
+       | None -> t)
+    | Ast.TEVar _ as t -> t
+    | Ast.TEApp (f, a) -> Ast.TEApp (te f, te a)
+    | Ast.TETuple ts -> Ast.TETuple (List.map te ts)
+    | Ast.TEFun (a, b, e) -> Ast.TEFun (te a, te b, e)
+  in
+  let picked_name n k = match List.assoc_opt n picked with
+    | Some (m, orig) -> Ast.Qualified (m, k orig)
+    | None -> k n
+  in
+  let rec ex (e : Ast.expr) : Ast.expr = match e with
+    | Located (l, a) -> Located (l, ex a)
+    | Qualified (m, a) ->
+      (match List.assoc_opt m whole with
+       | Some p -> Qualified (p, a)
+       | None -> Qualified (m, ex a))
+    | Constr n -> picked_name n (fun n -> Ast.Constr n)
+    | Var n -> picked_name n (fun n -> Ast.Var n)
+    | ConstrApp (n, fs, b) ->
+      let fs = List.map (fun (f, v) -> (f, ex v)) fs in
+      picked_name n (fun n -> Ast.ConstrApp (n, fs, b))
+    | ConstrUpdate (n, r, fs, b) ->
+      let r = ex r and fs = List.map (fun (f, v) -> (f, ex v)) fs in
+      picked_name n (fun n -> Ast.ConstrUpdate (n, r, fs, b))
+    | App (a, b) -> App (ex a, ex b)
+    | BinOp (o, a, b) -> BinOp (o, ex a, ex b)
+    | UnOp (o, a) -> UnOp (o, ex a)
+    | Annot (t, a) -> Annot (te t, ex a)
+    | Tuple es -> Tuple (List.map ex es)
+    | List es -> List (List.map ex es)
+    | MapLit kvs -> MapLit (List.map (fun (k, v) -> (k, ex v)) kvs)
+    | e -> e
+  in
+  match tdef with
+  | Ast.Alias (n, ps, t) -> Ast.Alias (n, ps, te t)
+  | Ast.Variants (n, ps, ctors) ->
+    Ast.Variants (n, ps,
+      List.map (fun (c : Ast.ctor_def) ->
+        { c with Ast.fields = List.map (fun (f, t) -> (f, te t)) c.Ast.fields;
+                 defaults = List.map (fun (f, v) -> (f, ex v)) c.Ast.defaults })
+        ctors)
+
+(* A type's interface line, `type <module>.<declaration>`. *)
+let interface_type_line name imports tdef =
+  let text = Formatter.emit_type_def (interface_tdef imports tdef) in
+  let prefix = "type " in
+  let n = String.length prefix in
+  "type " ^ name ^ "." ^ String.sub text n (String.length text - n)
+
+let interface_lines ~root ?(requires = []) (modules : (string * string) list) : (string list, Diag.t) result =
   let alias i = Printf.sprintf "interface_module_%d" i in
   let src =
     String.concat "\n"
@@ -4974,12 +5084,9 @@ let interface_lines ~root (modules : (string * string) list) : (string list, Dia
     let types = List.concat_map (fun (name, path) ->
       let src = In_channel.with_open_text path In_channel.input_all in
       let prog = Parser.parse_program (Lexer.tokenize ~file:path src) in
+      let imports = interface_imports ~root ~requires ~file:path prog in
       List.filter_map (function
-        | Ast.TLType (tdef, _) ->
-          let text = Formatter.emit_type_def tdef in
-          let prefix = "type " in
-          let n = String.length prefix in
-          Some ("type " ^ name ^ "." ^ String.sub text n (String.length text - n))
+        | Ast.TLType (tdef, _) -> Some (interface_type_line name imports tdef)
         | _ -> None) prog.Ast.items
       |> List.sort compare) modules
     in

@@ -4334,6 +4334,11 @@ its type, effects and interfaces. A module under a `_` name and a `test_`
 file are not in it. A change to the interface shows as a diff in `wand.pkg`,
 where a reviewer sees it.
 
+A type writes a type from another module with the path of that module, not
+with the name that the file imports it under. A field of type
+`MetaV1.LabelSelector` shows as `k8s/meta/v1.LabelSelector`. Thus a rename
+of an import does not change the interface.
+
 ```sh
 wand p interface          # write the interface section; keep its version line
 wand p interface --check  # fail when it does not match the code or the latest tag

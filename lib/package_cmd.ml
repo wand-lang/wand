@@ -443,9 +443,13 @@ let public_modules (pkg : Package.t) =
     else Some (Filename.chop_suffix rel ".wand", full))
     (wand_files pkg.root "")
 
+let requires (pkg : Package.t) =
+  List.filter_map (fun (r : Package.require) ->
+    Option.map (fun n -> (n, r.path)) r.name) pkg.require
+
 let current_interface (pkg : Package.t) =
   let modules = public_modules pkg in
-  match Runner.interface_lines ~root:pkg.root modules with
+  match Runner.interface_lines ~root:pkg.root ~requires:(requires pkg) modules with
   | Ok lines -> lines
   | Error d ->
     let first = List.find_map (fun (_, path) ->
@@ -524,6 +528,54 @@ let entries lines =
     | _ -> l :: acc) []
     (List.concat_map (String.split_on_char '\n') lines)
   |> List.rev
+
+(* The type entries of an interface section that an earlier wand wrote with
+   the names its modules import under, written again with the module paths.
+   `show path` is the text of a file under the package root at the release,
+   if it has one. An entry that does not parse, as one in the new form does
+   not, is kept as it is. *)
+let with_module_paths (pkg : Package.t) ~show lines =
+  let imports = Hashtbl.create 8 in
+  let imports_of name =
+    match Hashtbl.find_opt imports name with
+    | Some i -> i
+    | None ->
+      let i = match show (name ^ ".wand") with
+        | None -> None
+        | Some src ->
+          (try
+             let file = Filename.concat pkg.root (name ^ ".wand") in
+             let prog = Parser.parse_program (Lexer.tokenize ~file src) in
+             Some (Runner.interface_imports ~root:pkg.root ~requires:(requires pkg) ~file prog)
+           with Parser.ParseError _ | Lexer.LexError _ -> None)
+      in
+      Hashtbl.replace imports name i;
+      i
+  in
+  let rewrite entry =
+    let p = "type " in
+    let n = String.length p in
+    if String.length entry <= n || String.sub entry 0 n <> p then entry
+    else
+      let rest = String.sub entry n (String.length entry - n) in
+      let stop = ref 0 in
+      while !stop < String.length rest && not (List.mem rest.[!stop] [' '; '(']) do incr stop done;
+      let head = String.sub rest 0 !stop in
+      match String.rindex_opt head '.' with
+      | None -> entry
+      | Some i ->
+        let name = String.sub head 0 i in
+        match imports_of name with
+        | None -> entry
+        | Some imports ->
+          let text = p ^ String.sub rest (i + 1) (String.length rest - i - 1) in
+          (try
+             match (Parser.parse_program (Lexer.tokenize text)).Ast.items with
+             | [Ast.TLType (tdef, _)] -> Runner.interface_type_line name imports tdef
+             | _ -> entry
+           with Parser.ParseError _ | Lexer.LexError _ -> entry)
+  in
+  List.map rewrite (entries lines)
 
 let changes ~before ~after =
   let b = List.map interface_entry (entries before)
@@ -621,8 +673,12 @@ let release ~dir asked =
         | (0, text) -> text
         | _ -> fail (Printf.sprintf "v%s holds no wand.pkg to compare with" last)
       in
+      let show file = match git_in pkg ["show"; "v" ^ last ^ ":./" ^ file] with
+        | (0, src) -> Some src
+        | _ -> None
+      in
       let before = match (Package.split_sections ~file:Package.file_name text).iface with
-        | Some lines -> snd (parse_interface lines)
+        | Some lines -> with_module_paths pkg ~show (snd (parse_interface lines))
         | None -> fail (Printf.sprintf "v%s has no interface section in wand.pkg to compare with" last)
       in
       let found = changes ~before ~after:now in

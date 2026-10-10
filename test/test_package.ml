@@ -737,6 +737,50 @@ let test_interface_and_release () =
      | exception Package_cmd.Failed msg -> contains msg "junk.txt"
      | () -> false)
 
+(* A type from another module is written by that module's path, so a
+   rename of an import changes nothing. A section an earlier wand wrote has
+   the old local names in it, and is read with the imports of its tag. *)
+let test_renamed_import () =
+  List.iter (fun (k, v) -> Unix.putenv k v)
+    [("GIT_AUTHOR_NAME", "t"); ("GIT_AUTHOR_EMAIL", "t@t");
+     ("GIT_COMMITTER_NAME", "t"); ("GIT_COMMITTER_EMAIL", "t@t")];
+  let root = fresh_dir () in
+  let git args = Package.run_git ("-C" :: root :: "-c" :: "user.email=t@t" :: "-c" :: "user.name=t" :: args) |> fst in
+  ignore (git ["init"; "-q"]);
+  Package_cmd.init ~dir:root (Some "x.dev/me/k8s");
+  Unix.mkdir (Filename.concat root "meta") 0o755;
+  write (Filename.concat root "meta/v1.wand") "type Sel(k: String = \"a\")\n";
+  write (Filename.concat root "app.wand")
+    "let meta_v1 = import ./meta/v1\ntype Pod(sel: meta_v1.Sel = meta_v1.Sel(k = \"b\"))\n";
+  let sections = Package.read_sections root in
+  Package.write_sections root
+    { sections with iface = Some
+        [ "version 0.1.0"; "";
+          "type app.Pod(sel: meta_v1.Sel = meta_v1.Sel(k = \"b\"))";
+          "type meta/v1.Sel(k: String = \"a\")" ] };
+  ignore (git ["add"; "."]);
+  ignore (git ["commit"; "-qm"; "one"]);
+  ignore (git ["tag"; "v0.1.0"]);
+  write (Filename.concat root "app.wand")
+    "let MetaV1 = import ./meta/v1\ntype Pod(sel: MetaV1.Sel = MetaV1.Sel(k = \"b\"))\n";
+  ignore (git ["commit"; "-qam"; "two"]);
+  Package_cmd.release ~dir:root (Some "fix");
+  let section = interface_section root in
+  Alcotest.(check bool) "a fix release" true (contains section "version 0.1.1");
+  Alcotest.(check bool) "the type by its module's path" true
+    (contains section "type app.Pod(sel: meta/v1.Sel = meta/v1.Sel(k = \"b\"))");
+  write (Filename.concat root "app.wand")
+    "let {Sel} = import ./meta/v1\ntype Pod(sel: Sel = Sel(k = \"b\"))\n";
+  ignore (git ["commit"; "-qam"; "three"]);
+  Package_cmd.interface ~dir:root ~check:true;
+  write (Filename.concat root "app.wand")
+    "let {Sel} = import ./meta/v1\ntype Pod(sel: Sel = Sel(k = \"c\"))\n";
+  ignore (git ["commit"; "-qam"; "four"]);
+  Alcotest.(check bool) "a changed default still needs a breaking release" true
+    (match Package_cmd.release ~dir:root (Some "fix") with
+     | exception Package_cmd.Failed msg -> contains msg "need a breaking release"
+     | () -> false)
+
 let test_sections () =
   let text =
     "{ package = x.dev/a\n, wand    = 0.85.0\n}\n\n\
@@ -916,5 +960,7 @@ let () =
       Alcotest.test_case "tidy keeps the interface section" `Quick test_tidy_keeps_the_interface_section;
       Alcotest.test_case "interface and release"     `Quick
         (fun () -> if git_present then test_interface_and_release () else Alcotest.skip ());
+      Alcotest.test_case "a renamed import is not a change" `Quick
+        (fun () -> if git_present then test_renamed_import () else Alcotest.skip ());
     ];
   ]
