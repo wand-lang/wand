@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.104.0] - Unreleased
+## [0.104.0] - 2026-10-09
 
 ### Added
 
@@ -23,7 +23,7 @@
 
 - A type declared in the REPL or with `-e` has its derived members, such as `T.decoder`.
 
-## [0.103.0] - 2026-10-10
+## [0.103.0] - 2026-10-09
 
 ### Added
 
