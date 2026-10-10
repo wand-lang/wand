@@ -300,11 +300,72 @@ let test_arithmetic_that_closes_early_is_checked () =
   | Error m -> Alcotest.failf "wrong error: %s" m
   | Ok v -> Alcotest.failf "expected a refusal, got %s" v
 
+(* A command the shell runs the scanner has to find, however the form hides
+   it: a substitution inside arithmetic, text after a `$'...'` string, text
+   after a `#` comment's newline, or a process substitution. Each was read
+   as something inert, so a word the shell runs slipped past the manifest. *)
+let test_hidden_commands () =
+  check "a substitution inside arithmetic is a command"
+    "echo $(( $(whoami) + 1 ))" [Literal "echo"; Literal "whoami"];
+  check "a command built in an arithmetic subscript is read"
+    "echo $((1 + $(touch x)0))" [Literal "echo"; Literal "touch"];
+  check "a $'...' string does not swallow the command after it"
+    "echo $'\\''; whoami" [Literal "echo"; Literal "whoami"];
+  check "a # comment ends at the newline"
+    "echo hi #'\nwhoami #'" [Literal "echo"; Literal "whoami"];
+  check "process substitution is a command of its own"
+    "diff <(sort a) <(sort b)" [Literal "diff"; Literal "sort"; Literal "sort"];
+  (* `[[` evaluates its operands as arithmetic, so a quoted value is still
+     re-read; it is control flow the manifest refuses. *)
+  check "a double bracket is control flow" "[[ -f x ]]" [Compound "[["];
+  (* `(( ))` is arithmetic and runs nothing, but a substitution inside still
+     runs. *)
+  check "an arithmetic command runs nothing on its own" "(( x += 1 ))" [];
+  check "but a substitution inside it is a command"
+    "(( x += $(id -u) ))" [Literal "id"]
+
+(* A `%{}` value is one argument wherever it lands, or -- where no quoting
+   makes it one -- a refusal rather than a splice. These run the whole
+   binary, so the quoting the evaluator does is what is tested. *)
+let run_err label src needle =
+  match Runner.run_string src with
+  | Error m when Lint.contains m needle -> ()
+  | Error m -> Alcotest.failf "%s: wrong error: %s" label m
+  | Ok v -> Alcotest.failf "%s: expected a refusal, got %s" label v
+
+let test_hole_safety () =
+  (* A nested substitution resets the shell's quoting, so the value is one
+     argument there -- wrapped in single quotes -- not text the outer double
+     quotes leave the shell to read. *)
+  run "a value in a nested substitution is one argument"
+    "uses {Shell(echo)}\nlet x = \"a; echo B\"\n$(echo \"$(echo %{x})\")"
+    "a; echo B";
+  (* Backticks strip a backslash the value would need, and a $'...' string
+     and a comment cannot carry a value at all: each is refused where it is
+     written rather than spliced. *)
+  run_err "a value inside backticks is refused"
+    "uses {Shell(echo)}\nlet x = \"q\"\n$(echo `echo %{x}`)" "backticks";
+  run_err "a value inside a $'...' string is refused"
+    "uses {Shell(echo)}\nlet x = \"q\"\n$(echo $'%{x}')" "$'...'";
+  (* An arithmetic operand must be an Int, so it goes in as digits a shell
+     cannot read anything else out of. *)
+  run "an Int in arithmetic is spliced as digits"
+    "uses {Shell(echo)}\nlet n = 5\n$(echo $(( %{n} + 1 )))"
+    "6";
+  run_err "a String in arithmetic is a type error"
+    "uses {Shell(echo)}\nlet n = \"5\"\n$(echo $(( %{n} + 1 )))" "expected Int"
+
 let () =
   Alcotest.run "shell scan" [
     "arithmetic", [
       Alcotest.test_case "closing early is a command" `Quick
         test_arithmetic_that_closes_early_is_checked;
+    ];
+    "hidden commands", [
+      Alcotest.test_case "found through every form" `Quick test_hidden_commands;
+    ];
+    "a %{} value is data", [
+      Alcotest.test_case "quoted for its context or refused" `Slow test_hole_safety;
     ];
     "positions", [
       Alcotest.test_case "single"       `Quick test_single;

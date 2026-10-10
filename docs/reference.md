@@ -1283,6 +1283,26 @@ $(echo "hi %{name}")        -- runs: echo "hi \$(whoami)"    (one argument)
 $(grep "^%{name}" log)      -- the value is part of the pattern
 ```
 
+wand reads the command far enough to know the context each `%{x}` lands in,
+through every layer the shell reads through: a `%{x}` inside `"$(...)"`
+is quoted for the substitution it sits in, not for the outer quotes.
+
+Two contexts take the value as a number rather than a string. In
+arithmetic — `$(( %{n} + 1 ))` — the value must be an `Int`, and it goes in
+as its digits:
+
+```ocaml
+let n = 5
+$(echo $(( %{n} + 1 )))     -- runs: echo 6   (n must be an Int)
+```
+
+Three contexts cannot carry a value safely, and a `%{x}` written in one is
+an error that says so: inside backticks (use `$(...)`, where the value is
+one argument), inside a `$'...'` string, and inside a heredoc body (pipe the
+value in with `|>` instead). `[[ ... ]]` and `(( ... ))` read a word as a
+number the same way `$(( ))` does; a file that narrows `Shell(...)` cannot
+use `[[`, since no word list can bound what it evaluates.
+
 **Raw interpolate — `%!{x}`.** wand puts the value into the command as shell
 source, and the shell reads it. Use this form for a value that holds several
 arguments, a pattern to expand, or a whole command:

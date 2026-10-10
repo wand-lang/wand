@@ -1235,6 +1235,40 @@ and interp_tokens loc src (at : Token.pos) =
   Lexer.tokenize ~file:loc.Token.file ~line:at.Token.p_line
     ~col:at.Token.p_col ~base:at.Token.p_offset src
 
+(* Each `%{...}` in a command is quoted for the context it actually lands in,
+   read from the whole command rather than from the one quote the lexer had
+   open when it reached the hole. The lexer saw one layer; the shell reads
+   through several -- a nested `$(...)`, an arithmetic `$((...))` -- and the
+   value has to be made safe for the innermost. Where none can (inside
+   backticks, `$'...'`, or a comment), the splice is refused here. *)
+and resolve_cmd_holes s loc parts tail =
+  let segs =
+    List.concat_map (fun (lit, _, (hole : Token.hole), _) ->
+      [Shell_scan.Lit lit;
+       (match hole with Token.Source -> Shell_scan.RawHole | _ -> Shell_scan.QuotedHole)])
+      parts
+    @ [Shell_scan.Lit tail]
+  in
+  let ctxs = Shell_scan.hole_contexts segs in
+  List.mapi (fun k (lit, src, (hole : Token.hole), (at : Token.pos)) ->
+    let toks = interp_tokens loc src at in
+    let s2 = sub_parser s toks in
+    let e = expr_ 0 s2 in
+    let hole' =
+      match hole with
+      | Token.Source -> Token.Source
+      | _ ->
+        (match ctxs.(k) with
+         | Shell_scan.HArg      -> Token.Arg
+         | Shell_scan.HInside c -> Token.Inside c
+         | Shell_scan.HArith    -> Token.Arith
+         | Shell_scan.HErr why  ->
+           fail_at (Token.point ~file:loc.Token.file at.Token.p_line
+                      at.Token.p_col at.Token.p_offset) why)
+    in
+    (lit, e, hole'))
+    parts
+
 and atom_base_ s =
   let loc = peek_loc s in
   match advance s with
@@ -1339,27 +1373,15 @@ and atom_base_ s =
     expect s Token.RParen;
     RunCmd (e, s.shell_allow)
   | Token.RunCmdRaw (parts, tail) ->
-    let parse_parts = List.map (fun (lit, src, hole, at) ->
-      let toks = interp_tokens loc src at in
-      let s2 = sub_parser s toks in
-      (lit, expr_ 0 s2, hole)
-    ) parts in
+    let parse_parts = resolve_cmd_holes s loc parts tail in
     if parse_parts = [] then RunCmd (String tail, s.shell_allow)
     else RunCmd (CmdInterp (parse_parts, tail), s.shell_allow)
   | Token.RunQueryRaw (parts, tail) ->
-    let parse_parts = List.map (fun (lit, src, hole, at) ->
-      let toks = interp_tokens loc src at in
-      let s2 = sub_parser s toks in
-      (lit, expr_ 0 s2, hole)
-    ) parts in
+    let parse_parts = resolve_cmd_holes s loc parts tail in
     if parse_parts = [] then RunQuery (String tail, s.shell_allow)
     else RunQuery (CmdInterp (parse_parts, tail), s.shell_allow)
   | Token.CommandRaw (parts, tail) ->
-    let parse_parts = List.map (fun (lit, src, hole, at) ->
-      let toks = interp_tokens loc src at in
-      let s2 = sub_parser s toks in
-      (lit, expr_ 0 s2, hole)
-    ) parts in
+    let parse_parts = resolve_cmd_holes s loc parts tail in
     if parse_parts = [] then MkCommand (String tail, s.shell_allow)
     else MkCommand (CmdInterp (parse_parts, tail), s.shell_allow)
   | Token.Regex (pat, flags) -> RegexLit (pat, flags)

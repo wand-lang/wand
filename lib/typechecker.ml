@@ -4618,7 +4618,13 @@ let rec infer tenv (env : env) (e : expr) : typ =
     List.iter (fun (_, e) -> ignore (infer tenv env e)) parts;
     TString
   | CmdInterp (parts, _) ->
-    List.iter (fun (_, e, _) -> ignore (infer tenv env e)) parts;
+    List.iter (fun (_, e, h) ->
+      let t = infer tenv env e in
+      (* An arithmetic operand goes in as a number, so the shell cannot read
+         anything else out of it; the value has to be an Int. *)
+      match (h : Token.hole) with
+      | Token.Arith -> unify_expected ~expected:TInt ~got:t
+      | _ -> ()) parts;
     TString
   | Seq (a, b) ->
     let ta = infer tenv env a in

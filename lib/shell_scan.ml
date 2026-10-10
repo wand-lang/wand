@@ -30,6 +30,17 @@ type scan = {
   raw_tail : bool;             (* a %!{...} appeared: the scan stops there *)
 }
 
+(* Where a `%{...}` splice lands, read from the shell context around it
+   rather than from the quote the lexer happened to have open. The lexer
+   saw one layer; the shell reads through several, and the value has to be
+   quoted for the one it actually arrives in -- or, where no quoting is
+   safe, the splice is refused. *)
+type hole_ctx =
+  | HArg               (* a word of its own: wrap in single quotes *)
+  | HInside of char    (* inside the author's own '...' or "...": escape for it *)
+  | HArith             (* an arithmetic operand: the value must be an Int *)
+  | HErr of string     (* nothing here can carry a value safely; why *)
+
 (* POSIX reserved words, plus `function`. Any of these in command position
    means the line's real commands live inside a compound body that neither
    the static check nor the spawn check can bound. `time` is deliberately
@@ -54,13 +65,71 @@ let is_assignment w =
     let rec ok j = j >= i || (name_char j w.[j] && ok (j + 1)) in
     ok 0
 
-let scan (segs : seg list) : scan =
+(* `[[` evaluates its `-eq`-style operands as arithmetic, reading a word's
+   value as a number, so a value quoted as one argument is still re-read and
+   the bracket cannot be bounded by a word list. It is control flow, refused
+   under a narrowed manifest. (`((` is read as arithmetic in command position
+   -- see the scan -- where a `%{}` operand is held to `Int`.) *)
+let arith_commands = ["[["]
+
+(* The quote a frame has open, which decides how a value spliced there is
+   made safe. `QAnsi` is `$'...'`, where `\` escapes and the value cannot be
+   quoted at all. *)
+type quote = QNone | QSingle | QDouble | QAnsi
+
+(* A command context the shell has entered: a `$(...)`, a backtick span, a
+   `(...)` subshell, or an `$((...))`/`((...))` arithmetic. Each carries the
+   quote open within it (fresh on entry, the shell having reset it) and,
+   for arithmetic, the depth of its own inner parens. A hole reached inside
+   a backtick frame cannot be quoted -- the backtick layer strips a
+   backslash the value would need -- so `bt` is remembered. *)
+type frame =
+  { mutable q : quote; bt : bool; arith : bool; mutable pdepth : int;
+    (* Opened in the value of a `NAME=` prefix: when it closes, the command
+       word is still to come, so `X=$(date) git log` runs git. *)
+    assign : bool }
+
+(* One command template's atoms, holes kept apart from the text so look-ahead
+   can step over one without reading into it. *)
+type atom = Ch of char | Hole of int
+
+let atoms_of (segs : seg list) : atom array * bool array =
+  let atoms = ref [] and raws = ref [] and k = ref 0 in
+  List.iter (fun seg ->
+    match seg with
+    | Lit s -> String.iter (fun c -> atoms := Ch c :: !atoms) s
+    | QuotedHole -> atoms := Hole !k :: !atoms; raws := false :: !raws; incr k
+    | RawHole    -> atoms := Hole !k :: !atoms; raws := true  :: !raws; incr k)
+    segs;
+  (Array.of_list (List.rev !atoms), Array.of_list (List.rev !raws))
+
+(* The scan, over the atoms of one command template. `stop_at_raw` is set for
+   the word list: after a `%!{...}` the rest of the line is shell source
+   nothing can read, so the scan stops there. For hole contexts it is not
+   set -- a raw splice is the author's own, and a `%{}` after it is still
+   read for the quoting it needs, on the best-effort assumption the raw text
+   left the quoting as it found it. *)
+let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
+  let n = Array.length atoms in
   let words = ref [] in
   let buf = Buffer.create 16 in
   let has_hole = ref false in
   let expecting = ref true in      (* the next word is a command word *)
   let skip_target = ref false in   (* the next word is a redirection target *)
   let raw_tail = ref false in
+  let at_word_start = ref true in  (* a `#` here opens a comment *)
+  let comment = ref false in       (* in a `#` comment, to the line's end *)
+  (* A heredoc the current line opened (`<<WORD`), waiting for its body to
+     start at the next newline, and whether `<<-` stripped leading tabs. *)
+  let hd_pending = ref None in
+  (* The delimiter of the heredoc body being read now, with the line built
+     so far to match it against. A `%{}` in a heredoc body cannot be made
+     one argument -- `$(...)` in the body still expands whatever quoting the
+     value carried -- so it is refused; the body text is otherwise data. *)
+  let hd_active = ref None in
+  let hd_strip = ref false in
+  let hd_line = Buffer.create 16 in
+  let ctxs = Array.make (Array.length raws) HArg in
   (* The rest of a `NAME=$(...)` prefix after its substitution closes: still
      an assignment, so the next word is still the command word. *)
   let assign_tail = ref false in
@@ -70,6 +139,11 @@ let scan (segs : seg list) : scan =
      `av=b`; the buffer holds the text with the quoting gone, and read alone
      it said assignment, which hid that command from the list. *)
   let name_plain = ref true in
+  (* The command contexts open now, innermost first; the base frame is the
+     line itself. *)
+  let frames = ref [ { q = QNone; bt = false; arith = false; pdepth = 0; assign = false } ] in
+  let cur () = List.hd !frames in
+  let in_arith () = (cur ()).arith in
   let mark_name () =
     if not (String.contains (Buffer.contents buf) '=') then name_plain := false in
   let assignment w = is_assignment w && !name_plain in
@@ -81,6 +155,8 @@ let scan (segs : seg list) : scan =
     let assign = assignment w in
     name_plain := true;
     if !assign_tail then assign_tail := false
+    (* Arithmetic operands are numbers, not commands. *)
+    else if in_arith () then ()
     else if w = "" && not dynamic then ()
     else if !skip_target then skip_target := false
     else if not !expecting then ()
@@ -88,7 +164,7 @@ let scan (segs : seg list) : scan =
        and the word is still a prefix. *)
     else if assign then ()  (* still expecting the command word *)
     else if dynamic then (words := Dynamic :: !words; expecting := false)
-    else if List.mem w reserved then
+    else if List.mem w reserved || List.mem w arith_commands then
       (words := Compound w :: !words; expecting := false)
     else (words := Literal w :: !words; expecting := false)
   in
@@ -96,152 +172,251 @@ let scan (segs : seg list) : scan =
      all run commands, and what runs is the whole question here, so each is
      scanned as a command position of its own rather than skipped as opaque.
      Skipping them was a way past the manifest: `Shell(echo)` admitted
-     `$(echo $(whoami))`, which runs whoami.
+     `$(echo $(whoami))`, which runs whoami. Each nested context pushes a
+     frame of its own, with the quoting reset as the shell resets it, and
+     contributes a word whose text arrives at run time, so a command word
+     built from one reads as Dynamic.
 
-     Each nested context saves the quoting it interrupted -- inside `"..."`
-     a substitution starts quoting afresh and the double quote resumes after
-     the `)` -- and each contributes a word whose text arrives at run time,
-     so a command word built from one reads as Dynamic and is checked at
-     spawn. *)
-  let scan_lit text =
-    let n = String.length text in
-    let i = ref 0 in
-    let quote = ref ' ' in         (* ' ', '\'' or '"' *)
-    (* The quoting each open context suspended, and whether it opened in
-       the value of a `NAME=` prefix. *)
-    let nested = ref [] in
-    let in_backtick = ref false in
-    let peek k = if !i + k < n then text.[!i + k] else '\000' in
-    let enter () =
-      (* What runs inside starts a command line of its own; what the context
-         yields is text this word cannot be read from -- unless the word is
-         a `NAME=` prefix, whose value runs nothing and leaves the command
-         word still to come. Read as a command word, `x=$(echo) whoami`
-         hid whoami behind a Dynamic word that nothing checked. *)
-      let assign =
-        !expecting && not !skip_target && assignment (Buffer.contents buf) in
-      if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
-      else (has_hole := true; finish_word ());
-      nested := (!quote, assign) :: !nested;
-      quote := ' ';
-      expecting := true
-    in
-    let leave () =
-      finish_word ();
-      let resume =
-        match !nested with
-        | (q, a) :: rest -> quote := q; nested := rest; a
-        | [] -> quote := ' '; false
-      in
-      if resume then (assign_tail := true; expecting := true)
-      else expecting := false
-    in
-    (* `$((...))` is arithmetic, not a command: sh evaluates it and runs
-       nothing, so there is nothing here to check -- when it closes with
-       `))`. When the parentheses balance before that, sh reads the same
-       text as a command substitution around a subshell: `$((whoami) )`
-       runs whoami. That form is scanned as `$(` followed by `(`, so the
-       word inside is a command position like any other. *)
-    let skip_arithmetic () =
-      let start = !i in
-      i := !i + 3;
-      let depth = ref 2 in
-      while !depth > 0 && !i < n do
-        (match text.[!i] with
-         | '(' -> incr depth
-         | ')' -> decr depth
-         | _ -> ());
-        incr i
-      done;
-      let closed_as_arithmetic =
-        !depth = 0 && !i >= 2 && text.[!i - 1] = ')' && text.[!i - 2] = ')'
-      in
-      if closed_as_arithmetic then (mark_name (); has_hole := true)
-      else begin
-        i := start + 2;
-        enter ()
-      end
-    in
-    while !i < n do
-      let c = text.[!i] in
-      if !quote = '\'' then begin
-        (* Single quotes: every character is itself until the next one. *)
-        if c = '\'' then quote := ' ' else Buffer.add_char buf c;
-        incr i
-      end else if !quote = '"' then begin
-        (* Double quotes keep the word together, but the shell still reads
-           `$(...)` and backticks inside them. *)
-        if c = '\\' && !i + 1 < n then begin
-          Buffer.add_char buf c; Buffer.add_char buf (peek 1); i := !i + 2
-        end else if c = '$' && peek 1 = '(' && peek 2 = '(' then
-          skip_arithmetic ()
-        else if c = '$' && peek 1 = '(' then (enter (); i := !i + 2)
-        else if c = '`' then (enter (); in_backtick := true; incr i)
-        else begin
-          if c = '"' then quote := ' ' else Buffer.add_char buf c;
-          incr i
-        end
-      end else
-        match c with
-        | '\'' | '"' -> mark_name (); quote := c; incr i
-        | '`' ->
-          if !in_backtick then (leave (); in_backtick := false)
-          else (enter (); in_backtick := true);
-          incr i
-        | '$' when peek 1 = '(' && peek 2 = '(' -> skip_arithmetic ()
-        | '$' when peek 1 = '(' -> enter (); i := !i + 2
-        | '\\' when !i + 1 < n ->
-          mark_name (); Buffer.add_char buf (peek 1); i := !i + 2
-        | ' ' | '\t' -> finish_word (); incr i
-        (* A newline separates two commands, exactly as `;` does. Read as
-           whitespace, the word after one was never a command position, so
-           neither the allowlist check nor the check at spawn ever saw it:
-           `$(echo %!{c})` with a newline in `c` ran whatever followed. *)
-        | '\n' -> finish_word (); expecting := true; incr i
-        | '(' -> finish_word (); nested := (!quote, false) :: !nested;
-                 expecting := true; incr i
-        | ')' -> leave (); incr i
-        | '|' ->
-          finish_word (); expecting := true;
-          i := !i + (if peek 1 = '|' || peek 1 = '&' then 2 else 1)
-        | '&' ->
-          finish_word (); expecting := true;
-          i := !i + (if peek 1 = '&' then 2 else 1)
-        | ';' -> finish_word (); expecting := true; incr i
-        | '<' | '>' ->
-          (* A redirection: any digits gathered so far are its fd prefix,
-             not a word. `>&2`-style forms carry their own target. *)
-          if Buffer.contents buf <> ""
-             && String.for_all (fun d -> d >= '0' && d <= '9')
-                  (Buffer.contents buf)
-          then Buffer.clear buf
-          else finish_word ();
-          let j = ref (!i + 1) in
-          if !j < n && (text.[!j] = '>' || text.[!j] = '<') then incr j;
-          if !j < n && text.[!j] = '&' then begin
-            incr j;
-            while !j < n && text.[!j] >= '0' && text.[!j] <= '9' do incr j done
-          end else skip_target := true;
-          i := !j
-        | c -> Buffer.add_char buf c; incr i
-    done
+     A `NAME=` prefix is the exception: its value runs nothing and leaves the
+     command word still to come, so `x=$(echo) whoami` does not hide whoami
+     behind a Dynamic word that nothing checked. *)
+  (* `value` is set for a context whose output lands in the current word --
+     a `$(...)` or a backtick span -- so that word reads as Dynamic, its text
+     unknowable until the value arrives. A `(...)` subshell, a process
+     substitution and an `$((...))` run or compute but do not fill a word, so
+     they leave the word as it was. *)
+  let push_frame ?(bt = false) ?(arith = false) ?(value = false) () =
+    let assign =
+      value && !expecting && not !skip_target && not (in_arith ())
+      && assignment (Buffer.contents buf) in
+    if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
+    else (if value then has_hole := true; finish_word ());
+    frames := { q = QNone; bt; arith; pdepth = 0; assign } :: !frames;
+    expecting := not arith;
+    at_word_start := true
   in
+  let leave () =
+    finish_word ();
+    let resumed =
+      match !frames with
+      | top :: (_ :: _ as rest) -> frames := rest; top.assign
+      | _ -> false
+    in
+    (* A prefix's own `$(...)` leaves the command word still to come; any
+       other `)` ends a command position. *)
+    if resumed then (assign_tail := true; expecting := true)
+    else expecting := false;
+    at_word_start := true
+  in
+  let at j = if j >= 0 && j < n then (match atoms.(j) with Ch c -> c | Hole _ -> '\000') else '\000' in
+  (* `$((...))` vs `$( (...) )`: the shell reads `$((` as arithmetic only
+     when it closes with `))`. Look ahead over the atoms, counting parens
+     from the two just opened and ignoring holes, to tell them apart before
+     deciding what to do with the inside. `((whoami) )` closes early and is
+     a subshell; the inside is then a command position. *)
+  let closes_as_arithmetic start =
+    let depth = ref 2 and j = ref start and prev = ref ' ' and prev2 = ref ' '
+    and arith = ref false and stop = ref false in
+    while not !stop && !j < n do
+      (match atoms.(!j) with
+       | Ch '(' -> incr depth; prev2 := !prev; prev := '('
+       | Ch ')' -> decr depth; prev2 := !prev; prev := ')';
+         if !depth = 0 then
+           (arith := (!prev = ')' && !prev2 = ')'); stop := true)
+       | Ch c -> prev2 := !prev; prev := c
+       | Hole _ -> prev2 := !prev; prev := 'x');
+      incr j
+    done;
+    !arith
+  in
+  let hole_ctx () =
+    if !comment then HErr "a `%{}` value cannot go inside a `#` comment"
+    else
+      let f = cur () in
+      if f.q = QAnsi then
+        HErr "a `%{}` value cannot be quoted inside a $'...' string; splice \
+              it outside the quotes"
+      else if f.bt then
+        HErr "a `%{}` value cannot be quoted inside backticks; use $(...) \
+              instead, where it is one argument"
+      else if f.arith then HArith
+      else match f.q with
+        | QNone   -> HArg
+        | QSingle -> HInside '\''
+        | QDouble -> HInside '"'
+        | QAnsi   -> assert false
+  in
+  let i = ref 0 in
+  let peek_ch k = at (!i + k) in
   (try
-     List.iter (fun seg ->
-       match seg with
-       | Lit text -> scan_lit text
-       | QuotedHole -> mark_name (); has_hole := true
-       | RawHole ->
-         (* Shell source arrives here at runtime; nothing after it can be
-            read structurally from the written text. The spawn-time rescan
-            of the resolved line picks up where this leaves off. *)
-         raw_tail := true;
-         if !expecting then words := Dynamic :: !words;
-         raise Exit)
-       segs;
-     finish_word ()
-   with Exit -> ());
-  { words = List.rev !words; raw_tail = !raw_tail }
+    while !i < n do
+      (match atoms.(!i) with
+       | Hole k ->
+         if raws.(k) then begin
+           raw_tail := true;
+           if stop_at_raw then begin
+             if !expecting && not (in_arith ()) then words := Dynamic :: !words;
+             raise Exit
+           end
+         end else if !hd_active <> None then
+           ctxs.(k) <- HErr "a `%{}` value cannot go inside a heredoc body; \
+                             pipe it in with |> instead"
+         else begin
+           ctxs.(k) <- hole_ctx ();
+           mark_name (); has_hole := true; at_word_start := false
+         end;
+         incr i
+       | Ch c ->
+         (match !hd_active with
+          | Some delim ->
+            (* In a heredoc body: match the delimiter line, and keep the
+               body otherwise as data. *)
+            if c = '\n' then begin
+              let line = Buffer.contents hd_line in
+              let line = if !hd_strip then
+                  (let j = ref 0 in
+                   while !j < String.length line && line.[!j] = '\t' do incr j done;
+                   String.sub line !j (String.length line - !j))
+                else line in
+              Buffer.clear hd_line;
+              if line = delim then hd_active := None
+            end
+            else Buffer.add_char hd_line c;
+            incr i
+          | None ->
+         let f = cur () in
+         if !comment then begin
+           if c = '\n' then (comment := false; finish_word ();
+                             expecting := true; at_word_start := true);
+           incr i
+         end
+         else if f.q = QSingle then begin
+           if c = '\'' then f.q <- QNone else Buffer.add_char buf c;
+           incr i
+         end
+         else if f.q = QAnsi then begin
+           (* `$'...'`: `\` spends the next character, and only an unescaped
+              `'` ends it. Read as a plain single quote, a `\'` inside closed
+              it early and desynced the scan. *)
+           if c = '\\' && !i + 1 < n then (Buffer.add_char buf (peek_ch 1); i := !i + 2)
+           else (if c = '\'' then f.q <- QNone else Buffer.add_char buf c; incr i)
+         end
+         else if f.q = QDouble then begin
+           if c = '\\' && !i + 1 < n then
+             (Buffer.add_char buf c; Buffer.add_char buf (peek_ch 1); i := !i + 2)
+           else if c = '$' && peek_ch 1 = '(' && peek_ch 2 = '(' then
+             (if closes_as_arithmetic (!i + 3)
+              then (i := !i + 3; push_frame ~arith:true ())
+              else (i := !i + 2; push_frame ~value:true ()))
+           else if c = '$' && peek_ch 1 = '(' then (i := !i + 2; push_frame ~value:true ())
+           else if c = '`' then
+             (incr i; if f.bt then leave () else push_frame ~bt:true ~value:true ())
+           else (if c = '"' then f.q <- QNone else Buffer.add_char buf c; incr i)
+         end
+         else begin
+           (* Unquoted. *)
+           match c with
+           | '#' when !at_word_start -> comment := true; incr i
+           | '\'' -> mark_name (); f.q <- QSingle; at_word_start := false; incr i
+           | '"'  -> mark_name (); f.q <- QDouble; at_word_start := false; incr i
+           | '$' when peek_ch 1 = '\'' ->
+             mark_name (); f.q <- QAnsi; at_word_start := false; i := !i + 2
+           | '`' -> incr i; if f.bt then leave () else push_frame ~bt:true ~value:true ()
+           | '$' when peek_ch 1 = '(' && peek_ch 2 = '(' ->
+             if closes_as_arithmetic (!i + 3)
+             then (i := !i + 3; push_frame ~arith:true ())
+             else (i := !i + 2; push_frame ~value:true ())
+           | '$' when peek_ch 1 = '(' -> i := !i + 2; push_frame ~value:true ()
+           (* Inside arithmetic, parens are its own; outside, `((` opens a
+              nested arithmetic and a lone `(` a subshell. *)
+           | '(' when f.arith -> f.pdepth <- f.pdepth + 1; incr i
+           | '(' when peek_ch 1 = '(' && closes_as_arithmetic (!i + 2) ->
+             i := !i + 2; push_frame ~arith:true ()
+           | '(' -> i := !i + 1; push_frame ()
+           | ')' when f.arith && f.pdepth > 0 -> f.pdepth <- f.pdepth - 1; incr i
+           | ')' when f.arith ->
+             (* The first `)` of the closing `))`, which the look-ahead
+                promised. *)
+             i := !i + 2; leave ()
+           | ')' -> leave (); incr i
+           | '\\' when !i + 1 < n ->
+             mark_name (); Buffer.add_char buf (peek_ch 1); at_word_start := false;
+             i := !i + 2
+           | ' ' | '\t' -> finish_word (); at_word_start := true; incr i
+           (* A newline separates two commands, exactly as `;` does -- and
+              starts a heredoc body the line before it opened. *)
+           | '\n' ->
+             finish_word (); expecting := true; at_word_start := true;
+             (match !hd_pending with
+              | Some (d, strip) ->
+                hd_active := Some d; hd_strip := strip;
+                hd_pending := None; Buffer.clear hd_line
+              | None -> ());
+             incr i
+           | '|' -> finish_word (); expecting := true; at_word_start := true;
+                    i := !i + (if peek_ch 1 = '|' || peek_ch 1 = '&' then 2 else 1)
+           | '&' -> finish_word (); expecting := true; at_word_start := true;
+                    i := !i + (if peek_ch 1 = '&' then 2 else 1)
+           | ';' -> finish_word (); expecting := true; at_word_start := true; incr i
+           | ('<' | '>') when peek_ch 1 = '(' ->
+             (* Process substitution `<(cmd)` / `>(cmd)`: a command of its
+                own, not a redirection to a file. *)
+             finish_word (); i := !i + 2; push_frame ()
+           | '<' when peek_ch 1 = '<' && peek_ch 2 <> '<' ->
+             (* A heredoc, `<<WORD` or `<<-WORD`, the delimiter maybe quoted.
+                The command before it is already read; its body, after the
+                next newline, is data a `%{}` cannot safely enter. *)
+             finish_word ();
+             let j = ref (!i + 2) in
+             let strip = at !j = '-' in
+             if strip then incr j;
+             while at !j = ' ' || at !j = '\t' do incr j done;
+             let delim = Buffer.create 8 in
+             (if at !j = '\'' || at !j = '"' then begin
+                let q = at !j in incr j;
+                while !j < n && at !j <> q do Buffer.add_char delim (at !j); incr j done;
+                if !j < n then incr j
+              end else
+                while !j < n &&
+                      (let d = at !j in
+                       d <> ' ' && d <> '\t' && d <> '\n' && d <> ';'
+                       && d <> '|' && d <> '&' && d <> ')' && d <> '<' && d <> '>')
+                do Buffer.add_char delim (at !j); incr j done);
+             hd_pending := Some (Buffer.contents delim, strip);
+             skip_target := false; at_word_start := true;
+             i := !j
+           | '<' | '>' ->
+             (* A redirection: any digits gathered so far are its fd prefix,
+                not a word. `>&2`-style forms carry their own target. *)
+             if Buffer.contents buf <> ""
+                && String.for_all (fun d -> d >= '0' && d <= '9')
+                     (Buffer.contents buf)
+             then Buffer.clear buf
+             else finish_word ();
+             let j = ref (!i + 1) in
+             if at !j = '>' || at !j = '<' then incr j;
+             if at !j = '&' then begin
+               incr j;
+               while at !j >= '0' && at !j <= '9' do incr j done
+             end else skip_target := true;
+             at_word_start := true;
+             i := !j
+           | _ -> Buffer.add_char buf c; at_word_start := false; incr i
+         end))
+    done;
+    finish_word ()
+  with Exit -> ());
+  ({ words = List.rev !words; raw_tail = !raw_tail }, ctxs)
+
+let scan (segs : seg list) : scan =
+  let (atoms, raws) = atoms_of segs in
+  fst (run atoms raws ~stop_at_raw:true)
+
+(* The context each `%{...}` lands in, one per hole in order, read from the
+   whole command template rather than from the quote the lexer had open. *)
+let hole_contexts (segs : seg list) : hole_ctx array =
+  let (atoms, raws) = atoms_of segs in
+  snd (run atoms raws ~stop_at_raw:false)
 
 (* The runtime side: the resolved command line, no holes left. *)
 let scan_string text = scan [Lit text]
@@ -264,8 +439,9 @@ let rec segs_of_cmd (e : Ast.expr) : seg list =
        (match (h : Token.hole) with
         | Token.Source -> RawHole
         (* Quoted for whatever it lands in, so it is one word's worth of
-           text either way: it cannot introduce an operator. *)
-        | Token.Arg | Token.Inside _ -> QuotedHole)]) parts
+           text either way: it cannot introduce an operator. An arithmetic
+           operand is a number, which is one word too. *)
+        | Token.Arg | Token.Inside _ | Token.Arith -> QuotedHole)]) parts
     @ [Lit tail]
   | _ -> [RawHole]
 

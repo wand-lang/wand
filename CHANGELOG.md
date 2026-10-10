@@ -24,6 +24,8 @@
 
 ### Fixed
 
+- A `%{x}` value is quoted for the shell context it lands in, through nested substitutions and arithmetic, and refused where none is safe -- backticks, `$'...'`, a heredoc body (security).
+- The command-word scan finds commands inside arithmetic, `$'...'` and `#` comments, and reads process substitution and `[[`/`((`, so none slips past a narrowed `Shell(...)` (security).
 - A command word made by a substitution is refused under a `Shell(...)` list (security).
 - An interface member with no effects written is pure (security).
 - Command words an import runs as it loads are checked against `Shell(...)` (security).

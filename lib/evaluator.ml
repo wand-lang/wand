@@ -2866,7 +2866,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
         (match (h : Token.hole) with
          | Token.Source    -> v
          | Token.Arg       -> shell_quote v
-         | Token.Inside q  -> quote_within q v)
+         | Token.Inside q  -> quote_within q v
+         (* The typechecker holds an arithmetic operand to `Int`, whose text
+            is digits and a sign -- nothing a shell reads -- so it goes in
+            as itself, where a quote would be a syntax error. *)
+         | Token.Arith     -> v)
     ) parts;
     Buffer.add_string buf tail;
     VString (Buffer.contents buf)

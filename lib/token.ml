@@ -13,6 +13,7 @@
 type hole =
   | Arg
   | Inside of char   (* the quote character it sits between *)
+  | Arith            (* an operand of $((...)): the value must be an Int *)
   | Source
 
 (* Where an interpolation's body begins in the file it was written in. The
