@@ -165,8 +165,13 @@ with held as _ -> List.each (fn i -> IO.println "%%{i} %%{String.repeat 200 "x"}
    length so that it is this test's and no one else's. *)
 let test_an_early_stop_ends_the_whole_command () =
   let marker = "31.7319" in
+  (* `[s]leep` so the pattern does not match the `pgrep` command line itself
+     -- its own argv holds `[s]leep <marker>`, which the regex `[s]leep` does
+     not match, while the real `sleep <marker>` does. Without it the counter
+     found its own shell and never read zero. *)
+  let pat = "[s]leep " ^ marker in
   let count () =
-    let ic = Unix.open_process_in ("pgrep -f 'sleep " ^ marker ^ "' | wc -l") in
+    let ic = Unix.open_process_in (Printf.sprintf "pgrep -f '%s' | wc -l" pat) in
     let n = int_of_string (String.trim (In_channel.input_all ic)) in
     ignore (Unix.close_process_in ic); n
   in
@@ -185,7 +190,7 @@ let test_an_early_stop_ends_the_whole_command () =
   in
   let left = wait 50 in
   if left > 0 then
-    ignore (Sys.command ("pkill -f 'sleep " ^ marker ^ "'"));
+    ignore (Sys.command (Printf.sprintf "pkill -f '%s'" pat));
   Alcotest.(check int) "nothing it started is left" 0 left
 
 let () =
