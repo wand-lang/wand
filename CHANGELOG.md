@@ -4,19 +4,19 @@
 
 ### Added
 
-- `Net.listen_on` serves on one address (GHSA-x4q8-rp45-2qxc).
+- `Net.listen_on` serves on one address (security).
 - `!` siblings for `URL.of_string`, `URL.join`, `URL.decode`, `IPv4.of_string`, `CIDR.of_string`, `Version.of_string`, `Glob.of_string` and `Regex.compile` (#107).
 - `CSV.parse!` and `CSV.parse_with!` (#108).
 
 ### Changed
 
 - `CSV.parse` and `CSV.parse_with` answer a `Result` (#108).
-- A run checks a script before its imports run, and runs them inside the rehearsal (GHSA-fcqc-f3xg-j87f, GHSA-4wpv-627h-m9rf).
-- A connection ends at a line over 1MB or 60 seconds idle (GHSA-x4q8-rp45-2qxc).
-- The language server fetches no packages (GHSA-428f-6pj6-2p65).
+- A run checks a script before its imports run, and runs them inside the rehearsal (security).
+- A connection ends at a line over 1MB or 60 seconds idle (security).
+- The language server fetches no packages (security).
 - A language-server check stops after 5 seconds (#92).
 - `**/` in a glob matches zero directories too (#102).
-- `wand d --load` and `wand t -e --load` read the file without running it (GHSA-xrf7-r8rq-93q6).
+- `wand d --load` and `wand t -e --load` read the file without running it (security).
 - `Float.round`, `floor` and `ceil` raise for NaN, infinity and values out of range (#95).
 - A negative `Duration` or `Size` raises (#96).
 - `Version.bump_minor` and `bump_major` bump a prerelease to its release (#98).
@@ -24,15 +24,15 @@
 
 ### Fixed
 
-- A command word made by a substitution is refused under a `Shell(...)` list (GHSA-2pwg-8wvf-253c).
-- An interface member with no effects written is pure (GHSA-p6xq-g5m5-fqj4).
-- Command words an import runs as it loads are checked against `Shell(...)` (GHSA-fcf6-3hrr-mff9).
-- A package with a symbolic link, or a path with `.` or `..`, is refused (GHSA-7c39-4x9j-x253, GHSA-86rg-h3fg-fm9g).
-- A redirect to another origin drops credential headers (GHSA-pg37-2mp3-vfjc).
-- curl runs with `-q` and `--globoff` (GHSA-392g-3ph4-5rjm).
-- `HTTP.serve` refuses ambiguous body framing and line breaks in headers (GHSA-xx93-hjfj-x77w, GHSA-prq9-m6ff-v8j6).
-- `--dry-run` withholds `Net.listen` and `Net.write` (GHSA-j284-632c-cx4v).
-- `FS.write_atomic` keeps its temp file private (GHSA-39xr-jgc5-3q52).
+- A command word made by a substitution is refused under a `Shell(...)` list (security).
+- An interface member with no effects written is pure (security).
+- Command words an import runs as it loads are checked against `Shell(...)` (security).
+- A package with a symbolic link, or a path with `.` or `..`, is refused (security).
+- A redirect to another origin drops credential headers (security).
+- curl runs with `-q` and `--globoff` (security).
+- `HTTP.serve` refuses ambiguous body framing and line breaks in headers (security).
+- `--dry-run` withholds `Net.listen` and `Net.write` (security).
+- `FS.write_atomic` keeps its temp file private (security).
 - `FS.copy` and `FS.copy_tree` refuse a copy onto or into the source (#88).
 - `String.to_int` reads decimal digits only (#84).
 - `Random.int` takes any range (#85).
