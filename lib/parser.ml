@@ -609,6 +609,15 @@ let expect_field_name ?(puns = false) s =
      | None ->
        fail_at loc (Format.asprintf "expected a field name, got %a" Token.pp t))
 
+(* What follows the `.` of an access: a field's name, or the position of a
+   tuple's element, `p.1` (#144). The lexer reads the digits after a `.` as
+   an index alone, so `p.0.1` comes here twice. The index is kept as its
+   digits, so the formatter writes it back as it was written. *)
+let expect_field_or_index s =
+  match peek s with
+  | Token.Int n -> ignore (advance s); string_of_int n
+  | _ -> expect_field_name s
+
 (* A word the language has taken, standing where a name goes. Saying only
    "expected identifier" or "unexpected token" leaves the reader looking at
    a word that plainly is one, and searching the line for a syntax mistake
@@ -1298,7 +1307,7 @@ and infix_ left op s =
        Qualified (m, Qualified (bare_constr_name inner, constr_atom_ s))
      | _ -> fail_at (peek_loc s)
          "a constructor is reached through a module's name or its type's")
-  | Token.Dot       -> Field (left, expect_field_name s)
+  | Token.Dot       -> Field (left, expect_field_or_index s)
   | t -> fail (Format.asprintf "unexpected infix: %a" Token.pp t)
 
 (* An interpolation's body is lexed on its own, so it is told where it sits
@@ -1644,7 +1653,7 @@ and postfix_field_ s e =
           e := Qualified (m, Qualified (bare_constr_name inner, constr_atom_ s))
         | _ -> fail_at (peek_loc s)
             "a constructor is reached through a module's name or its type's")
-     | _ -> e := Field (!e, expect_field_name s))
+     | _ -> e := Field (!e, expect_field_or_index s))
   done;
   !e
 

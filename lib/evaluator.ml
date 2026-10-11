@@ -2698,6 +2698,12 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     (* No VMap case: dot access on a Map is rejected by the typechecker.
        VRecord is how imported module namespaces are reached (FS.cwd). *)
     (match eval env e with
+     (* `p.1`: the typechecker has held the index to the tuple's size. *)
+     | VTuple vs when Ast.tuple_index label <> None ->
+       (match List.nth_opt vs (Option.get (Ast.tuple_index label)) with
+        | Some v -> v
+        | None -> raise (EvalError (Printf.sprintf
+            "a tuple of %d has no element .%s" (List.length vs) label)))
      | VRecord r ->
        (match vrecord_get label r with
         | Some v -> v

@@ -164,6 +164,9 @@ type expr =
   (* `Foo.Live`, `Foo.Conf(host = "a")`: the expression side of
      `PQualified`. *)
   | Qualified of string * expr
+  (* `p.name` reads a field. `p.1` reads the element of a tuple at that
+     position, and its label is the digits (#144); `tuple_index` tells the
+     two apart. *)
   | Field      of expr * string
   | Seq      of expr * expr
   | Located  of Token.loc * expr
@@ -283,6 +286,13 @@ let rec pat_names (p : pat) =
   | PConstrBare (_, ids) -> ids
   | PAnnot (p, _) | PLocated (_, p) -> pat_names p
   | _ -> []
+
+(* The position a `Field` label names when it is the index of a tuple
+   element, `p.1`. A field's name never starts with a digit. *)
+let tuple_index label =
+  if label <> "" && label.[0] >= '0' && label.[0] <= '9' then
+    int_of_string_opt label
+  else None
 
 let rec strip_located = function
   | Located (_, e) -> strip_located e

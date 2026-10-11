@@ -294,6 +294,33 @@ let test_suffix_idents () =
   check_tokens "!= no space"    "foo!=bar"          [Ident "foo"; BangEq; Ident "bar"];
   check_tokens "? in expr"      "empty? xs"      [Ident "empty?"; Ident "xs"]
 
+(* The digits after a `.` are the index of a tuple element, one access at
+   a time: `p.0.1` is `(p.0).1`, never `p` and the Float 0.1, and
+   `p.1.2.3` is never a Version (#144). A number that does not follow a `.`
+   lexes as it did. *)
+let test_tuple_index () =
+  check_tokens "one index" "p.1" [Ident "p"; Dot; Int 1];
+  check_tokens "two indexes, not a Float" "p.0.1"
+    [Ident "p"; Dot; Int 0; Dot; Int 1];
+  check_tokens "three indexes, not a Version" "p.1.2.3"
+    [Ident "p"; Dot; Int 1; Dot; Int 2; Dot; Int 3];
+  check_tokens "four indexes, not an IPv4" "p.1.2.3.4"
+    [Ident "p"; Dot; Int 1; Dot; Int 2; Dot; Int 3; Dot; Int 4];
+  check_tokens "a bracketed tuple" "(a, b).10"
+    [LParen; Ident "a"; Comma; Ident "b"; RParen; Dot; Int 10];
+  check_tokens "a Float alone" "0.1" [Float 0.1];
+  check_tokens "a Float argument" "List.get 0.1"
+    [Upper "List"; Dot; Ident "get"; Float 0.1];
+  check_tokens "a Version alone" "1.2.3" [Version "1.2.3"];
+  check_tokens "an IPv4 alone" "10.0.0.1" [IPv4 "10.0.0.1"];
+  check_tokens "a field, then a Float" "p.x 0.5"
+    [Ident "p"; Dot; Ident "x"; Float 0.5];
+  match tokens "p.01" with
+  | _ -> Alcotest.fail "p.01: expected a lex error"
+  | exception Lexer.LexError (_, m) ->
+    Alcotest.(check string) "a leading zero"
+      "a tuple index has no leading zero: write .1, not .01" m
+
 (* ── Suite ──────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -305,6 +332,7 @@ let () =
       Alcotest.test_case "a brace in a nested string" `Quick
         test_a_brace_in_a_nested_string;
       Alcotest.test_case "booleans"  `Quick test_bool;
+      Alcotest.test_case "a tuple index after a dot" `Quick test_tuple_index;
     ];
     "identifiers", [
       Alcotest.test_case "lowercase"    `Quick test_ident;

@@ -341,6 +341,18 @@ let test_a_field_on_a_number_keeps_its_brackets () =
       "/etc/h",   "(/etc/h)";
       "$HOME",    "($HOME)" ]
 
+(* `wand f` writes a tuple index as it was written, and does not change it
+   to a pattern. `(p.0).1` loses its brackets, because the lexer reads the
+   digits after a `.` one index at a time (#144). *)
+let test_a_tuple_index_is_kept () =
+  let src =
+    "let p = ((1, 2), 3)\nlet a = p.0.1\nlet b = (1, 2).1\nlet c = (f 3).1\n" in
+  Alcotest.(check string) "unchanged" src (fmt src);
+  Alcotest.(check string) "a bracket that is not needed goes"
+    "let b = p.0.1\n" (fmt "let b = (p.0).1\n");
+  formats_and_parses "an index at a narrow margin" 12
+    "let x = List.filter (fn q -> q.1 > 0) pairs\n"
+
 (* A bracket is not written straight onto a glob. A glob literal opens with
    a star, and the two together make the sequence the lexer reads as an
    attempt at a block comment -- so `-*w J::i` came back as source that
@@ -2229,6 +2241,8 @@ let () =
         test_a_string_does_not_stand_in_for_a_comment;
       Alcotest.test_case "field on a number keeps brackets" `Quick
         test_a_field_on_a_number_keeps_its_brackets;
+      Alcotest.test_case "a tuple index is kept" `Quick
+        test_a_tuple_index_is_kept;
       Alcotest.test_case "a bracket is kept off a glob" `Quick
         test_a_bracket_is_kept_off_a_glob;
       Alcotest.test_case "nesting is not exponential" `Quick

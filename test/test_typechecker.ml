@@ -2519,8 +2519,42 @@ let test_a_group_member_called_before_its_body () =
     "let f (n: Int) = g n + 1\nand g (n: Int) = \"x\"\nf 1"
     "2:"
 
+(* `p.N` reads the element of a tuple at position N. The tuple's type gives
+   its size, so an index past the end is a type error (#144). *)
+let test_tuple_index () =
+  ok "the first" {|let p = ("a", 1) in p.0|} "a";
+  ok "the second" {|let p = ("a", 1) in p.1|} "1";
+  ok "a tuple of five" "(1, 2, 3, 4, 5).4" "5";
+  ok "nested" "let p = ((1, 2), 3) in p.0.1" "2";
+  ok "three deep, not a version" "let p = (1, (2, (3, 4))) in p.1.1.1" "4";
+  ok "in an interpolation" {|"%{(1, 2).1}"|} "2";
+  ok "the list gives the lambda its type"
+    "import List\nList.filter (fn p -> p.1 > 0) [(\"a\", 1), (\"b\", 0)]"
+    {|[("a", 1)]|};
+  ok "an annotated parameter"
+    {|let f (p: (String, Int)) = p.1 in f ("a", 2)|} "2";
+  ok "through an alias"
+    "type Pair = (Int, Int)\nlet f (p: Pair) = p.1\nf (3, 4)" "4";
+  err_contains "past the end of a pair" {|("a", 1).2|}
+    "a tuple of 2 has elements .0 to .1";
+  err_contains "past the end of a triple" "(1, 2, 3).3"
+    "a tuple of 3 has elements .0 to .2";
+  err_contains "a parameter with no type" "let second p = p.1"
+    "'p' needs its type before '.1' can be read: write its tuple type, \
+     such as '(p: (A, B))'";
+  err_contains "the example is as long as the index needs"
+    "let fourth p = p.3" "such as '(p: (A, B, C, D))'";
+  err_contains "a value with no name" "fn f -> (f ()).1"
+    "this value needs its type before '.1' can be read";
+  err_contains "not a tuple" "let x = 5 in x.1"
+    "'.1' reads an element of a tuple, and this is Int";
+  err_contains "a module" "import List\nList.1" "a module is not a tuple"
+
 let () =
   Alcotest.run "Typechecker" [
+    "tuple index", [
+      Alcotest.test_case "p.N" `Quick test_tuple_index;
+    ];
     "recursion", [
       Alcotest.test_case "a group member called before its body" `Quick
         test_a_group_member_called_before_its_body;
