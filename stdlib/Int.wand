@@ -7,8 +7,8 @@ import Result
 -- repeated multiplication, the ends of the range, and reading one from
 -- text.
 --
--- A conversion is on the type it produces. `Int.of_string` reads an Int,
--- `String.of_int` writes one as text, and `Float.of_int` widens one.
+-- `Int.of_string` reads an Int from text, `Int.to_string` writes one as
+-- text, and `Float.of_int` widens one.
 --
 -- An Int is a machine word holding `Int.min_value` to `Int.max_value`.
 -- Arithmetic outside that range is a runtime error rather than a wrap,
@@ -75,6 +75,16 @@ let of_string s = str_to_int s
 -- >> Int.of_string! "42"
 -- 42 : Int
 let of_string! s = Result.get! (of_string s)
+
+-- The Int as text: the text that `"%{n}"` gives. `Int.of_string` reads it
+-- back.
+--
+-- >> Int.to_string 42
+-- "42" : String
+--
+-- >> Int.to_string (-7)
+-- "-7" : String
+let to_string n = int_to_str n
 
 implement Ord Int =
   -- The larger of two Ints.

@@ -37,6 +37,13 @@ let of_string s = str_to_port s
 -- :8080 : Port
 let of_string! s = Result.get! (of_string s)
 
+-- The port as text, with its colon: the text that `"%{p}"` gives.
+-- `Port.of_string` reads it back. For the number alone, use `Port.to_int`.
+--
+-- >> Port.to_string :8080
+-- ":8080" : String
+let to_string p = port_to_str p
+
 implement Ord Port =
   -- The larger of two Ports.
   --

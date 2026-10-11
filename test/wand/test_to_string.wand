@@ -1,0 +1,82 @@
+import Bool
+import DateTime
+import Duration
+import Float
+import Int
+import List
+import Port
+import Size
+
+let {test, group} = import Test
+
+-- Each type with a literal has `to_string` as the pair of `of_string`
+-- (#143). The text is the text that interpolation gives, and `of_string`
+-- reads it back to the same value.
+
+group "Int" (fn () ->
+  let xs = [0, 42, -7, Int.max_value, Int.min_value];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Int.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq (List.map Ok xs) (List.map (fn x -> Int.of_string (Int.to_string x)) xs))
+  ])
+
+group "Float" (fn () ->
+  let xs = [0.0, 1.5, -2.25, 3.0, 0.1 + 0.2, 3.141592653589793, 1234567.125, 1.0 / 3.0];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Float.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq (List.map Ok xs) (List.map (fn x -> Float.of_string (Float.to_string x)) xs)),
+    test "a whole value has no point" (fn t -> t.eq "3" (Float.to_string 3.0))
+  ])
+
+group "Bool" (fn () ->
+  let xs = [true, false];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Bool.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq (List.map Ok xs) (List.map (fn x -> Bool.of_string (Bool.to_string x)) xs))
+  ])
+
+group "Duration" (fn () ->
+  let xs = [0s, 90s, 1h30m, 2d, Duration.seconds 90, Duration.weeks 3];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Duration.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq
+        (List.map Ok xs)
+        (List.map (fn x -> Duration.of_string (Duration.to_string x)) xs))
+  ])
+
+group "Size" (fn () ->
+  let xs = [0B, 6466B, 4KB, 100MB, Size.of_bytes 1234567];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Size.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq (List.map Ok xs) (List.map (fn x -> Size.of_string (Size.to_string x)) xs))
+  ])
+
+group "DateTime" (fn () ->
+  let xs = [2026-08-22, 2026-08-22T14:30:45Z, 2026-08-22T20:00:00+05:30];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map DateTime.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq
+        (List.map Ok xs)
+        (List.map (fn x -> DateTime.of_string (DateTime.to_string x)) xs))
+  ])
+
+group "Port" (fn () ->
+  let xs = [:0, :80, :8080, :65535];
+  [
+    test "is the interpolated text" (fn t ->
+      t.eq (List.map (fn x -> "%{x}") xs) (List.map Port.to_string xs)),
+    test "reads back" (fn t ->
+      t.eq (List.map Ok xs) (List.map (fn x -> Port.of_string (Port.to_string x)) xs))
+  ])

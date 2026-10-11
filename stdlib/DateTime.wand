@@ -126,6 +126,17 @@ let of_string s = str_to_datetime s
 -- 2026-08-22T00:00:00Z : DateTime
 let of_string! s = Result.get! (of_string s)
 
+-- The instant as text, in full and in UTC: the text that `"%{d}"` gives.
+-- `DateTime.of_string` reads it back. For the date or the time of day
+-- alone, use `DateTime.date_string` or `DateTime.time_string`.
+--
+-- >> DateTime.to_string 2026-08-22
+-- "2026-08-22T00:00:00Z" : String
+--
+-- >> DateTime.to_string 2026-08-22T20:00:00+05:30
+-- "2026-08-22T14:30:00Z" : String
+let to_string d = dt_to_str d
+
 implement Ord DateTime =
   -- The larger of two instants.
   --

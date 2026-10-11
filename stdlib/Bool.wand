@@ -1,9 +1,9 @@
 import Result
 
--- Reading a Bool from text.
+-- Reading a Bool from text, and writing one as text.
 --
--- `&&`, `||` and `!` are the operations on a Bool, so what is here is the
--- one conversion an operator does not spell.
+-- `&&`, `||` and `!` are the operations on a Bool, so what is here are the
+-- two conversions an operator does not spell.
 
 -- Read "true" or "false", in any case.
 --
@@ -17,3 +17,10 @@ let of_string s = str_to_bool s
 -- >> Bool.of_string! "TRUE"
 -- true : Bool
 let of_string! s = Result.get! (of_string s)
+
+-- The Bool as text, "true" or "false": the text that `"%{b}"` gives.
+-- `Bool.of_string` reads it back.
+--
+-- >> Bool.to_string true
+-- "true" : String
+let to_string b = bool_to_str b

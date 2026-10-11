@@ -76,6 +76,17 @@ let of_string s = str_to_duration s
 -- 1h30m : Duration
 let of_string! s = Result.get! (of_string s)
 
+-- The Duration as text: the text that `"%{d}"` gives. A Duration keeps the
+-- units it was written in, and `Duration.of_string` reads the text back.
+-- To write it in the largest units that divide it, use `Duration.format`.
+--
+-- >> Duration.to_string 90s
+-- "90s" : String
+--
+-- >> Duration.to_string (Duration.seconds 90)
+-- "1m30s" : String
+let to_string d = dur_to_str d
+
 implement Ord Duration =
   -- The larger of two Durations.
   --
