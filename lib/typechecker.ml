@@ -1644,11 +1644,20 @@ let zero_of t =
 (* Record the offer for `x` when it is a call to `List.sum`, `List.max` or
    `List.min` and its type `got` is `Option T`. The change for `List.sum`
    puts `|> Option.default <zero>` after the call, in brackets, and only
-   when the extent of the call is certain. *)
-let offer_empty_default x got =
+   when the extent of the call is certain. When the element type is not
+   known yet, `other` decides it: the type on the other side of the error,
+   which the element must be. *)
+let offer_empty_default ?other x got =
   match empty_list_call x, repr got with
   | Some n, TApp (TName "Option", elt) ->
-    let zero = if n = "sum" then zero_of elt else None in
+    let zero =
+      if n <> "sum" then None
+      else
+        match zero_of elt, repr elt, other with
+        | (Some _ as z), _, _ -> z
+        | None, TVar _, Some t -> zero_of t
+        | _ -> None
+    in
     let hint =
       match zero with
       | Some z ->
@@ -1679,10 +1688,10 @@ let offer_empty_default x got =
   | _ -> ()
 
 (* Run `f`, and record the offer for `x` of type `got` if it fails. *)
-let check_empty_default x got f =
+let check_empty_default ?other x got f =
   try f ()
   with (TypeError _ | TypeErrorAt _) as ex ->
-    offer_empty_default x got;
+    offer_empty_default ?other x got;
     raise ex
 
 (* The same idea for a constructor: one spelled as another language spells
@@ -4482,7 +4491,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
           (match repr tf with
            | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
            | _ -> ());
-          offer_empty_default x tx;
+          offer_empty_default ?other:(match repr tf with
+                                      | TFun (p, _, _) -> Some p
+                                      | _ -> None) x tx;
           raise ex);
        performs_call env f latent;
        tr))
@@ -5468,7 +5479,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
           wrote. Naming both is what makes `expected 'a -> 'a, got Int ->
           Int` readable at all. *)
        let got = infer tenv env e in
-       check_empty_default e got (fun () -> unify_expected ~expected:t ~got);
+       check_empty_default ~other:t e got (fun () -> unify_expected ~expected:t ~got);
        check_written_vars written;
        t))
   | Located (loc, e) ->
@@ -5627,7 +5638,7 @@ and infer_against tenv (env : env) e expected =
     check ()
   | _ ->
     let t = infer tenv env e in
-    check_empty_default e t (fun () -> unify t expected)
+    check_empty_default ~other:expected e t (fun () -> unify t expected)
 
 (* A lambda whose parameter types are to come from where it is given: its
    type, built from what it declares, and the check of its body, to run once
@@ -5724,7 +5735,9 @@ and infer_app_spine ?extra tenv (env : env) head args =
           (match repr !cur with
            | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
            | _ -> ());
-          offer_empty_default x tx;
+          offer_empty_default ?other:(match repr !cur with
+                                      | TFun (p, _, _) -> Some p
+                                      | _ -> None) x tx;
           raise ex);
       performs_call env head latent;
       cur := tr) args;
@@ -5796,25 +5809,27 @@ and infer_binop tenv (env : env) op a b : typ =
           instant first: `deadline - 30s`")
      | _ ->
        let n = fresh_add () in
-       check_empty_default a ta (fun () -> unify ta n);
-       check_empty_default b tb (fun () -> unify tb n);
+       check_empty_default ~other:tb a ta (fun () -> unify ta n);
+       check_empty_default ~other:ta b tb (fun () -> unify tb n);
        n)
   | "*" | "/" ->
     (* One numeric type throughout: Int -> Int -> Int or the same at
        Float. A `Size` times a `Size` is not a `Size`, so the quantities
        that add do not multiply. *)
+    (* Both sides are inferred first, so a call to `List.sum` on one side
+       can take its zero from the type of the other (#127). *)
     let n = fresh_num () in
     let ta = infer tenv env a in
-    check_empty_default a ta (fun () -> unify ta n);
     let tb = infer tenv env b in
-    check_empty_default b tb (fun () -> unify tb n);
+    check_empty_default ~other:tb a ta (fun () -> unify ta n);
+    check_empty_default ~other:ta b tb (fun () -> unify tb n);
     n
   | "%" ->
     (* Int only: float modulo is a niche with sharp edges. *)
     let ta = infer tenv env a in
-    check_empty_default a ta (fun () -> unify_expected ~expected:TInt ~got:ta);
+    check_empty_default ~other:TInt a ta (fun () -> unify_expected ~expected:TInt ~got:ta);
     let tb = infer tenv env b in
-    check_empty_default b tb (fun () -> unify_expected ~expected:TInt ~got:tb);
+    check_empty_default ~other:TInt b tb (fun () -> unify_expected ~expected:TInt ~got:tb);
     TInt
   | "++" ->
     (* `++` joins strings only. Given a list it said "expected String, got
@@ -5848,19 +5863,20 @@ and infer_binop tenv (env : env) op a b : typ =
        not an error. *)
     (try unify ta tb
      with (TypeError _ | TypeErrorAt _) as ex ->
-       offer_empty_default a ta;
-       offer_empty_default b tb;
+       offer_empty_default ~other:tb a ta;
+       offer_empty_default ~other:ta b tb;
        raise ex);
     TBool
   (* Both operands are one ordered type. The constraint is what makes
      `r/a/ < r/b/` a type error rather than a run-time one, and what keeps
      two functions from being compared at all. *)
   | "<" | ">" | "<=" | ">=" ->
+    (* Both sides first, as for `*`. *)
     let o = fresh_ord () in
     let ta = infer tenv env a in
-    check_empty_default a ta (fun () -> unify_expected ~expected:o ~got:ta);
     let tb = infer tenv env b in
-    check_empty_default b tb (fun () -> unify_expected ~expected:o ~got:tb);
+    check_empty_default ~other:tb a ta (fun () -> unify_expected ~expected:o ~got:ta);
+    check_empty_default ~other:ta b tb (fun () -> unify_expected ~expected:o ~got:tb);
     TBool
   | "&&" | "||" ->
     unify (infer tenv env a) TBool;
@@ -5956,7 +5972,9 @@ and infer_binop tenv (env : env) op a b : typ =
        let tb = infer tenv env b in
        let tr = fresh () in
        let latent = Effect_set.unknown () in
-       check_empty_default a ta (fun () -> unify tb (TFun (ta, tr, latent)));
+       check_empty_default
+         ?other:(match repr tb with TFun (p, _, _) -> Some p | _ -> None)
+         a ta (fun () -> unify tb (TFun (ta, tr, latent)));
        performs latent;
        tr)
   | op -> raise (TypeError (Printf.sprintf "unknown operator '%s'" op))

@@ -538,6 +538,41 @@ let test_empty_list_sum_fix () =
     "import List\nimport Option\n\nlet n = (List.sum [1.5] |> Option.default 0.0) + 1.0\n"
     fixed
 
+(* A list that is a parameter: the element type is not known at the error,
+   so the type on the other side of the error decides the zero (#127). *)
+let test_empty_list_sum_of_a_parameter () =
+  let src =
+    "import List\ntype Pod(key: String, restarts: Int)\nlet p cs = Pod(key = \"a\", restarts = List.sum cs)\n" in
+  let d = type_error src in
+  Alcotest.(check bool) "a field of a record: the zero of the field" true
+    (Lint.contains d.Diag.message
+       "Option ('a: Add) and Int are not the same type; List.sum gives None \
+        for an empty list: add |> Option.default 0");
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check string) "and the fix"
+    "import List\nimport Option\n\ntype Pod(key: String, restarts: Int)\nlet p cs = Pod(key = \"a\", restarts = (List.sum cs |> Option.default 0))\n"
+    fixed;
+  let (fixed, _) =
+    fix_clean "import Int\nimport List\nlet f cs = Int.abs (List.sum cs)\n" in
+  Alcotest.(check string) "an argument: the type of the parameter"
+    "import Int\nimport List\nimport Option\n\nlet f cs = Int.abs (List.sum cs |> Option.default 0)\n"
+    fixed;
+  let (fixed, _) =
+    fix_clean "import List\nlet f cs (thr: Int) = List.sum cs > thr\n" in
+  Alcotest.(check string) "a comparison with an Int"
+    "import List\nimport Option\n\nlet f cs (thr: Int) = (List.sum cs |> Option.default 0) > thr\n"
+    fixed;
+  let (fixed, _) = fix_clean "import List\nlet f xs = 1.5 * List.sum xs\n" in
+  Alcotest.(check string) "a Float on the other side"
+    "import List\nimport Option\n\nlet f xs = 1.5 * (List.sum xs |> Option.default 0.0)\n"
+    fixed;
+  let d = refuse "import List\nlet f xs y = List.sum xs > y\n" in
+  Alcotest.(check bool) "no type on either side: the hint" true
+    (Lint.contains d.Diag.message
+       "List.sum gives None for an empty list: use Option.default or match \
+        on it");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None)
+
 (* No fix for `List.max` and `List.min`, no fix where the call stands twice,
    and no hint for an Option that comes from somewhere else. *)
 let test_empty_list_not_offered () =
@@ -630,6 +665,8 @@ let () =
       Alcotest.test_case "List.sum, max, min: the hint" `Quick
         test_empty_list_hint;
       Alcotest.test_case "List.sum: the fix" `Quick test_empty_list_sum_fix;
+      Alcotest.test_case "List.sum of a parameter" `Quick
+        test_empty_list_sum_of_a_parameter;
       Alcotest.test_case "List.sum, max, min: not offered" `Quick
         test_empty_list_not_offered;
       Alcotest.test_case "a replacement is checked" `Quick
