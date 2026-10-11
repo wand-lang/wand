@@ -144,7 +144,7 @@ let _object_of_spec spec args =
 -- >> Args.parse (Decode.optional "port" Decode.port) []
 -- Ok(None) : Result String (Option Port)
 let parse decoder args =
-  _object_of_spec Map.empty args |> Result.and_then (JSON.decode decoder)
+  _object_of_spec Map.empty args |> Result.and_then (json_decode_text decoder)
 
 -- Read arguments against a type's own account of its command line.
 --
@@ -172,7 +172,7 @@ let parse decoder args =
 -- Ok(["a"]) : Result String (List String)
 let read : Parser 'a -> List String -> Result String 'a =
   fn parser args -> _object_of_spec parser.spec args
-  |> Result.and_then (JSON.decode parser.reader)
+  |> Result.and_then (json_decode_text parser.reader)
 
 -- Return true if the arguments ask for help.
 --
