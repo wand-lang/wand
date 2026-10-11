@@ -1,0 +1,108 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "5"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "3\n"
+   }
+  ],
+  "stdout": "attempt 1: exit 3\nattempt 2: exit 3\nattempt 3: ok\noutput: ok on try 3"
+ },
+ {
+  "name": "first try",
+  "args": [
+   "3"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "1\n"
+   }
+  ],
+  "stdout": "attempt 1: ok\noutput: ok on try 1"
+ },
+ {
+  "name": "last try",
+  "args": [
+   "4"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "4\n"
+   }
+  ],
+  "stdout": "attempt 1: exit 3\nattempt 2: exit 3\nattempt 3: exit 3\nattempt 4: ok\noutput: ok on try 4"
+ },
+ {
+  "name": "gives up",
+  "args": [
+   "2"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "5\n"
+   }
+  ],
+  "stdout": "attempt 1: exit 3\nattempt 2: exit 3\ngave up after 2 attempts",
+  "code": 1
+ },
+ {
+  "name": "one attempt that fails",
+  "args": [
+   "1"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "2\n"
+   }
+  ],
+  "stdout": "attempt 1: exit 3\ngave up after 1 attempts",
+  "code": 1
+ },
+ {
+  "name": "zero",
+  "args": [
+   "0"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "1\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "word",
+  "args": [
+   "three"
+  ],
+  "files": [
+   {
+    "path": "need",
+    "text": "1\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing",
+  "files": [
+   {
+    "path": "need",
+    "text": "1\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ }
+]

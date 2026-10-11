@@ -1,0 +1,1 @@
+Also write reports/summary.txt beside the per-day reports: the host name on the first line, then one line per day with its line count. Ops asked for it so they can tell which machine a report came from.

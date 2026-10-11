@@ -1,0 +1,14 @@
+uses {FS.Read, FS.Write, IO}
+
+import FS
+import IO
+
+-- Rotate app.log when it is larger than 100MB.
+
+let log = ./app.log
+
+if FS.file? log && FS.size! log > 100MB then (
+  FS.rename! log ./app.log.1;
+  FS.write_file! log "";
+  IO.println "rotated"
+)

@@ -1,0 +1,22 @@
+uses {Clock, IO, Proc, Shell(curl, systemctl)}
+
+import Clock
+import IO
+import List
+import Proc
+import Shell
+
+-- Restart the app after a release, then wait for it to answer its health
+-- check: ten tries, five seconds apart.
+
+let healthy? () = Shell.ok? $?(curl -fsS --max-time 2 http://localhost:8080/health)
+
+let wait_healthy? () =
+  List.range 1 10 |> List.any? (fn _ -> healthy? () || (Clock.sleep 5s; false))
+
+let _ = $(systemctl restart app)
+
+IO.println "restarted"
+
+if wait_healthy? () then IO.println "healthy"
+else (IO.println_err "the app did not answer its health check within 50s"; Proc.exit 1)

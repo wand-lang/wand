@@ -1,0 +1,28 @@
+uses {FS.Read, FS.Write, Shell(hostname)}
+
+import FS
+import List
+import Map
+import Path
+import String
+
+-- Split app.log into one report per day under reports/, and write
+-- reports/summary.txt: the host, then each day with its line count.
+
+let by_day =
+  FS.read_file! ./app.log
+  |> String.lines
+  |> List.fold_left
+    (fn m l -> Map.update (String.slice 0 10 l) [] (fn xs -> l :: xs) m)
+    Map.empty
+
+FS.mkdir! ./reports
+
+by_day
+|> Map.to_list
+|> List.each (fn (day, ls) ->
+  FS.write_file! (Path.of_string "reports/%{day}.log") (String.join "\n" (List.reverse ls)))
+
+let summary = by_day |> Map.to_list |> List.map (fn (day, ls) -> "%{day} %{List.length ls}")
+
+FS.write_file! ./reports/summary.txt (String.join "\n" ($(hostname) :: summary))

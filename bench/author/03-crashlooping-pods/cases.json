@@ -1,0 +1,168 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "pods.json",
+   "3"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "prod/api-1 7"
+ },
+ {
+  "name": "sums containers and breaks ties by name",
+  "args": [
+   "pods.json",
+   "4"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 2,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 3,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"staging\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"worker-2\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"worker\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 9,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"dns-1\",\n        \"namespace\": \"kube-system\",\n        \"labels\": {\n          \"app\": \"dns\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"pending-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"pending\"\n        }\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"init-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"init\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Pending\"\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"db-0\",\n        \"namespace\": \"default\",\n        \"labels\": {\n          \"app\": \"db\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c2\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c3\",\n            \"ready\": true,\n            \"restartCount\": 6,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-3\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "prod/worker-2 9\ndefault/db-0 6\nkube-system/dns-1 5\nprod/api-1 5\nstaging/api-1 5"
+ },
+ {
+  "name": "threshold zero skips pods without status",
+  "args": [
+   "pods.json",
+   "0"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 2,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 3,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"staging\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"worker-2\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"worker\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 9,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"dns-1\",\n        \"namespace\": \"kube-system\",\n        \"labels\": {\n          \"app\": \"dns\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"pending-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"pending\"\n        }\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"init-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"init\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Pending\"\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"db-0\",\n        \"namespace\": \"default\",\n        \"labels\": {\n          \"app\": \"db\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c2\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c3\",\n            \"ready\": true,\n            \"restartCount\": 6,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-3\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "prod/worker-2 9\ndefault/db-0 6\nkube-system/dns-1 5\nprod/api-1 5\nstaging/api-1 5\nprod/web-3 1"
+ },
+ {
+  "name": "nothing over",
+  "args": [
+   "pods.json",
+   "100"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 2,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 3,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"staging\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"worker-2\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"worker\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 9,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"dns-1\",\n        \"namespace\": \"kube-system\",\n        \"labels\": {\n          \"app\": \"dns\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 5,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"pending-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"pending\"\n        }\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"init-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"init\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Pending\"\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"db-0\",\n        \"namespace\": \"default\",\n        \"labels\": {\n          \"app\": \"db\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c1\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c2\",\n            \"ready\": true,\n            \"restartCount\": 0,\n            \"image\": \"x:1\"\n          },\n          {\n            \"name\": \"c3\",\n            \"ready\": true,\n            \"restartCount\": 6,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-3\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "equal is not over",
+  "args": [
+   "pods.json",
+   "7"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "no pods",
+  "args": [
+   "pods.json",
+   "1"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\"items\": []}"
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "file name with a space",
+  "args": [
+   "my pods.json",
+   "3"
+  ],
+  "files": [
+   {
+    "path": "my pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "prod/api-1 7"
+ },
+ {
+  "name": "bad threshold",
+  "args": [
+   "pods.json",
+   "-3"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "word threshold",
+  "args": [
+   "pods.json",
+   "lots"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing threshold",
+  "args": [
+   "pods.json"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "{\n  \"apiVersion\": \"v1\",\n  \"kind\": \"List\",\n  \"items\": [\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"api-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"api\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 7,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    },\n    {\n      \"apiVersion\": \"v1\",\n      \"kind\": \"Pod\",\n      \"metadata\": {\n        \"name\": \"web-1\",\n        \"namespace\": \"prod\",\n        \"labels\": {\n          \"app\": \"web\"\n        }\n      },\n      \"status\": {\n        \"phase\": \"Running\",\n        \"containerStatuses\": [\n          {\n            \"name\": \"c0\",\n            \"ready\": true,\n            \"restartCount\": 1,\n            \"image\": \"x:1\"\n          }\n        ]\n      }\n    }\n  ]\n}"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing file",
+  "args": [
+   "nope.json",
+   "3"
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "not json",
+  "args": [
+   "pods.json",
+   "3"
+  ],
+  "files": [
+   {
+    "path": "pods.json",
+    "text": "NAME READY STATUS\napi-1 1/1 Running\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

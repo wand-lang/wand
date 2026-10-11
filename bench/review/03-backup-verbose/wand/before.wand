@@ -1,0 +1,18 @@
+uses {Clock, FS.Write, IO, Shell(tar)}
+
+import Clock
+import DateTime
+import FS
+import IO
+
+-- Archive the data directory into backups/, named by the date.
+
+let stamp = DateTime.date_string (Clock.now ())
+
+let archive = "backups/data-%{stamp}.tar.gz"
+
+FS.mkdir! ./backups
+
+let _ = $(tar -czf %{archive} ./data)
+
+IO.println archive

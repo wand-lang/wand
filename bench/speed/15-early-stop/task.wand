@@ -1,0 +1,24 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import Path
+import Proc
+import Stream
+import String
+
+-- The first five ERROR lines from the db component. The read stops there,
+-- so the rest of `app.log` is never read.
+
+let db_error? line =
+  match String.words line with
+  | [_ :: "ERROR" :: "db:" :: _] -> true
+  | _ -> false
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+  |> Stream.filter db_error?
+  |> Stream.take 5
+  |> Stream.each IO.println
+| [] -> Proc.exit 2

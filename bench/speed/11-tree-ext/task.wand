@@ -1,0 +1,25 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import Size
+
+-- For each file extension under `tree/`: how many files, and their total
+-- size in bytes.
+
+let add! (count, bytes) file = (count + 1, bytes + Size.to_bytes (FS.size! file))
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.glob_in ./**/* (Path.join (Path.of_string dir) ./tree)
+  |> List.fold_left
+    (fn m file -> Map.update (Path.extension file) (0, 0) (fn c -> add! c file) m)
+    Map.empty
+  |> Map.to_list
+  |> List.sort
+  |> List.each (fn (ext, (count, bytes)) -> IO.println "%{ext} %{count} %{bytes}")
+| [] -> Proc.exit 2

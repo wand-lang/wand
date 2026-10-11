@@ -1,0 +1,35 @@
+uses {FS.Read, IO, Proc}
+
+import CSV
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import Result
+
+-- For each region and product in `sales.csv`: how many sales, their total
+-- amount, and their mean amount rounded down.
+
+type Sale(id: Int, region: String, product: String, amount: Int)
+
+let add (count, total) amount = (count + 1, total + amount)
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.read_file! (Path.join (Path.of_string dir) ./sales.csv)
+  |> CSV.rows Sale.decoder
+  |> Result.get!
+  |> List.fold_left
+    (fn m (Sale(region, product, amount)) -> Map.update
+      "%{region} %{product}"
+      (0, 0)
+      (fn c -> add c amount)
+      m)
+    Map.empty
+  |> Map.to_list
+  |> List.sort
+  |> List.each (fn (key, (count, total)) ->
+    IO.println "%{key} %{count} %{total} %{total / count}")
+| [] -> Proc.exit 2

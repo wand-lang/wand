@@ -1,0 +1,30 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import Stream
+import String
+
+-- How many ERROR lines each component logged in each hour, by component
+-- and then by hour.
+
+let key line =
+  match String.words line with
+  | [time :: "ERROR" :: component :: _] ->
+    Some
+      "%{String.slice 0 (String.length component - 1) component} %{String.slice 11 13 time}"
+  | _ -> None
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+  |> Stream.filter_map key
+  |> Stream.tally
+  |> Map.to_list
+  |> List.sort
+  |> List.each (fn (k, n) -> IO.println "%{k} %{n}")
+| [] -> Proc.exit 2

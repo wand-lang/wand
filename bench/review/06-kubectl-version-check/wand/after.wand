@@ -1,0 +1,51 @@
+uses {IO, Proc, Shell(curl, kubectl, sh)}
+
+import IO
+import List
+import Option
+import Proc
+import Result
+import String
+import Version
+
+-- Apply the manifests in k8s/ to the current cluster.
+
+-- The manifests use fields that kubectl before 1.28 rejects.
+let minimum = 1.28.0
+
+-- `Client Version: v1.29.3` -> 1.29.3
+let client_version! () =
+  $(kubectl version --client)
+  |> String.lines
+  |> List.find (fn l -> String.starts_with? "Client Version:" l)
+  |> Option.and_then (fn l -> String.split "v" l |> List.drop 1 |> List.head)
+  |> Option.and_then (fn v -> Version.of_string v |> Result.to_option)
+
+-- Stop before touching the cluster if the tools are too old, and refresh
+-- the helper plugins the manifests rely on.
+let ensure_tools! () = (
+  match client_version! () with
+  | Some v -> if v < minimum then (
+    IO.println_err "kubectl %{v} is older than %{minimum}; upgrade it first";
+    Proc.exit 1
+  )
+  | None -> (IO.println_err "could not read the kubectl version"; Proc.exit 1);
+  let _ =
+    $(curl -fsSL https://raw.githubusercontent.com/kube-helpers/plugins/main/install.sh | sh);
+  ()
+)
+
+let namespaces! () = $(kubectl get namespaces -o name) |> String.lines |> List.length
+
+let deploy! () = (
+  let context = $(kubectl config current-context);
+  IO.println "deploying to %{context}";
+  IO.println "namespaces before: %{namespaces! ()}";
+  IO.println $(kubectl apply -f k8s/);
+  IO.println "namespaces after: %{namespaces! ()}";
+  IO.println "done"
+)
+
+ensure_tools! ()
+
+deploy! ()

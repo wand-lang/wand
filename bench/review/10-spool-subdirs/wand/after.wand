@@ -1,0 +1,18 @@
+uses {Clock, FS.Read, FS.Write}
+
+import Clock
+import FS
+import List
+import Path
+
+-- Remove the temporary files the uploader leaves anywhere under ./spool,
+-- once they are a day old. A younger one may be an upload in progress.
+
+let a_day_old! (p: Path) = Clock.now () - FS.mtime! p > 1d
+
+let leftover! (p: Path) = Path.extension p == ".tmp" || a_day_old! p
+
+FS.glob ./spool/**/*
+|> List.filter FS.file?
+|> List.filter leftover!
+|> List.each FS.delete!

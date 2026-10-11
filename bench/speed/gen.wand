@@ -1,0 +1,114 @@
+uses {FS.Read, FS.Write}
+
+import FS
+import Option
+import List
+import Path
+import Stream
+import String
+
+-- The input every speed task reads, made the same way on every machine.
+--
+-- `Random` is not used: its sequence is stable for one build and nothing
+-- more, and two runs a month apart must read the same bytes to be
+-- compared. A linear congruential generator, written out, is the same
+-- everywhere.
+
+let next state = (state * 1103515245 + 12345) % 2147483648
+
+-- `n` draws from a seed, each a non-negative Int. The low bits of this
+-- generator repeat on a short cycle, so they are dropped.
+let draws seed n =
+  Stream.of_list (List.range 1 n)
+  |> Stream.scan (fn s _ -> next s) seed
+  |> Stream.map (fn s -> s / 256)
+
+let pick xs r = List.get (r % List.length xs) xs |> Option.default ""
+
+let levels = ["INFO", "INFO", "INFO", "INFO", "DEBUG", "DEBUG", "WARN", "ERROR"]
+
+let components = ["web", "db", "cache", "auth", "queue", "billing", "search", "mailer"]
+
+let messages = [
+  "request served",
+  "connection refused",
+  "timeout waiting for lock",
+  "cache miss",
+  "retrying",
+  "user logged in",
+  "slow query",
+  "disk 91% full"
+]
+
+let endpoints = [
+  "/",
+  "/login",
+  "/api/items",
+  "/api/items/:id",
+  "/api/search",
+  "/health",
+  "/checkout",
+  "/static"
+]
+
+let regions = ["eu-west", "eu-north", "us-east", "us-west", "ap-south", "ap-east"]
+
+let products = ["widget", "gadget", "doohickey", "gizmo", "thingamajig"]
+
+let two n = if n < 10 then "0%{n}" else "%{n}"
+
+let ip r = "10.%{r % 4}.%{r / 7 % 16}.%{r / 131 % 64}"
+
+-- `2026-10-01T12:00:00Z ERROR db: connection refused ip=10.1.2.3 ms=120`
+let log_line r =
+  let second = r / 3 % 86400;
+  "2026-10-01T%{two (second / 3600)}:%{two (second / 60 % 60)}:%{two (second % 60)}Z %{pick levels r} %{pick components (r / 11)}: %{pick messages (r / 101)} ip=%{ip (r / 17)} ms=%{r / 1009 % 2000}"
+
+-- `{"user":"u42","endpoint":"/login","ms":120,"ok":true}`
+let event_line r =
+  `{"user":"u%{r / 13 % 5000}","endpoint":"%{pick endpoints (r / 7)}","ms":%{r / 1009 % 2000},"ok":%{r % 10 != 0}}`
+
+-- `id,region,product,amount`, amount in cents.
+let csv_line (i, r) =
+  "%{i},%{pick regions (r / 3)},%{pick products (r / 29)},%{r / 97 % 100000}"
+
+let write! (dir: Path) name lines =
+  FS.write_lines! (Path.join dir (Path.of_string name)) lines
+
+-- A tree of small files: `dirs` directories of `per` files each, with a
+-- share of them holding the same bytes so a task can find duplicates.
+let tree! (dir: Path) dirs per =
+  let root = Path.join dir ./tree;
+  List.each
+    (fn d -> (
+      let sub = Path.join root (Path.of_string "d%{d % 7}/s%{d}");
+      FS.mkdir! sub;
+      List.each
+        (fn f ->
+          let r = next (next (d * 1000 + f));
+          let ext = pick ["txt", "log", "json", "csv", "md"] (r / 5);
+          let body =
+            if r % 5 == 0 then "duplicate %{r % 3}\n"
+            else String.repeat (r % 40 + 1) "line %{r}\n";
+          FS.write_file! (Path.join sub (Path.of_string "f%{f}.%{ext}")) body)
+        (List.range 1 per)
+    ))
+    (List.range 1 dirs)
+
+-- Write every input for `lines` lines into `dir`, unless it is already
+-- there for that size.
+let generate! (dir: Path) lines =
+  let stamp = Path.join dir ./SIZE;
+  let current = FS.file? stamp && FS.read_file! stamp == "%{lines}";
+  if !current then (
+    FS.delete_tree! dir;
+    FS.mkdir! dir;
+    write! dir "app.log" (draws 1 lines |> Stream.map log_line);
+    write! dir "events.jsonl" (draws 2 lines |> Stream.map event_line);
+    write! dir "sales.csv" (Stream.of_list ["id,region,product,amount"]);
+    FS.append_lines!
+      (Path.join dir ./sales.csv)
+      (draws 3 lines |> Stream.indexed |> Stream.map csv_line);
+    tree! dir 40 (lines / 1000 + 10);
+    FS.write_file! stamp "%{lines}"
+  )

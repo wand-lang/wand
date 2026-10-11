@@ -1,0 +1,67 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "app.log"
+  ],
+  "files": [
+   {
+    "path": "app.log",
+    "text": "2026-10-01T12:00:01Z INFO web: started\n2026-10-01T12:00:02Z ERROR db: connection refused\n2026-10-01T12:00:03Z INFO web: request\n"
+   }
+  ],
+  "stdout": "INFO 2\nERROR 1"
+ },
+ {
+  "name": "ties keep level order",
+  "args": [
+   "app.log"
+  ],
+  "files": [
+   {
+    "path": "app.log",
+    "text": "2026-10-01T12:00:01Z INFO web: started\n2026-10-01T12:00:02Z ERROR db: connection refused\n2026-10-01T12:00:03Z INFO web: request\n\ngarbage\n2026-10-01T12:00:04Z TRACE x: ignored\n2026-10-01T12:00:05Z WARN disk: 91%\n2026-10-01T12:00:06Z DEBUG cache: miss\n2026-10-01T12:00:07Z WARN disk: 92%\n2026-10-01T12:00:08Z ERROR db: timeout\n2026-10-01T12:00:09Z ERROR INFO tricky\n"
+   }
+  ],
+  "stdout": "ERROR 3\nWARN 2\nINFO 2\nDEBUG 1"
+ },
+ {
+  "name": "empty file",
+  "args": [
+   "empty.log"
+  ],
+  "files": [
+   {
+    "path": "empty.log",
+    "text": ""
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "no argument",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing file",
+  "args": [
+   "nope.log"
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "name with a space",
+  "args": [
+   "my app.log"
+  ],
+  "files": [
+   {
+    "path": "my app.log",
+    "text": "x DEBUG a\n"
+   }
+  ],
+  "stdout": "DEBUG 1"
+ }
+]

@@ -1,0 +1,32 @@
+uses {Clock, FS.Read, FS.Write, IO, Proc, Shell(tar)}
+
+import Clock
+import DateTime
+import FS
+import IO
+import List
+import Path
+import Proc
+
+-- Archive the data directory into backups/, named by the date.
+--
+-- --verbose also prints the size of the archive.
+
+let verbose = List.any? (fn a -> a == "--verbose") (Proc.args ())
+
+let stamp = DateTime.date_string (Clock.now ())
+
+let archive = "backups/data-%{stamp}.tar.gz"
+
+if !(FS.dir? ./data) then (
+  IO.println_err "nothing to back up: ./data does not exist";
+  Proc.exit 1
+)
+
+FS.mkdir! ./backups
+
+let _ = $(tar -czf %{archive} ./data)
+
+IO.println archive
+
+if verbose then IO.println "size: %{FS.size! (Path.of_string archive)}"

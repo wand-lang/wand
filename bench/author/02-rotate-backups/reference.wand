@@ -1,0 +1,38 @@
+uses {FS.Read, FS.Write, IO, Proc}
+
+import FS
+import IO
+import Int
+import List
+import Path
+import Proc
+import Regex
+
+let usage () = (IO.println_err "usage: prog DIR N, where N is a whole number"; Proc.exit 2)
+
+let backup? (p: Path) =
+  FS.file? p
+  && Regex.match?
+    r/^backup-[0-9]{4}-[0-9]{2}-[0-9]{2}\.tar$/
+    (Path.to_string (Path.basename p))
+
+let rotate! (dir: Path) keep = (
+  let backups =
+    FS.list_dir! dir |> List.filter backup? |> List.sort_by (fn p -> Path.to_string p);
+  let old = List.take (List.length backups - keep) backups;
+  List.each FS.delete! old;
+  List.each (fn p -> IO.println "deleted %{Path.basename p}") old;
+  IO.println "kept %{List.length backups - List.length old}"
+)
+
+match Proc.args () with
+| [dir, n] -> (
+  match Int.of_string n with
+  | Ok keep when keep >= 0 && Regex.match? r/^[0-9]+$/ n -> (
+    let d = Path.of_string dir;
+    if FS.dir? d then rotate! d keep
+    else (IO.println_err "not a directory: %{dir}"; Proc.exit 1)
+  )
+  | _ -> usage ()
+)
+| _ -> usage ()

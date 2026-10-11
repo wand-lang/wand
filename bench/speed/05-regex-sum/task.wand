@@ -1,0 +1,30 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import Int
+import IO
+import Path
+import Proc
+import Regex
+import Result
+import Stream
+
+-- How many lines report a refused connection or a lock timeout, and the
+-- sum of their `ms=`.
+
+let pattern = r/(connection refused|timeout waiting for lock).*ms=(\d+)$/
+
+let ms line =
+  match Regex.capture pattern line with
+  | [_, _, n] -> Int.of_string n |> Result.to_option
+  | _ -> None
+
+match Proc.args () with
+| [dir :: _] -> (
+  let (count, total) =
+    FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+    |> Stream.filter_map ms
+    |> Stream.fold_left (fn (c, t) n -> (c + 1, t + n)) (0, 0);
+  IO.println "%{count} %{total}"
+)
+| [] -> Proc.exit 2

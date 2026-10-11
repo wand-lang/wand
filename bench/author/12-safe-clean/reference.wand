@@ -1,0 +1,25 @@
+uses {FS.Read, FS.Write, IO, Proc}
+
+import FS
+import IO
+import List
+import Path
+import Proc
+import String
+
+let name_of (p: Path) = Path.to_string (Path.basename p)
+
+let clean! (target: Path) = (
+  let cache = Path.join target ./cache;
+  if FS.dir? cache then
+    FS.list_dir! cache
+    |> List.sort_by name_of
+    |> List.each (fn p -> (FS.delete_tree! p; IO.println "removed %{name_of p}"))
+  else IO.println "nothing to clean";
+  IO.println "kept %{List.length (FS.list_dir! target)}"
+)
+
+match Proc.args () with
+| [target] when !(String.empty? target) && FS.dir? (Path.of_string target) ->
+  clean! (Path.of_string target)
+| _ -> (IO.println_err "usage: prog TARGET, where TARGET is a directory"; Proc.exit 2)

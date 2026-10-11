@@ -1,0 +1,154 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "sales.csv",
+   "amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\neu,10\nus,-3\neu,\n"
+   }
+  ],
+  "stdout": "7"
+ },
+ {
+  "name": "middle column, blank line, no final newline",
+  "args": [
+   "sales.csv",
+   "amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "id,region,amount,units\n1,eu,100,3\n2,us,250,1\n\n3,ap,-50,7\n4,eu,0,2\n5,us,1000000,1"
+   }
+  ],
+  "stdout": "1000300"
+ },
+ {
+  "name": "last column",
+  "args": [
+   "sales.csv",
+   "units"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "id,region,amount,units\n1,eu,100,3\n2,us,250,1\n\n3,ap,-50,7\n4,eu,0,2\n5,us,1000000,1"
+   }
+  ],
+  "stdout": "14"
+ },
+ {
+  "name": "first column",
+  "args": [
+   "sales.csv",
+   "id"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "id,region,amount,units\n1,eu,100,3\n2,us,250,1\n\n3,ap,-50,7\n4,eu,0,2\n5,us,1000000,1"
+   }
+  ],
+  "stdout": "15"
+ },
+ {
+  "name": "header only",
+  "args": [
+   "sales.csv",
+   "amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\n"
+   }
+  ],
+  "stdout": "0"
+ },
+ {
+  "name": "name is matched exactly",
+  "args": [
+   "sales.csv",
+   "Amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\neu,10\nus,-3\neu,\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "column with a space",
+  "args": [
+   "q 1.csv",
+   "unit price"
+  ],
+  "files": [
+   {
+    "path": "q 1.csv",
+    "text": "item,unit price\na,5\nb,6\n"
+   }
+  ],
+  "stdout": "11"
+ },
+ {
+  "name": "not a number",
+  "args": [
+   "sales.csv",
+   "amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\neu,10\nus,ten\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "decimal is not whole",
+  "args": [
+   "sales.csv",
+   "amount"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\neu,1.5\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "missing column argument",
+  "args": [
+   "sales.csv"
+  ],
+  "files": [
+   {
+    "path": "sales.csv",
+    "text": "region,amount\neu,10\nus,-3\neu,\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing file",
+  "args": [
+   "nope.csv",
+   "amount"
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

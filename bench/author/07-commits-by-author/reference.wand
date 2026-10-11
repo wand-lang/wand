@@ -1,0 +1,34 @@
+uses {IO, Proc}
+
+import IO
+import Int
+import List
+import Map
+import Proc
+import Regex
+import String
+
+let author line =
+  match String.split "|" line with
+  | [name :: _ :: _] -> Some name
+  | _ -> None
+
+let report! top =
+  let rows =
+    IO.read_all! ()
+    |> String.lines
+    |> List.filter_map author
+    |> List.fold_left (fn m a -> Map.update a 0 (fn n -> n + 1) m) Map.empty
+    |> Map.to_list
+    |> List.sort_by (fn (name, n) -> (0 - n, name));
+  let shown =
+    match top with
+    | Some n -> List.take n rows
+    | None -> rows
+  in
+  List.each (fn (name, n) -> IO.println "%{n} %{name}") shown
+
+match Proc.args () with
+| [] -> report! None
+| [n] when Regex.match? r/^0*[1-9][0-9]*$/ n -> report! (Some (Int.of_string! n))
+| _ -> (IO.println_err "usage: prog [N], where N is 1 or more"; Proc.exit 2)

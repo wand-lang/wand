@@ -1,0 +1,9 @@
+uses {IO, Shell(docker)}
+
+import IO
+
+-- Remove dangling images older than a week.
+
+let out = $(docker image prune -f --filter "until=168h")
+
+IO.println out

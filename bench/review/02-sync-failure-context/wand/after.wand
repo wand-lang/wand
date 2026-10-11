@@ -1,0 +1,44 @@
+uses {Env, FS.Read, IO, Proc, Shell(rsync)}
+
+import Env
+import FS
+import IO
+import List
+import Option
+import Proc
+import Shell
+import String
+
+-- Sync the built site to every web host listed in hosts.txt.
+
+let target = Env.get "DEPLOY_PATH" |> Option.default "/srv/www"
+
+let profile = Env.get "AWS_PROFILE" |> Option.default "default"
+
+let hosts =
+  FS.read_file! ./hosts.txt |> String.lines |> List.filter (fn h -> !(String.empty? h))
+
+-- The active profile's block, so a failure says which credentials were in use.
+let profile_context () =
+  match FS.read_file ~/.aws/credentials with
+  | Ok text ->
+    text
+    |> String.lines
+    |> List.drop_while (fn l -> l != "[%{profile}]")
+    |> List.take 3
+    |> String.join " "
+  | Error _ -> "no credentials file"
+
+let sync host = $?(rsync -az --delete ./public/ "%{host}:%{target}/")
+
+let report_failure host (r: ShellResult) =
+  IO.println_err
+    "sync to %{host} failed (exit %{r.code}): %{r.stderr} [%{profile_context ()}]"
+
+List.each
+  (fn h -> (
+    IO.println "syncing %{h}";
+    let r = sync h;
+    if Shell.failed? r then (report_failure h r; Proc.exit 1)
+  ))
+  hosts

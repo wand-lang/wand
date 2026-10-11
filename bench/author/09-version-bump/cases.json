@@ -1,0 +1,191 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "minor"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.4.2\n"
+   }
+  ],
+  "stdout": "1.5.0"
+ },
+ {
+  "name": "major resets the rest",
+  "args": [
+   "major"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.4.2\n"
+   }
+  ],
+  "stdout": "2.0.0"
+ },
+ {
+  "name": "patch",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "0.0.9"
+   }
+  ],
+  "stdout": "0.0.10"
+ },
+ {
+  "name": "numbers past nine",
+  "args": [
+   "minor"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "2.19.99\n"
+   }
+  ],
+  "stdout": "2.20.0"
+ },
+ {
+  "name": "space around",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "  3.0.0 \n\n"
+   }
+  ],
+  "stdout": "3.0.1"
+ },
+ {
+  "name": "zero is allowed",
+  "args": [
+   "major"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "0.0.0\n"
+   }
+  ],
+  "stdout": "1.0.0"
+ },
+ {
+  "name": "leading zero",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.02.0\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "two parts",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.2\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "prerelease",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.2.3-rc.1\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "v prefix",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "v1.2.3\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "empty file",
+  "args": [
+   "patch"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": ""
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "no VERSION",
+  "args": [
+   "patch"
+  ],
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "unknown part",
+  "args": [
+   "build"
+  ],
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.0.0\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "part is checked first",
+  "args": [
+   "Major"
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing part",
+  "files": [
+   {
+    "path": "VERSION",
+    "text": "1.0.0\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ }
+]

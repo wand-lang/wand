@@ -1,0 +1,1 @@
+After the restart, poll the local health endpoint (http://localhost:8080/health) for up to 50 seconds and exit non-zero if it never answers, so a bad release fails the deploy job instead of passing it.

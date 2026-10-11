@@ -1,0 +1,16 @@
+uses {FS.Read, FS.Write, IO}
+
+import FS
+import IO
+import List
+
+-- Remove all but the five newest releases. Release directories are named
+-- by timestamp, so the newest sort last.
+
+let releases = /srv/app/releases
+
+let keep = 5
+
+let old = FS.list_dir! releases |> List.sort |> List.reverse |> List.drop keep
+
+List.each (fn p -> (IO.println "removing %{p}"; FS.delete_tree! p)) old

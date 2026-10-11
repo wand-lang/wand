@@ -1,0 +1,21 @@
+uses {Env, FS.Read, FS.Write, IO}
+
+import Env
+import FS
+import IO
+import List
+import Option
+import Path
+
+-- Remove all but the five newest releases. Release directories are named
+-- by timestamp, so the newest sort last.
+--
+-- RELEASE_DIR says where they are, so staging can use the same script.
+
+let releases = Env.get "RELEASE_DIR" |> Option.default "." |> Path.of_string
+
+let keep = 5
+
+let old = FS.list_dir! releases |> List.sort |> List.reverse |> List.drop keep
+
+List.each (fn p -> (IO.println "removing %{p}"; FS.delete_tree! p)) old

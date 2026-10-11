@@ -1,0 +1,12 @@
+uses {FS.Read, Shell(gzip)}
+
+import FS
+import List
+
+-- Compress yesterday's rotated logs.
+
+let compress! (p: Path) =
+  let _ = $(gzip -9 %{p});
+  ()
+
+FS.glob ./logs/*.log.1 |> List.each compress!

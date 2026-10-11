@@ -1,0 +1,26 @@
+uses {FS.Read, IO, Proc}
+
+import Digest
+import FS
+import Hash
+import IO
+import List
+import Map
+import Path
+import Proc
+
+-- How many groups of files under `tree/` hold the same bytes, and how many
+-- files are in those groups.
+
+match Proc.args () with
+| [dir :: _] -> (
+  let groups =
+    FS.glob_in ./**/* (Path.join (Path.of_string dir) ./tree)
+    |> List.map (fn file -> Digest.hex (Hash.file! Digest.Sha256 file))
+    |> List.tally
+    |> Map.values
+    |> List.filter (fn n -> n > 1);
+  IO.println
+    "groups %{List.length groups} files %{List.fold_left (fn a b -> a + b) 0 groups}"
+)
+| [] -> Proc.exit 2

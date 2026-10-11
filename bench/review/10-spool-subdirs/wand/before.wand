@@ -1,0 +1,8 @@
+uses {FS.Read, FS.Write}
+
+import FS
+import List
+
+-- Remove the temporary files the uploader leaves in ./spool.
+
+FS.glob ./spool/*.tmp |> List.each FS.delete!

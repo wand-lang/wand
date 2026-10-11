@@ -1,0 +1,36 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import String
+
+-- Every regular file below `dir`, as `(path relative to the root, path)`.
+let files! (dir: Path) (prefix: String) =
+  FS.list_dir! dir
+  |> List.map (fn p ->
+    let name = "%{prefix}%{Path.basename p}";
+    if FS.dir? p then files! p "%{name}/" else if FS.file? p then [(name, p)] else [])
+  |> List.flatten
+
+let duplicates! (root: Path) =
+  files! root ""
+  |> List.fold_left
+    (fn m (name, p) -> Map.update (FS.read_file! p) [] (fn names -> name :: names) m)
+    Map.empty
+  |> Map.values
+  |> List.filter (fn names -> List.length names > 1)
+  |> List.map List.sort
+  |> List.sort_by (fn names -> List.head names)
+
+match Proc.args () with
+| [dir :: _] -> (
+  let root = Path.of_string dir;
+  if FS.dir? root then
+    duplicates! root |> List.map (String.join "\n") |> String.join "\n\n" |> IO.println
+  else (IO.println_err "not a directory: %{dir}"; Proc.exit 1)
+)
+| [] -> (IO.println_err "usage: prog DIR"; Proc.exit 2)

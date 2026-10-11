@@ -1,0 +1,73 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "80"
+  ],
+  "stdin": "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/disk1s1     488245288 450000000  38245288      93% /\n/dev/disk1s4     488245288   2097172  38245288       6% /private/var/vm\n/dev/disk2s1      15000000  12000000   3000000      80% /Volumes/My Disk\n",
+  "stdout": "93% /\n80% /Volumes/My Disk"
+ },
+ {
+  "name": "ties sort by mount",
+  "args": [
+   "95"
+  ],
+  "stdin": "Filesystem     1024-blocks     Used Available Capacity Mounted on\nudev               8126228        0   8126228       0% /dev\ntmpfs              1631200     2216   1628984       1% /run\n/dev/nvme0n1p2   490617784 441556004  24055964      95% /\ntmpfs              8155996   734000   7421996      10% /dev/shm\n/dev/sdb1        961300000 913235000  48065000      95% /data\n/dev/sdc1        961300000 913235000  48065000      95% /backup\n//nas/share      100000000 100000000         0     100% /mnt/nas share\n\ngarbage line here\n/dev/loop0              128      128         0     100% /snap/core/1\n",
+  "stdout": "100% /mnt/nas share\n100% /snap/core/1\n95% /\n95% /backup\n95% /data"
+ },
+ {
+  "name": "zero keeps every line",
+  "args": [
+   "0"
+  ],
+  "stdin": "Filesystem     1024-blocks     Used Available Capacity Mounted on\nudev               8126228        0   8126228       0% /dev\ntmpfs              1631200     2216   1628984       1% /run\n/dev/nvme0n1p2   490617784 441556004  24055964      95% /\ntmpfs              8155996   734000   7421996      10% /dev/shm\n/dev/sdb1        961300000 913235000  48065000      95% /data\n/dev/sdc1        961300000 913235000  48065000      95% /backup\n//nas/share      100000000 100000000         0     100% /mnt/nas share\n\ngarbage line here\n/dev/loop0              128      128         0     100% /snap/core/1\n",
+  "stdout": "100% /mnt/nas share\n100% /snap/core/1\n95% /\n95% /backup\n95% /data\n10% /dev/shm\n1% /run\n0% /dev"
+ },
+ {
+  "name": "hundred",
+  "args": [
+   "100"
+  ],
+  "stdin": "Filesystem     1024-blocks     Used Available Capacity Mounted on\nudev               8126228        0   8126228       0% /dev\ntmpfs              1631200     2216   1628984       1% /run\n/dev/nvme0n1p2   490617784 441556004  24055964      95% /\ntmpfs              8155996   734000   7421996      10% /dev/shm\n/dev/sdb1        961300000 913235000  48065000      95% /data\n/dev/sdc1        961300000 913235000  48065000      95% /backup\n//nas/share      100000000 100000000         0     100% /mnt/nas share\n\ngarbage line here\n/dev/loop0              128      128         0     100% /snap/core/1\n",
+  "stdout": "100% /mnt/nas share\n100% /snap/core/1"
+ },
+ {
+  "name": "header only",
+  "args": [
+   "50"
+  ],
+  "stdin": "Filesystem 1024-blocks Used Available Capacity Mounted on\n",
+  "stdout": ""
+ },
+ {
+  "name": "empty input",
+  "args": [
+   "50"
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "over a hundred",
+  "args": [
+   "101"
+  ],
+  "stdin": "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/disk1s1     488245288 450000000  38245288      93% /\n/dev/disk1s4     488245288   2097172  38245288       6% /private/var/vm\n/dev/disk2s1      15000000  12000000   3000000      80% /Volumes/My Disk\n",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "percent sign",
+  "args": [
+   "80%"
+  ],
+  "stdin": "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/disk1s1     488245288 450000000  38245288      93% /\n/dev/disk1s4     488245288   2097172  38245288       6% /private/var/vm\n/dev/disk2s1      15000000  12000000   3000000      80% /Volumes/My Disk\n",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing argument",
+  "stdin": "Filesystem     1024-blocks      Used Available Capacity Mounted on\n/dev/disk1s1     488245288 450000000  38245288      93% /\n/dev/disk1s4     488245288   2097172  38245288       6% /private/var/vm\n/dev/disk2s1      15000000  12000000   3000000      80% /Volumes/My Disk\n",
+  "stdout": "",
+  "code": 2
+ }
+]

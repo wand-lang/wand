@@ -1,0 +1,9 @@
+uses {IO, Shell(systemctl)}
+
+import IO
+
+-- Restart the app after a release.
+
+let _ = $(systemctl restart app)
+
+IO.println "restarted"

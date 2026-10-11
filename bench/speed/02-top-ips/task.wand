@@ -1,0 +1,29 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Option
+import Path
+import Proc
+import Stream
+import String
+
+-- The ten addresses that appear most often in `app.log`, most first.
+
+let ip line =
+  String.words line
+  |> List.find (fn w -> String.starts_with? "ip=" w)
+  |> Option.map (fn w -> String.slice 3 (String.length w) w)
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+  |> Stream.filter_map ip
+  |> Stream.tally
+  |> Map.to_list
+  |> List.sort_by (fn (a, n) -> (0 - n, a))
+  |> List.take 10
+  |> List.each (fn (a, n) -> IO.println "%{a} %{n}")
+| [] -> Proc.exit 2

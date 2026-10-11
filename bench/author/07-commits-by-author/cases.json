@@ -1,0 +1,50 @@
+[
+ {
+  "name": "example",
+  "stdin": "Ana Silva|Fix the parser\nBo|Add tests\nAna Silva|Release 1.2 | notes\n",
+  "stdout": "2 Ana Silva\n1 Bo"
+ },
+ {
+  "name": "ties by byte order, case matters",
+  "stdin": "Zoe|a\nana|b\nAna|c\nZoe|d\nana|e\nLee Park|f\nLee Park|g\nLee Park|h\n\nno bar here\nBo|\nAna|x|y|z\nZoe|again",
+  "stdout": "3 Lee Park\n3 Zoe\n2 Ana\n2 ana\n1 Bo"
+ },
+ {
+  "name": "top two",
+  "args": [
+   "2"
+  ],
+  "stdin": "Zoe|a\nana|b\nAna|c\nZoe|d\nana|e\nLee Park|f\nLee Park|g\nLee Park|h\n\nno bar here\nBo|\nAna|x|y|z\nZoe|again",
+  "stdout": "3 Lee Park\n3 Zoe"
+ },
+ {
+  "name": "top more than there are",
+  "args": [
+   "50"
+  ],
+  "stdin": "Ana Silva|Fix the parser\nBo|Add tests\nAna Silva|Release 1.2 | notes\n",
+  "stdout": "2 Ana Silva\n1 Bo"
+ },
+ {
+  "name": "empty input",
+  "stdout": ""
+ },
+ {
+  "name": "zero",
+  "args": [
+   "0"
+  ],
+  "stdin": "Ana Silva|Fix the parser\nBo|Add tests\nAna Silva|Release 1.2 | notes\n",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "word",
+  "args": [
+   "all"
+  ],
+  "stdin": "Ana Silva|Fix the parser\nBo|Add tests\nAna Silva|Release 1.2 | notes\n",
+  "stdout": "",
+  "code": 2
+ }
+]

@@ -1,0 +1,44 @@
+uses {FS.Read, IO, Proc}
+
+import Decode
+import IO
+import Int
+import JSON
+import List
+import Option
+import Path
+import Proc
+import Regex
+import Result
+
+type Container(restartCount: Int)
+
+type Status(containerStatuses: Option (List Container))
+
+type Meta(name: String, namespace: String)
+
+type Pod(metadata: Meta, status: Option Status)
+
+let pods = Decode.field "items" (Decode.list Pod.decoder)
+
+let restarts (Pod(status = status)) =
+  status
+  |> Option.and_then (fn (Status(containerStatuses = cs)) -> cs)
+  |> Option.default []
+  |> List.fold_left (fn total (Container(restartCount = n)) -> total + n) 0
+
+let label (Pod(metadata = Meta(name, namespace))) = "%{namespace}/%{name}"
+
+let report file threshold =
+  match JSON.read_file (Path.of_string file) |> Result.and_then (JSON.decode pods) with
+  | Error why -> (IO.println_err "cannot read pods: %{why}"; Proc.exit 1)
+  | Ok ps ->
+    ps
+    |> List.map (fn p -> (label p, restarts p))
+    |> List.filter (fn (_, n) -> n > threshold)
+    |> List.sort_by (fn (name, n) -> (0 - n, name))
+    |> List.each (fn (name, n) -> IO.println "%{name} %{n}")
+
+match Proc.args () with
+| [file, t] when Regex.match? r/^[0-9]+$/ t -> report file (Int.of_string! t)
+| _ -> (IO.println_err "usage: prog FILE THRESHOLD"; Proc.exit 2)

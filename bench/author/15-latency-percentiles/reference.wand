@@ -1,0 +1,48 @@
+uses {IO}
+
+import IO
+import JSON
+import List
+import Map
+import Option
+import Result
+import String
+
+-- One line as `(endpoint, ms)`, or `None` when it is not a valid request.
+--
+-- `JSON.get_int` and not `Decode.int`: the decoder also reads the text
+-- `"12"` as 12, and the spec counts that line as skipped.
+let request line = (
+  let fields = JSON.parse line |> Result.and_then JSON.get_object |> Result.to_option;
+  let get name read =
+    fields
+    |> Option.and_then (fn m -> Map.get name m)
+    |> Option.and_then (fn j -> Result.to_option (read j));
+  match (get "endpoint" JSON.get_string, get "ms" JSON.get_int) with
+  | (Some endpoint, Some ms) when ms >= 0 -> Some(endpoint, ms)
+  | _ -> None
+)
+
+-- The value at the nearest rank for percentile `p` of sorted values.
+let percentile p (sorted: List Int) =
+  let n = List.length sorted;
+  let rank = (p * n + 99) / 100;
+  List.get ((if rank < 1 then 1 else rank) - 1) sorted |> Option.default 0
+
+let lines =
+  IO.read_all! () |> String.lines |> List.filter (fn l -> !(String.empty? (String.trim l)))
+
+let requests = List.filter_map request lines
+
+let skipped = List.length lines - List.length requests
+
+requests
+|> List.fold_left (fn m (endpoint, ms) -> Map.update endpoint [] (fn v -> ms :: v) m) Map.empty
+|> Map.to_list
+|> List.sort_by (fn (endpoint, _) -> endpoint)
+|> List.each (fn (endpoint, values) ->
+  let v = List.sort values;
+  IO.println
+    "%{endpoint} count=%{List.length v} p50=%{percentile 50 v} p95=%{percentile 95 v}")
+
+if skipped > 0 then IO.println "skipped %{skipped}"

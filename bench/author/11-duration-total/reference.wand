@@ -1,0 +1,70 @@
+uses {IO, Proc}
+
+import Int
+import IO
+import List
+import Map
+import Option
+import Proc
+import Regex
+import Result
+import String
+
+-- `1h30m` as seconds, or `None` when it is not a duration.
+let seconds text = (
+  let part s = if String.empty? s then Ok 0 else Int.of_string s;
+  match Regex.capture r/^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$/ text with
+  | [_, h, m, s] when !(String.empty? text) ->
+    Result.and_then
+      (fn hs -> Result.and_then
+        (fn ms -> Result.map (fn ss -> hs * 3600 + ms * 60 + ss) (part s))
+        (part m))
+      (part h)
+    |> Result.to_option
+  | _ -> None
+)
+
+let show t =
+  let parts = [(t / 3600, "h"), (t / 60 % 60, "m"), (t % 60, "s")];
+  let text =
+    parts
+    |> List.filter (fn (n, _) -> n > 0)
+    |> List.map (fn (n, u) -> "%{n}%{u}")
+    |> String.join "";
+  if String.empty? text then "0s" else text
+
+-- One numbered line as `(name, seconds)`, `None` for a blank line, or the
+-- error that stops the run.
+let entry (n, line) =
+  match String.words line with
+  | [] -> Ok None
+  | [name, d] -> (
+    match seconds d with
+    | Some s -> Ok Some(name, s)
+    | None -> Error "line %{n}: expected NAME DURATION, got %{line}"
+  )
+  | _ -> Error "line %{n}: expected NAME DURATION, got %{line}"
+
+let entries =
+  IO.read_all! ()
+  |> String.lines
+  |> List.indexed
+  |> List.map (fn (i, line) -> entry (i + 1, line))
+
+match List.filter_map
+  (fn e -> match e with
+    | Error why -> Some why
+    | Ok _ -> None
+  )
+  entries with
+| [why :: _] -> (IO.println_err why; Proc.exit 1)
+| [] -> (
+  let rows =
+    List.filter_map (fn e -> e |> Result.to_option |> Option.and_then (fn x -> x)) entries;
+  rows
+  |> List.fold_left (fn m (name, s) -> Map.update name 0 (fn t -> t + s) m) Map.empty
+  |> Map.to_list
+  |> List.sort_by (fn (name, _) -> name)
+  |> List.each (fn (name, t) -> IO.println "%{name} %{show t}");
+  IO.println "total %{show (List.fold_left (fn t (_, s) -> t + s) 0 rows)}"
+)

@@ -1,0 +1,153 @@
+uses {Clock, Env, FS.Read, FS.Write, IO, Proc, Random, Shell}
+
+import Clock
+import DateTime
+import Duration
+import Env
+import Float
+import FS
+import Int
+import IO
+import List
+import Map
+import Option
+import Path
+import Proc
+import Random
+import Result
+import String
+
+let {langs, lang_name, extension, wand_exe, start!} = import ./lib
+let {generate!} = import ./speed/gen
+
+-- The speed benchmark: the same task in wand, Python and bash, on the same
+-- generated input, timed from outside each process.
+--
+-- Before any timing, the three programs of each task must print the same
+-- thing. A fast program with a wrong answer is not a result.
+--
+-- The timing follows what CLAUDE.md says about this machine. Readings move
+-- about 15% between runs and drift slowly, so every program runs in every
+-- round, the order inside a round is shuffled, and the minimum is kept:
+-- drift only ever adds. Below about 3% there is nothing to read.
+--
+-- Settings, from the environment:
+--
+--   LINES    lines in each generated file (default: 200000)
+--   ROUNDS   rounds of timing (default: 10)
+--   TASKS    run only tasks whose directory starts with this
+--   DATA     where the input is kept (default: _build/bench-data)
+--   WAND     the wand build under test (default: the one on the PATH)
+--
+-- The results go to `bench/results/speed-<date>.md`.
+
+let int_setting name fallback =
+  Env.get name
+  |> Option.and_then (fn s -> Int.of_string s |> Result.to_option)
+  |> Option.default fallback
+
+let task_name (t: Path) = Path.to_string (Path.basename t)
+
+let program (task: Path) lang = Path.join task (Path.of_string "task.%{extension lang}")
+
+let tasks! (prefix: Option String) =
+  FS.list_dir! ./bench/speed
+  |> List.filter FS.dir?
+  |> List.filter (fn t ->
+    match prefix with
+    | None -> true
+    | Some p -> String.starts_with? p (task_name t))
+  |> List.sort
+
+let absolute (p: Path) = if Path.absolute? p then p else Path.join (FS.cwd ()) p
+
+let run! (data: Path) (task: Path) lang =
+  start! lang (program task lang) data [Path.to_string data] ""
+
+-- The tasks whose three programs disagree, or fail, on `data`, with what
+-- each printed. Empty when every task agrees.
+let disagreements! (data: Path) (ts: List Path) =
+  ts
+  |> List.filter_map (fn task ->
+    let outs = List.map (fn lang -> (lang, run! data task lang)) langs;
+    let failed = List.filter (fn (_, r) -> r.code != 0) outs;
+    let answers = outs |> List.map (fn (_, r) -> r.stdout) |> List.unique;
+    if List.empty? failed && List.length answers == 1 then None
+    else Some (
+      task_name task,
+      outs
+      |> List.map (fn (lang, r) ->
+        "  %{lang_name lang} (exit %{r.code}): %{String.truncate 400 r.stdout} %{String.truncate 400 r.stderr}")
+    ))
+
+let ms d = Duration.to_ms d
+
+let timings! (data: Path) (ts: List Path) rounds =
+  let jobs = ts |> List.map (fn t -> List.map (fn l -> (t, l)) langs) |> List.flatten;
+  List.range 1 rounds
+  |> List.map (fn round -> (
+    IO.println_err "round %{round} of %{rounds}";
+    Random.shuffle jobs
+    |> List.map (fn (task, lang) ->
+      let (took, _) = Clock.timed (fn () -> run! data task lang);
+      ("%{task_name task} %{lang_name lang}", ms took))
+  ))
+  |> List.flatten
+  |> List.fold_left
+    (fn m (key, t) -> Map.update key t (fn best -> if t < best then t else best) m)
+    Map.empty
+
+let ratio a b = if b == 0 then "-" else Float.format 2 (Float.of_int a / Float.of_int b)
+
+let report (date: String) (version: String) lines rounds (ts: List Path) best =
+  let cell task lang =
+    Map.get "%{task} %{lang}" best |> Option.map (fn t -> "%{t}") |> Option.default "-";
+  let row task =
+    let w = Map.get "%{task} wand" best |> Option.default 0;
+    let p = Map.get "%{task} python" best |> Option.default 0;
+    let b = Map.get "%{task} bash" best |> Option.default 0;
+    "| %{task} | %{cell task "wand"} | %{cell task "python"} | %{cell task "bash"} | %{ratio w p} | %{ratio w b} |";
+  String.join
+    "\n"
+    (List.flatten [
+      [
+        "# Speed benchmark: %{date}",
+        "",
+        "%{version}, %{lines} lines per input, the minimum of %{rounds} rounds in a shuffled order, in milliseconds.",
+        "",
+        "| task | wand | python | bash | wand / python | wand / bash |",
+        "|---|---|---|---|---|---|"
+      ],
+      List.map (fn t -> row (task_name t)) ts,
+      [""]
+    ])
+
+let main! () = (
+  let lines = int_setting "LINES" 200000;
+  let rounds = int_setting "ROUNDS" 10;
+  let data =
+    absolute (Env.get "DATA" |> Option.default "_build/bench-data" |> Path.of_string);
+  let ts = tasks! (Env.get "TASKS");
+  IO.println_err "generating %{lines} lines in %{data}";
+  generate! data lines;
+  match disagreements! data ts with
+  | [] -> (
+    let best = timings! data ts rounds;
+    let date = DateTime.date_string (Clock.now ());
+    let text = report date $(%{wand_exe} v) lines rounds ts best;
+    FS.mkdir! ./bench/results;
+    FS.write_file! (Path.of_string "bench/results/speed-%{date}.md") text;
+    IO.println text
+  )
+  | bad -> (
+    List.each
+      (fn (task, outs) -> (
+        IO.println_err "%{task}: the programs disagree";
+        List.each IO.println_err outs
+      ))
+      bad;
+    Proc.exit 1
+  )
+)
+
+main! ()

@@ -1,0 +1,37 @@
+uses {IO}
+
+import IO
+import List
+import Map
+import Regex
+import String
+
+-- The host a line names, or `None` when the line is not a valid URL.
+let host line =
+  match Regex.capture r/^https?:\/\/([^\/?#]*)/ line with
+  | [_, authority] -> (
+    match String.split ":" authority with
+    | [name :: _] when !(String.empty? name) -> Some (String.lower name)
+    | _ -> None
+  )
+  | _ -> None
+
+let count m key = Map.update key 0 (fn n -> n + 1) m
+
+let lines =
+  IO.read_all! ()
+  |> String.lines
+  |> List.map String.trim
+  |> List.filter (fn l -> !(String.empty? l))
+
+let hosts = List.filter_map host lines
+
+let invalid = List.length lines - List.length hosts
+
+hosts
+|> List.fold_left count Map.empty
+|> Map.to_list
+|> List.sort_by (fn (h, n) -> (0 - n, h))
+|> List.each (fn (h, n) -> IO.println "%{n} %{h}")
+
+if invalid > 0 then IO.println "%{invalid} invalid"

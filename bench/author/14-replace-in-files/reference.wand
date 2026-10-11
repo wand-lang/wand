@@ -1,0 +1,42 @@
+uses {FS.Read, FS.Write, IO, Proc}
+
+import FS
+import IO
+import List
+import Path
+import Proc
+import String
+
+-- Every `.txt` file below `dir`, as `(path relative to the root, path)`.
+let text_files! (dir: Path) (prefix: String) =
+  FS.list_dir! dir
+  |> List.map (fn p ->
+    let name = "%{prefix}%{Path.basename p}";
+    if FS.dir? p then text_files! p "%{name}/"
+    else if FS.file? p && String.ends_with? ".txt" name then [(name, p)]
+    else [])
+  |> List.flatten
+
+-- Replace in one file, and answer with how many replacements it took.
+let replace! old new (p: Path) = (
+  let parts = String.split old (FS.read_file! p);
+  let n = List.length parts - 1;
+  if n > 0 then FS.write_file! p (String.join new parts);
+  n
+)
+
+let run! (root: Path) old new = (
+  let changed =
+    text_files! root ""
+    |> List.sort_by (fn (name, _) -> name)
+    |> List.map (fn (name, p) -> (name, replace! old new p))
+    |> List.filter (fn (_, n) -> n > 0);
+  List.each (fn (name, n) -> IO.println "changed %{name} (%{n})") changed;
+  let total = List.fold_left (fn t (_, n) -> t + n) 0 changed;
+  IO.println "changed %{List.length changed} files, %{total} replacements"
+)
+
+match Proc.args () with
+| [dir, old, new] when !(String.empty? old) -> if FS.dir? (Path.of_string dir) then run! (Path.of_string dir) old new
+  else (IO.println_err "not a directory: %{dir}"; Proc.exit 1)
+| _ -> (IO.println_err "usage: prog DIR OLD NEW, where OLD is not empty"; Proc.exit 2)

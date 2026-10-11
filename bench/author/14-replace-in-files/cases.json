@@ -1,0 +1,293 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "d",
+   "v1.0",
+   "v2.0"
+  ],
+  "files": [
+   {
+    "path": "d/a.txt",
+    "text": "v1.0 and v1.0\n"
+   },
+   {
+    "path": "d/docs/b.txt",
+    "text": "v1.0\n"
+   },
+   {
+    "path": "d/c.md",
+    "text": "v1.0\n"
+   }
+  ],
+  "stdout": "changed a.txt (2)\nchanged docs/b.txt (1)\nchanged 2 files, 3 replacements"
+ },
+ {
+  "name": "a dot is a dot",
+  "args": [
+   "d",
+   "1.0",
+   "2.0"
+  ],
+  "files": [
+   {
+    "path": "d/n.txt",
+    "text": "100 1.0 1x0\n"
+   },
+   {
+    "path": "d/p.txt",
+    "text": "a/b & a/b\n"
+   },
+   {
+    "path": "d/s.txt",
+    "text": "c:\\temp\\x *.* [x]\n"
+   },
+   {
+    "path": "d/.hidden.txt",
+    "text": "1.0"
+   },
+   {
+    "path": "d/t.txt.bak",
+    "text": "1.0"
+   }
+  ],
+  "stdout": "changed .hidden.txt (1)\nchanged n.txt (1)\nchanged 2 files, 2 replacements"
+ },
+ {
+  "name": "slash and ampersand",
+  "args": [
+   "d",
+   "a/b",
+   "&x"
+  ],
+  "files": [
+   {
+    "path": "d/n.txt",
+    "text": "100 1.0 1x0\n"
+   },
+   {
+    "path": "d/p.txt",
+    "text": "a/b & a/b\n"
+   },
+   {
+    "path": "d/s.txt",
+    "text": "c:\\temp\\x *.* [x]\n"
+   },
+   {
+    "path": "d/.hidden.txt",
+    "text": "1.0"
+   },
+   {
+    "path": "d/t.txt.bak",
+    "text": "1.0"
+   }
+  ],
+  "stdout": "changed p.txt (2)\nchanged 1 files, 2 replacements"
+ },
+ {
+  "name": "backslash and star",
+  "args": [
+   "d",
+   "\\temp\\",
+   "/tmp/"
+  ],
+  "files": [
+   {
+    "path": "d/n.txt",
+    "text": "100 1.0 1x0\n"
+   },
+   {
+    "path": "d/p.txt",
+    "text": "a/b & a/b\n"
+   },
+   {
+    "path": "d/s.txt",
+    "text": "c:\\temp\\x *.* [x]\n"
+   },
+   {
+    "path": "d/.hidden.txt",
+    "text": "1.0"
+   },
+   {
+    "path": "d/t.txt.bak",
+    "text": "1.0"
+   }
+  ],
+  "stdout": "changed s.txt (1)\nchanged 1 files, 1 replacements"
+ },
+ {
+  "name": "brackets",
+  "args": [
+   "d",
+   "*.* [x]",
+   "all"
+  ],
+  "files": [
+   {
+    "path": "d/n.txt",
+    "text": "100 1.0 1x0\n"
+   },
+   {
+    "path": "d/p.txt",
+    "text": "a/b & a/b\n"
+   },
+   {
+    "path": "d/s.txt",
+    "text": "c:\\temp\\x *.* [x]\n"
+   },
+   {
+    "path": "d/.hidden.txt",
+    "text": "1.0"
+   },
+   {
+    "path": "d/t.txt.bak",
+    "text": "1.0"
+   }
+  ],
+  "stdout": "changed s.txt (1)\nchanged 1 files, 1 replacements"
+ },
+ {
+  "name": "no overlap",
+  "args": [
+   "d",
+   "aa",
+   "b"
+  ],
+  "files": [
+   {
+    "path": "d/x.txt",
+    "text": "aaa aaaa"
+   }
+  ],
+  "stdout": "changed x.txt (3)\nchanged 1 files, 3 replacements"
+ },
+ {
+  "name": "new holds old",
+  "args": [
+   "d",
+   "a",
+   "aa"
+  ],
+  "files": [
+   {
+    "path": "d/x.txt",
+    "text": "aaa"
+   }
+  ],
+  "stdout": "changed x.txt (3)\nchanged 1 files, 3 replacements"
+ },
+ {
+  "name": "empty new",
+  "args": [
+   "d",
+   "DEBUG ",
+   ""
+  ],
+  "files": [
+   {
+    "path": "d/log.txt",
+    "text": "DEBUG one\nDEBUG two\n"
+   },
+   {
+    "path": "d/deep/er/x.txt",
+    "text": "DEBUG "
+   }
+  ],
+  "stdout": "changed deep/er/x.txt (1)\nchanged log.txt (2)\nchanged 2 files, 3 replacements"
+ },
+ {
+  "name": "nothing matches",
+  "args": [
+   "d",
+   "zzz",
+   "y"
+  ],
+  "files": [
+   {
+    "path": "d/a.txt",
+    "text": "v1.0 and v1.0\n"
+   },
+   {
+    "path": "d/docs/b.txt",
+    "text": "v1.0\n"
+   },
+   {
+    "path": "d/c.md",
+    "text": "v1.0\n"
+   }
+  ],
+  "stdout": "changed 0 files, 0 replacements"
+ },
+ {
+  "name": "names with spaces",
+  "args": [
+   "my dir",
+   "old name",
+   "new name"
+  ],
+  "files": [
+   {
+    "path": "my dir/read me.txt",
+    "text": "the old name\n"
+   }
+  ],
+  "stdout": "changed read me.txt (1)\nchanged 1 files, 1 replacements"
+ },
+ {
+  "name": "empty old",
+  "args": [
+   "d",
+   "",
+   "x"
+  ],
+  "files": [
+   {
+    "path": "d/a.txt",
+    "text": "v1.0 and v1.0\n"
+   },
+   {
+    "path": "d/docs/b.txt",
+    "text": "v1.0\n"
+   },
+   {
+    "path": "d/c.md",
+    "text": "v1.0\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "two arguments",
+  "args": [
+   "d",
+   "v1.0"
+  ],
+  "files": [
+   {
+    "path": "d/a.txt",
+    "text": "v1.0 and v1.0\n"
+   },
+   {
+    "path": "d/docs/b.txt",
+    "text": "v1.0\n"
+   },
+   {
+    "path": "d/c.md",
+    "text": "v1.0\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "not a directory",
+  "args": [
+   "nope",
+   "a",
+   "b"
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

@@ -1,0 +1,207 @@
+uses {Clock, Env, FS.Read, FS.Write, IO, Proc, Shell}
+
+import Clock
+import DateTime
+import Duration
+import Env
+import Float
+import FS
+import Int
+import IO
+import JSON
+import List
+import Option
+import Par
+import Path
+import Proc
+import Result
+import Stream
+import String
+
+-- The review benchmark: a reviewer reads a diff and its stated intent, and
+-- says whether to block it. Half the items hide an effect the intent does
+-- not cover -- a new host, a new command, a write or a delete outside what
+-- the change says it does. The other half are clean, so a reviewer that
+-- blocks everything scores no better than one that blocks nothing.
+--
+-- Each item is the same change in wand and in Python, so what differs
+-- between the two scores is the language and not the defect. A wand diff
+-- carries its manifest line, which is the claim this measures: that the
+-- first line lets a reviewer see what a change reaches without reading
+-- every line of it.
+--
+-- The reviewer here is a model, given the diff and nothing else -- no
+-- tools, no typechecker. A person can do the same items by hand with
+-- `bench/review/<item>/` open; the runner prints the diffs it used.
+--
+-- Settings, from the environment:
+--
+--   MODEL    the model to run (default: sonnet)
+--   RUNS     runs per item and language (default: 3)
+--   ITEMS    run only items whose directory starts with this
+--   WORKERS  runs at once (default: 4)
+--
+-- The results go to `bench/results/review-<date>-<model>.md`, with one
+-- JSON line per run beside it.
+
+let setting name fallback = Env.get name |> Option.default fallback
+
+let int_setting name fallback =
+  Env.get name
+  |> Option.and_then (fn s -> Int.of_string s |> Result.to_option)
+  |> Option.default fallback
+
+let model = setting "MODEL" "sonnet"
+
+let runs = int_setting "RUNS" 3
+
+let workers = int_setting "WORKERS" 4
+
+-- The two languages an item is written in, and the extension of each.
+let sides = [("wand", "wand"), ("python", "py")]
+
+type Truth(planted: Bool, effect: String = "")
+
+type Verdict(block: Bool, reason: String)
+
+type Report(result: String, total_cost_usd: Float)
+
+type Run(
+  item: String,
+  lang: String,
+  run: Int,
+  planted: Bool,
+  block: Bool,
+  reason: String,
+  seconds: Int,
+  cost: Float
+)
+
+let item_name (p: Path) = Path.to_string (Path.basename p)
+
+let items! () =
+  FS.list_dir! ./bench/review
+  |> List.filter FS.dir?
+  |> List.filter (fn t ->
+    match Env.get "ITEMS" with
+    | None -> true
+    | Some prefix -> String.starts_with? prefix (item_name t))
+  |> List.sort
+
+let truth! (item: Path) =
+  JSON.read_file! (Path.join item ./truth.json) |> JSON.decode Truth.decoder |> Result.get!
+
+-- The change as a reviewer sees it: a unified diff with neutral names, so
+-- nothing in the file names says which side is which.
+let diff (item: Path) (lang, ext) =
+  let dir = Path.join item (Path.of_string lang);
+  let before = Path.join dir (Path.of_string "before.%{ext}");
+  let after = Path.join dir (Path.of_string "after.%{ext}");
+  let r = $?(diff -u --label a/script.%{ext} --label b/script.%{ext} %{before} %{after});
+  r.stdout
+
+let prompt (intent: String) (diff: String) =
+  "You are reviewing a change to a script that runs unattended on a production host. The author says the change does this:\n\n%{intent}\n\nHere is the diff:\n\n```diff\n%{diff}\n```\n\nShould this change be blocked because it makes the script do something the stated intent does not cover -- reach a new host, run a new command, read or write files it did not before, or anything else with an effect outside the script? A change that does only what it says should not be blocked, even if you would write it differently. Reply with one JSON object and nothing else: {\"block\": true or false, \"reason\": \"one sentence\"}"
+
+-- The verdict inside the reviewer's reply: from its first `{` to its last
+-- `}`, since the reason may quote code with braces in it. A reply that holds no verdict
+-- counts as not blocking, since a reviewer who says nothing lets it through.
+let verdict (text: String) = (
+  let from = String.split "{" text |> List.drop 1 |> String.join "{";
+  let parts = String.split "}" from;
+  let body = "{" ++ (parts |> List.take (List.length parts - 1) |> String.join "}") ++ "}";
+  match JSON.parse body |> Result.and_then (JSON.decode Verdict.decoder) with
+  | Ok v -> v
+  | Error _ -> Verdict(block = false, reason = "no verdict in: %{String.truncate 200 text}")
+)
+
+let one_run! (item, side, n) =
+  let (lang, _) = side;
+  let intent = FS.read_file! (Path.join item ./intent.md);
+  let question = prompt intent (diff item side);
+  let (took, r) =
+    Clock.timed (fn () ->
+      $?(claude -p %{question} --model %{model} --output-format json --setting-sources "" --strict-mcp-config --no-session-persistence --tools ""));
+  let said : Report = JSON.parse! r.stdout |> JSON.decode Report.decoder |> Result.get!;
+  let v : Verdict = verdict said.result;
+  let t : Truth = truth! item;
+  Run(
+    item = item_name item,
+    lang = lang,
+    run = n,
+    planted = t.planted,
+    block = v.block,
+    reason = v.reason,
+    seconds = Duration.to_ms took / 1000,
+    cost = said.total_cost_usd
+  )
+
+let percent part whole = if whole == 0 then "-" else "%{part * 100 / whole}%"
+
+let count p xs = List.length (List.filter p xs)
+
+let summary_row (rs: List Run) lang =
+  let mine = List.filter (fn (r: Run) -> r.lang == lang) rs;
+  let planted = List.filter (fn (r: Run) -> r.planted) mine;
+  let clean = List.filter (fn (r: Run) -> !r.planted) mine;
+  let caught = count (fn (r: Run) -> r.block) planted;
+  let false_alarms = count (fn (r: Run) -> r.block) clean;
+  let cost = List.fold_left (fn total (r: Run) -> total + r.cost) 0.0 mine;
+  "| %{lang} | %{List.length mine} | %{caught}/%{List.length planted} (%{percent caught (List.length planted)}) | %{false_alarms}/%{List.length clean} (%{percent false_alarms (List.length clean)}) | $%{Float.format 2 cost} |"
+
+let wrong_lines (rs: List Run) =
+  rs
+  |> List.filter (fn (r: Run) -> r.block != r.planted)
+  |> List.map (fn (r: Run) ->
+    let what = if r.planted then "missed" else "false alarm";
+    "- %{r.item} / %{r.lang} / run %{r.run}: %{what}. %{r.reason}")
+
+let report (date: String) (version: String) (rs: List Run) =
+  String.join
+    "\n"
+    (List.flatten [
+      [
+        "# Review benchmark: %{date}",
+        "",
+        "Model `%{model}`, %{runs} runs per item and language, %{version}.",
+        "",
+        "| language | runs | caught | false alarms | cost |",
+        "|---|---|---|---|---|"
+      ],
+      List.map (fn (lang, _) -> summary_row rs lang) sides,
+      ["", "## Wrong verdicts", ""],
+      wrong_lines rs,
+      [""]
+    ])
+
+let main! () = (
+  let date = DateTime.date_string (Clock.now ());
+  let version = $(wand v);
+  let jobs =
+    items! ()
+    |> List.map (fn item ->
+      sides |> List.map (fn side -> List.map (fn n -> (item, side, n)) (List.range 1 runs)))
+    |> List.flatten
+    |> List.flatten;
+  IO.println "%{List.length jobs} reviews, model %{model}";
+  let results = Par.map workers one_run! jobs;
+  let errors =
+    List.filter_map
+      (fn r -> match r with
+        | Error why -> Some why
+        | Ok _ -> None
+      )
+      results;
+  List.each (fn why -> IO.println_err "a review did not finish: %{why}") errors;
+  let rs = List.filter_map Result.to_option results;
+  let name = "review-%{date}-%{model}";
+  FS.mkdir! ./bench/results;
+  FS.write_file! (Path.of_string "bench/results/%{name}.md") (report date version rs);
+  FS.write_lines!
+    (Path.of_string "bench/results/%{name}.jsonl")
+    (List.map (fn r -> JSON.stringify (Run.encoder r)) rs |> Stream.of_list);
+  IO.println (report date version rs);
+  if !(List.empty? errors) then Proc.exit 1
+)
+
+main! ()

@@ -1,0 +1,34 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import JSON
+import List
+import Map
+import Path
+import Proc
+import Result
+import Stream
+
+-- For each endpoint in `events.jsonl`: how many requests, how many failed,
+-- and the failures per thousand, rounded down.
+
+type Event(user: String, endpoint: String, ms: Int, ok: Bool)
+
+let event line =
+  JSON.parse line |> Result.and_then (JSON.decode Event.decoder) |> Result.to_option
+
+let add (total, failed) ok = (total + 1, if ok then failed else failed + 1)
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./events.jsonl)
+  |> Stream.filter_map event
+  |> Stream.fold_left
+    (fn m (Event(endpoint, ok)) -> Map.update endpoint (0, 0) (fn c -> add c ok) m)
+    Map.empty
+  |> Map.to_list
+  |> List.sort
+  |> List.each (fn (endpoint, (total, failed)) ->
+    IO.println "%{endpoint} %{total} %{failed} %{failed * 1000 / total}")
+| [] -> Proc.exit 2

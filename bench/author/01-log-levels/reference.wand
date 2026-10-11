@@ -1,0 +1,38 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Option
+import Path
+import Proc
+import String
+
+let levels = ["ERROR", "WARN", "INFO", "DEBUG"]
+
+let rank level =
+  List.indexed levels
+  |> List.find (fn (_, l) -> l == level)
+  |> Option.map (fn (i, _) -> i)
+  |> Option.default 0
+
+let level_of line =
+  match String.words line with
+  | [_ :: level :: _] -> if List.any? (fn l -> l == level) levels then Some level else None
+  | _ -> None
+
+let count text =
+  String.lines text
+  |> List.filter_map level_of
+  |> List.fold_left (fn m l -> Map.update l 0 (fn n -> n + 1) m) Map.empty
+  |> Map.to_list
+  |> List.sort_by (fn (l, n) -> (0 - n, rank l))
+
+match Proc.args () with
+| [] -> (IO.println_err "usage: prog LOGFILE"; Proc.exit 2)
+| [file :: _] -> (
+  match FS.read_file (Path.of_string file) with
+  | Error why -> (IO.println_err why; Proc.exit 1)
+  | Ok text -> List.each (fn (l, n) -> IO.println "%{l} %{n}") (count text)
+)

@@ -1,0 +1,44 @@
+uses {FS.Read, FS.Write, IO, Proc}
+
+import FS
+import IO
+import Int
+import List
+import Proc
+import Regex
+import String
+
+let fail code message = (IO.println_err message; Proc.exit code)
+
+let bump part (major, minor, patch) =
+  match part with
+  | "major" -> (major + 1, 0, 0)
+  | "minor" -> (major, minor + 1, 0)
+  | _ -> (major, minor, patch + 1)
+
+let parse! text =
+  match Regex.capture r/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ text with
+  | [_, major, minor, patch] -> Some (
+    Int.of_string! major,
+    Int.of_string! minor,
+    Int.of_string! patch
+  )
+  | _ -> None
+
+let bump_file! part =
+  match FS.read_file ./VERSION with
+  | Error why -> fail 1 why
+  | Ok text -> (
+    match parse! (String.trim text) with
+    | None -> fail 1 "not a version: '%{String.trim text}'"
+    | Some version -> (
+      let (major, minor, patch) = bump part version;
+      let next = "%{major}.%{minor}.%{patch}";
+      FS.write_file! ./VERSION "%{next}\n";
+      IO.println next
+    )
+  )
+
+match Proc.args () with
+| [part] when List.any? (fn p -> p == part) ["major", "minor", "patch"] -> bump_file! part
+| _ -> fail 2 "usage: prog major|minor|patch"

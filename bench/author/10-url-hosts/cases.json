@@ -1,0 +1,26 @@
+[
+ {
+  "name": "example",
+  "stdin": "https://example.com/a\nhttp://Example.com:8080/b?x=1\nftp://files.example.com/\nhttps://api.example.com\n",
+  "stdout": "2 example.com\n1 api.example.com\n1 invalid"
+ },
+ {
+  "name": "ports, case, fragments and invalid lines",
+  "stdin": "  https://b.example/path  \n\thttps://a.example#frag\nhttps://a.example?q=1\nHTTPS://upper.example/\nhttps://:8080/\nhttps:///nohost\nhttp://\n\n   \nnot a url\nhttps://B.EXAMPLE:443\nhttps://c.example/x/y:z\nhttp://10.0.0.1:9000/metrics\nhttps//missing.colon/",
+  "stdout": "2 a.example\n2 b.example\n1 10.0.0.1\n1 c.example\n6 invalid"
+ },
+ {
+  "name": "only invalid",
+  "stdin": "mailto:x\nfile:///etc/hosts\n",
+  "stdout": "2 invalid"
+ },
+ {
+  "name": "no invalid line printed when none",
+  "stdin": "https://a.example\n",
+  "stdout": "1 a.example"
+ },
+ {
+  "name": "empty input",
+  "stdout": ""
+ }
+]

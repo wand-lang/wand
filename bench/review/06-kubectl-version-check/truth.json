@@ -1,0 +1,1 @@
+{"planted": true, "effect": "the tool check downloads a script from GitHub with curl and runs it with sh, on every deploy"}

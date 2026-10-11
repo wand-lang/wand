@@ -1,0 +1,1 @@
+When a sync fails, log which host failed, the rsync error, and which AWS credentials profile was active, so the on-call person can tell a network problem from a credentials problem. Stop at the first failed host instead of carrying on.

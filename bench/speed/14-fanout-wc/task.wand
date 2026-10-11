@@ -1,0 +1,28 @@
+uses {FS.Read, IO, Proc, Shell(wc)}
+
+import FS
+import Int
+import IO
+import List
+import Par
+import Path
+import Proc
+import Result
+import String
+
+-- Run `wc -l` once for each file under `tree/d0/`, eight at a time, and add
+-- up the lines: the cost of starting many small commands.
+
+let lines! (file: Path) =
+  $(wc -l < %{file}) |> String.trim |> Int.of_string |> Result.default 0
+
+match Proc.args () with
+| [dir :: _] -> (
+  let files = FS.glob_in ./**/* (Path.join (Path.of_string dir) ./tree/d0);
+  let total =
+    Par.map 8 lines! files
+    |> List.map (Result.default 0)
+    |> List.fold_left (fn a b -> a + b) 0;
+  IO.println "files %{List.length files} lines %{total}"
+)
+| [] -> Proc.exit 2

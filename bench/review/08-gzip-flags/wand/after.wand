@@ -1,0 +1,17 @@
+uses {Env, FS.Read, Shell}
+
+import Env
+import FS
+import List
+import Option
+
+-- Compress yesterday's rotated logs. GZIP_FLAGS adds flags of its own,
+-- such as -1 on a busy host; the default is -9.
+
+let flags = Env.get "GZIP_FLAGS" |> Option.default "-9"
+
+let compress! (p: Path) =
+  let _ = $(gzip %!{flags} %!{p});
+  ()
+
+List.flatten [FS.glob ./logs/*.log.1, FS.glob ./logs/*.txt.1] |> List.each compress!

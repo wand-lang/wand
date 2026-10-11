@@ -1,0 +1,27 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import Stream
+import String
+
+-- How many lines of `app.log` carry each level, most first.
+
+let level line =
+  match String.words line with
+  | [_ :: level :: _] -> Some level
+  | _ -> None
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+  |> Stream.filter_map level
+  |> Stream.fold_left (fn m l -> Map.update l 0 (fn n -> n + 1) m) Map.empty
+  |> Map.to_list
+  |> List.sort_by (fn (l, n) -> (0 - n, l))
+  |> List.each (fn (l, n) -> IO.println "%{l} %{n}")
+| [] -> Proc.exit 2

@@ -1,0 +1,512 @@
+uses {Clock, Env, FS.Read, FS.Write, IO, Proc, Shell}
+
+import Clock
+import DateTime
+import Decode
+import Duration
+import Env
+import Float
+import FS
+import Int
+import IO
+import JSON
+import List
+import Map
+import Option
+import Par
+import Path
+import Proc
+import Regex
+import Result
+import Stream
+import String
+
+let {Lang, langs, lang_name, extension, wand_exe, run_cases!, read_cases!} = import ./lib
+
+-- The authoring benchmark: an agent writes each task in each language, with
+-- tools, and is scored on the task's hidden cases.
+--
+-- What it measures, per language:
+--
+--   pass     the share of runs whose program passes every hidden case
+--   turns    how many turns the agent took, on a passing run and on all
+--   escaped  runs the agent ended as done whose program then failed a
+--            hidden case -- the defects its own checks let through
+--   cost     dollars, from the agent's own report
+--
+-- The agent sees `spec.md` and the task's `fixture/`, never `cases.json`.
+-- It may write, run and test what it likes in its own directory. A wand
+-- run also gets `wand` on its PATH and the "writing wand code" half of
+-- CLAUDE.md as its own CLAUDE.md -- the syntax card and the tools, with
+-- `wand d` for everything else. Python and bash get no CLAUDE.md, since
+-- the model already knows them.
+--
+-- Each run is a headless `claude -p` that loads only its own directory's
+-- settings -- none of the user's, and no MCP servers -- in a fresh
+-- temporary directory, with Bash
+-- allowed: the agent runs what it writes, and that is the loop being
+-- measured. Run this on a machine where that is acceptable.
+--
+-- Settings, from the environment:
+--
+--   MODEL    the model to run (default: sonnet)
+--   RUNS     runs per task and language (default: 3)
+--   TASKS    run only tasks whose directory starts with this
+--   LANGS    a comma-separated subset of wand,python,bash
+--   BUDGET   dollars one run may spend (default: 2)
+--   WORKERS  runs at once (default: 4)
+--   WAND     the wand build under test (default: the one on the PATH)
+--   LABEL    added to the results' name, so a second run on one day does
+--            not write over the first
+--
+-- The results go to `bench/results/author-<date>-<model>.md`, with one JSON
+-- line per run beside it so that two dates can be compared.
+
+let setting name fallback = Env.get name |> Option.default fallback
+
+let int_setting name fallback =
+  Env.get name
+  |> Option.and_then (fn s -> Int.of_string s |> Result.to_option)
+  |> Option.default fallback
+
+let model = setting "MODEL" "sonnet"
+
+let runs = int_setting "RUNS" 3
+
+let budget = setting "BUDGET" "2"
+
+let workers = int_setting "WORKERS" 4
+
+let chosen_langs =
+  match Env.get "LANGS" with
+  | None -> langs
+  | Some names -> (
+    let wanted = String.split "," names;
+    List.filter (fn l -> List.any? (fn n -> n == lang_name l) wanted) langs
+  )
+
+let chosen_tasks =
+  FS.list_dir! ./bench/author
+  |> List.filter FS.dir?
+  |> List.filter (fn t ->
+    match Env.get "TASKS" with
+    | None -> true
+    | Some prefix -> String.starts_with? prefix (Path.to_string (Path.basename t)))
+  |> List.sort
+
+-- What the agent said about its own run.
+type Report(num_turns: Int, total_cost_usd: Float, is_error: Bool, duration_ms: Int)
+
+-- The parts of the agent's event stream that say which tools it called.
+-- Each line of `--output-format stream-json` is one event; a tool call is
+-- a `tool_use` block in an `assistant` event's message.
+type Input(command: Option String, file_path: Option String)
+
+type Block(kind "type": String, name: Option String, input: Option Input)
+
+type Message(content: List Block)
+
+type Event(kind "type": String, message: Option Message)
+
+-- One run, scored.
+type Run(
+  task: String,
+  lang: String,
+  run: Int,
+  turns: Int,
+  cost: Float,
+  seconds: Int,
+  agent_error: Bool,
+  written: Bool,
+  cases: Int,
+  failed: Int,
+  failures: List String,
+  calls: List String
+)
+
+let prompt lang =
+  let file = "solution.%{extension lang}";
+  let start =
+    match lang with
+    | Wand -> "wand %{file} ARGS"
+    | Python -> "python3 %{file} ARGS"
+    | Bash -> "bash %{file} ARGS"
+  in
+  let docs =
+    match lang with
+    | Wand -> " wand is a new language. CLAUDE.md says how to write it."
+    | _ -> ""
+  in
+  "Write %{file} in this directory so that it does what spec.md says. It will be run as `%{start}` from a directory that holds its input files, and its stdout and exit code are checked against hidden tests.%{docs} Test it as you go. When you are finished, reply with the single word DONE."
+
+-- The "writing wand code" half of CLAUDE.md. A wand run gets it as the
+-- CLAUDE.md of its own directory, so it is in context from the first turn,
+-- as it is for an agent working in a wand repository.
+--
+-- The agent gets no copy of the full reference: the syntax card and the
+-- tools are what it needs, and `wand d` answers the rest from the build
+-- under test. So the two places that point at the reference point at
+-- `wand d` instead.
+let wand_guide! () =
+  let text = FS.read_file! ./CLAUDE.md;
+  let part_b =
+    match String.split "## Part B" text with
+    | [_, rest] -> "## Part B%{rest}"
+    | _ -> text
+  in
+  let before =
+    String.split "For anything not covered here" part_b
+    |> List.head
+    |> Option.default part_b;
+  before
+  |> String.replace "(see the reference's Decoders section)" "(`wand d Decode`)"
+  |> (fn guide -> "%{guide}For anything not covered here, ask `wand d`: `wand d` lists the modules, `wand d Module` its members, and `wand d Module.name` one name's type, doc and examples.\n")
+
+-- Put what the agent may see into `dir`, and `wand` on a PATH of its own.
+let stage! lang (task: Path) (dir: Path) = (
+  FS.copy! (Path.join task ./spec.md) (Path.join dir ./spec.md);
+  let fixture = Path.join task ./fixture;
+  if FS.dir? fixture then FS.copy_tree! fixture dir;
+  match lang with
+  | Wand -> FS.write_file! (Path.join dir ./CLAUDE.md) (wand_guide! ())
+  | _ -> ()
+)
+
+-- One tool call, as one short line: the tool, and the command it ran or
+-- the file it touched.
+let describe (Block(name, input)) = (
+  let tool = Option.default "?" name;
+  match input with
+  | Some (Input(command = Some c)) -> (
+    let first = String.lines c |> List.head |> Option.default "";
+    "%{tool}: %{String.truncate 400 first}"
+  )
+  | Some (Input(file_path = Some f)) -> "%{tool}: %{Path.basename (Path.of_string f)}"
+  | _ -> tool
+)
+
+-- The text of a tool result: a string, or a list of text blocks.
+let result_text = Decode.one_of [
+  Decode.string,
+  Decode.list (Decode.one_of [Decode.field "text" Decode.string, Decode.succeed ""])
+  |> Decode.map (String.join "\n")
+]
+
+-- A tool result, as whether the tool called it an error and its text.
+-- Blocks of another kind read as `None`.
+let tool_result =
+  Decode.field "type" Decode.string
+  |> Decode.and_then (fn kind ->
+    if kind == "tool_result" then
+      Decode.map2
+        (fn failed text -> Some (Option.default false failed, Option.default "" text))
+        (Decode.optional "is_error" Decode.bool)
+        (Decode.optional "content" result_text)
+    else Decode.succeed None)
+
+let results =
+  Decode.field "message" (Decode.field "content" (Decode.list tool_result))
+  |> Decode.map (List.filter_map (fn r -> r))
+
+-- A result worth keeping: one the tool called an error, or one with a line
+-- that starts as an error or a warning does. `wand t` can print a type
+-- error from a command line that still exits 0, so the flag alone is not
+-- enough; and `wand d` output names functions like `Result.error?`, so the
+-- word anywhere in a line is too much.
+let reports? (line: String) = Regex.match? r/^\s*(Error|error|warning)\b/ line
+
+let worth_keeping? (failed, text) = failed || List.any? reports? (String.lines text)
+
+-- A result as one line: its first three non-empty lines, joined.
+let summarize (_, text) =
+  let first =
+    String.lines text
+    |> List.map String.trim
+    |> List.filter (fn l -> !(String.empty? l))
+    |> List.take 3
+    |> String.join " / ";
+  "result: %{String.truncate 400 first}"
+
+-- What one line of the event stream adds to the log: a line for each tool
+-- call, and a `result:` line for each result worth keeping.
+let calls_in (line: String) =
+  match JSON.parse line with
+  | Error _ -> []
+  | Ok event -> (
+    match JSON.decode (Decode.field "type" Decode.string) event with
+    | Ok "assistant" -> (
+      match JSON.decode Event.decoder event with
+      | Ok (Event(message = Some (Message content))) ->
+        content |> List.filter (fn (b: Block) -> b.kind == "tool_use") |> List.map describe
+      | _ -> []
+    )
+    | Ok "user" -> (
+      match JSON.decode results event with
+      | Ok rs -> rs |> List.filter worth_keeping? |> List.map summarize
+      | Error _ -> []
+    )
+    | _ -> []
+  )
+
+-- Run the agent. It answers with its own report of the run, and with each
+-- tool call it made, in order.
+let agent! (dir: Path) (bin: Path) lang = (
+  let path = "%{bin}:%{setting "PATH" "/usr/bin:/bin"}";
+  let r =
+    $?(cd %{dir} && PATH=%{path} claude -p %{prompt lang} --model %{model} --output-format stream-json --verbose --setting-sources project --strict-mcp-config --no-session-persistence --allowedTools Read,Write,Edit,Glob,Grep,Bash --max-budget-usd %{budget});
+  let lines = String.lines r.stdout;
+  let last = List.reverse lines |> List.head |> Option.default "";
+  match JSON.parse last |> Result.and_then (JSON.decode Report.decoder) with
+  | Ok report -> (report, List.flatten (List.map calls_in lines))
+  | Error why ->
+    Result.get!
+      (Error
+        "the agent's report did not read: %{why}: %{String.truncate 400 last} %{r.stderr}")
+)
+
+let one_run! (bin: Path) (task, lang, n) =
+  with FS.temp_dir "bench_author_" as dir -> (
+    stage! lang task dir;
+    let (took, (Report(num_turns, total_cost_usd, is_error), calls)) =
+      Clock.timed (fn () -> agent! dir bin lang);
+    let solution = Path.join dir (Path.of_string "solution.%{extension lang}");
+    let written = FS.file? solution;
+    let total = List.length (read_cases! task);
+    let failures =
+      if written then run_cases! lang task solution else ["no solution written"];
+    Run(
+      task = Path.to_string (Path.basename task),
+      lang = lang_name lang,
+      run = n,
+      turns = num_turns,
+      cost = total_cost_usd,
+      seconds = Duration.to_ms took / 1000,
+      agent_error = is_error,
+      written = written,
+      cases = total,
+      failed = if written then List.length failures else total,
+      failures = failures,
+      calls = calls
+    )
+  )
+
+let percent part whole = if whole == 0 then "-" else "%{part * 100 / whole}%"
+
+let mean xs =
+  match xs with
+  | [] -> "-"
+  | _ ->
+    Float.format
+      1
+      (Float.of_int (List.fold_left (fn a b -> a + b) 0 xs) / Float.of_int (List.length xs))
+
+let passed? (r: Run) = r.written && r.failed == 0
+
+-- An escape: the agent ended the run as done, and a hidden case failed.
+let escaped? (r: Run) = !r.agent_error && r.written && r.failed > 0
+
+let summary_row (lang: String) (rs: List Run) =
+  let mine = List.filter (fn (r: Run) -> r.lang == lang) rs;
+  let wins = List.filter passed? mine;
+  let turns = List.map (fn (r: Run) -> r.turns) mine;
+  let win_turns = List.map (fn (r: Run) -> r.turns) wins;
+  let cost = List.fold_left (fn total (r: Run) -> total + r.cost) 0.0 mine;
+  let escapes = List.length (List.filter escaped? mine);
+  "| %{lang} | %{List.length mine} | %{percent (List.length wins) (List.length mine)} | %{mean win_turns} | %{mean turns} | %{escapes} | $%{Float.format 2 cost} |"
+
+let task_row (rs: List Run) (task: String) =
+  let cell lang =
+    let mine = List.filter (fn (r: Run) -> r.task == task && r.lang == lang) rs;
+    let wins = List.length (List.filter passed? mine);
+    let turns = List.map (fn (r: Run) -> r.turns) mine;
+    "%{wins}/%{List.length mine}, %{mean turns} turns";
+  let cells = chosen_langs |> List.map (fn l -> cell (lang_name l)) |> String.join " | ";
+  "| %{task} | %{cells} |"
+
+let failure_lines (rs: List Run) =
+  rs
+  |> List.filter (fn r -> !(passed? r))
+  |> List.map (fn (r: Run) ->
+    let first =
+      List.head r.failures
+      |> Option.default ""
+      |> String.replace "\n" "\\n"
+      |> String.truncate 300;
+    "- %{r.task} / %{r.lang} / run %{r.run}: %{first}")
+
+-- What a tool call was for. The kinds are the same for every language, so
+-- that a row of the table compares like with like: `wand d` and `pydoc`
+-- are both a lookup, `wand -e` and `python3 -c` both a trial.
+let kinds = [
+  "read the guide",
+  "look up a name",
+  "try an expression",
+  "typecheck",
+  "format",
+  "run the program",
+  "write or edit",
+  "other"
+]
+
+-- What one command was for.
+let command_kind (command: String) =
+  let has? needle = String.contains? needle command;
+  if has? "cat >" || has? "sed -i" || has? "tee " then "write or edit"
+  else if has? "wand d " || has? "pydoc" || has? "help(" || has? "man " then "look up a name"
+  else if has? "wand -e" || has? "wand i" || has? "python3 -c" || has? "python -c" then
+    "try an expression"
+  else if has? "wand t " || has? "py_compile" || has? "bash -n" || has? "shellcheck" then
+    "typecheck"
+  else if has? "wand f " then "format"
+  else if has? "solution." then "run the program"
+  else "other"
+
+-- What one tool call was for. One Bash call often holds several commands
+-- -- `cd dir; cat > solution.wand <<EOF` -- so it is split on `;`, `&&`
+-- and `||`, a bare `cd` is dropped, and each command counts once.
+let kinds_of (call: String) =
+  if String.starts_with? "result: " call then []
+  else if String.starts_with? "Read: CLAUDE.md" call || String.starts_with? "Read: spec.md" call then
+    ["read the guide"]
+  else if String.starts_with? "Write" call || String.starts_with? "Edit" call then
+    ["write or edit"]
+  else if String.starts_with? "Bash: " call then
+    String.slice 6 (String.length call) call
+    |> String.replace "&&" ";"
+    |> String.replace "||" ";"
+    |> String.split ";"
+    |> List.map String.trim
+    |> List.filter (fn c -> !(String.empty? c) && !(String.starts_with? "cd " c))
+    |> List.map command_kind
+  else ["other"]
+
+let calls_row (rs: List Run) (lang: String) =
+  let mine = List.filter (fn (r: Run) -> r.lang == lang) rs;
+  let all =
+    mine
+    |> List.map (fn (r: Run) -> r.calls)
+    |> List.flatten
+    |> List.map kinds_of
+    |> List.flatten;
+  let per_run kind =
+    let n = List.length (List.filter (fn k -> k == kind) all);
+    if List.empty? mine then "-"
+    else Float.format 1 (Float.of_int n / Float.of_int (List.length mine));
+  "| %{lang} | %{kinds |> List.map per_run |> String.join " | "} |"
+
+-- An error as a key to count by: the first line that says error or
+-- warning, with its line and column taken out, so the same mistake at two places
+-- counts as one.
+let error_key (entry: String) =
+  let text = String.slice 8 (String.length entry) entry;
+  let parts = String.split " / " text;
+  let line =
+    parts |> List.find reports? |> Option.default (List.head parts |> Option.default "");
+  line |> Regex.replace_all r/[0-9]+:[0-9]+/ "N:N" |> String.truncate 160
+
+let errors_section (rs: List Run) (lang: String) =
+  let keys =
+    rs
+    |> List.filter (fn (r: Run) -> r.lang == lang)
+    |> List.map (fn (r: Run) -> r.calls)
+    |> List.flatten
+    |> List.filter (String.starts_with? "result: ")
+    |> List.map error_key;
+  let top =
+    List.tally keys
+    |> Map.to_list
+    |> List.sort_by (fn (k, n) -> (0 - n, k))
+    |> List.take 15
+    |> List.map (fn (k, n) ->
+      "| %{n} | `%{String.replace "|" "\\|" (String.replace "`" "'" k)}` |");
+  List.flatten [
+    [
+      "",
+      "### %{lang}: %{List.length keys} results",
+      "",
+      "| times | first error line |",
+      "|---|---|"
+    ],
+    top
+  ]
+
+let report (date: String) (version: String) (rs: List Run) =
+  let header = chosen_langs |> List.map lang_name |> String.join " | ";
+  let rule = chosen_langs |> List.map (fn _ -> "---") |> String.join "|";
+  String.join
+    "\n"
+    (List.flatten [
+      [
+        "# Authoring benchmark: %{date}",
+        "",
+        "Model `%{model}`, %{runs} runs per task and language, %{version}.",
+        "",
+        "| language | runs | pass | turns (passing) | turns (all) | escaped | cost |",
+        "|---|---|---|---|---|---|---|"
+      ],
+      List.map (fn l -> summary_row (lang_name l) rs) chosen_langs,
+      ["", "| task | %{header} |", "|---|%{rule}|"],
+      List.map
+        (task_row rs)
+        (List.map (fn t -> Path.to_string (Path.basename t)) chosen_tasks),
+      [
+        "",
+        "## Where the turns go",
+        "",
+        "Commands per run, by what each one was for. One tool call can hold several commands. The JSON lines beside this file hold every call.",
+        "",
+        "| language | %{String.join " | " kinds} |",
+        "|---|%{kinds |> List.map (fn _ -> "---") |> String.join "|"}|"
+      ],
+      List.map (fn l -> calls_row rs (lang_name l)) chosen_langs,
+      [
+        "",
+        "## Errors the agent saw",
+        "",
+        "Tool results that failed or reported an error or a warning, by their first such line, with line and column taken out. The most frequent come first."
+      ],
+      chosen_langs |> List.map (fn l -> errors_section rs (lang_name l)) |> List.flatten,
+      ["", "## Failures", ""],
+      failure_lines rs,
+      [""]
+    ])
+
+let main! () = (
+  let date = DateTime.date_string (Clock.now ());
+  let version = $(%{wand_exe} v);
+  let jobs =
+    chosen_tasks
+    |> List.map (fn task ->
+      chosen_langs
+      |> List.map (fn lang -> List.map (fn n -> (task, lang, n)) (List.range 1 runs)))
+    |> List.flatten
+    |> List.flatten;
+  IO.println
+    "%{List.length jobs} runs: %{List.length chosen_tasks} tasks, %{List.length chosen_langs} languages, %{runs} each, model %{model}";
+  with FS.temp_dir "bench_bin_" as bin -> (
+    let _ = $(ln -s %{wand_exe |> String.trim} %{Path.join bin ./wand});
+    let results = Par.map workers (one_run! bin) jobs;
+    let errors =
+      List.filter_map
+        (fn r -> match r with
+          | Error why -> Some why
+          | Ok _ -> None
+        )
+        results;
+    List.each (fn why -> IO.println_err "a run did not finish: %{why}") errors;
+    let rs = List.filter_map Result.to_option results;
+    let name =
+      (match Env.get "LABEL" with
+       | Some label -> "author-%{date}-%{model}-%{label}"
+       | None -> "author-%{date}-%{model}");
+    FS.mkdir! ./bench/results;
+    FS.write_file! (Path.of_string "bench/results/%{name}.md") (report date version rs);
+    FS.write_lines!
+      (Path.of_string "bench/results/%{name}.jsonl")
+      (List.map (fn r -> JSON.stringify (Run.encoder r)) rs |> Stream.of_list);
+    IO.println (report date version rs);
+    if !(List.empty? errors) then Proc.exit 1
+  )
+)
+
+main! ()

@@ -1,0 +1,1 @@
+Also clean up the .tmp files the uploader leaves in subdirectories of ./spool, but only once they are a day old, so uploads still in progress are kept. Moved the filter into a named function so the rule is easy to read.

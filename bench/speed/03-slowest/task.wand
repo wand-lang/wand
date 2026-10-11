@@ -1,0 +1,31 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import Int
+import IO
+import List
+import Option
+import Path
+import Proc
+import Result
+import Stream
+import String
+
+-- The twenty slowest requests in `app.log`: the lines with the highest
+-- `ms=`, and lines with the same time in byte order.
+
+let ms line =
+  String.words line
+  |> List.find (fn w -> String.starts_with? "ms=" w)
+  |> Option.and_then (fn w ->
+    Int.of_string (String.slice 3 (String.length w) w) |> Result.to_option)
+  |> Option.default 0
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
+  |> Stream.to_list
+  |> List.sort_by (fn line -> (0 - ms line, line))
+  |> List.take 20
+  |> List.each IO.println
+| [] -> Proc.exit 2

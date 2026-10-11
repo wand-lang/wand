@@ -1,0 +1,106 @@
+uses {Env, FS.Read, FS.Write, Shell}
+
+import Decode
+import Env
+import FS
+import JSON
+import List
+import Option
+import Path
+import Result
+
+-- What the three parts of the benchmark share: how a program in each
+-- language is started, and how one case is run against it.
+--
+-- A program is started the same way in each language -- the interpreter,
+-- the file, then the arguments -- so a task's spec can say "run as
+-- `prog ARGS`" and mean the same thing for all three.
+
+-- A file a case puts in the working directory before the program runs.
+type File(path: String, text: String)
+
+-- One hidden test. The program runs in an empty directory holding the
+-- task's `fixture/`, if it has one, and this case's `files`. It is given
+-- `args` and `stdin`, and passes when its stdout (trimmed, as `$?()` trims
+-- it) is `stdout` and its exit code is `code`.
+type Case(
+  name: String,
+  args: List String = [],
+  stdin: String = "",
+  files: List File = [],
+  stdout: String,
+  code: Int = 0
+)
+
+type Lang = Wand | Python | Bash
+
+let langs = [Wand, Python, Bash]
+
+let lang_name lang =
+  match lang with
+  | Wand -> "wand"
+  | Python -> "python"
+  | Bash -> "bash"
+
+let extension lang =
+  match lang with
+  | Wand -> "wand"
+  | Python -> "py"
+  | Bash -> "sh"
+
+-- The wand binary under test. CI and the tools in `tools/` name it with
+-- `WAND`; the default is the one on the PATH.
+let wand_exe = Env.get "WAND" |> Option.default "wand"
+
+let read_cases (task: Path) =
+  let file = Path.join task (Path.of_string "cases.json");
+  JSON.read_file file
+  |> Result.and_then (JSON.decode (Decode.list Case.decoder))
+  |> Result.map_error (fn why -> "%{file}: %{why}")
+
+let read_cases! task = Result.get! (read_cases task)
+
+-- Run `prog` in `dir` with `args` and `stdin`.
+--
+-- wand has no way to splice a list into a command as several arguments,
+-- so each length is written out. The interpreter is a word decided at run
+-- time (`WAND` names the build under test), which `V-SHELL1` reports. Four is more than any task takes; a case
+-- with more is refused rather than cut short.
+let start! lang (prog: Path) (dir: Path) args stdin = (
+  let prog = if Path.absolute? prog then prog else Path.join (FS.cwd ()) prog;
+  let interp =
+    (match lang with
+     | Wand -> wand_exe
+     | Python -> "python3"
+     | Bash -> "bash");
+  match args with
+  | [] -> stdin |> $?(cd %{dir} && %{interp} %{prog})
+  | [a] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a})
+  | [a, b] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b})
+  | [a, b, c] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b} %{c})
+  | [a, b, c, d] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b} %{c} %{d})
+  | _ -> Result.get! (Error "a case takes at most four arguments")
+)
+
+-- What went wrong with one case, or `None` when it passed.
+let run_case! lang (task: Path) (prog: Path) (Case(name, args, stdin, files, stdout, code)) =
+  with FS.temp_dir "bench_" as dir -> (
+    let fixture = Path.join task (Path.of_string "fixture");
+    if FS.dir? fixture then FS.copy_tree! fixture dir;
+    List.each
+      (fn (File(path, text)) -> (
+        let file = Path.join dir (Path.of_string path);
+        FS.mkdir! (Path.parent file);
+        FS.write_file! file text
+      ))
+      files;
+    let r = start! lang prog dir args stdin;
+    if r.stdout == stdout && r.code == code then None
+    else
+      Some
+        "%{name}: wanted exit %{code} and %{stdout}, got exit %{r.code} and %{r.stdout} %{r.stderr}"
+  )
+
+-- Every failing case of `prog`, one line each. Empty when all pass.
+let run_cases! lang (task: Path) (prog: Path) =
+  read_cases! task |> List.filter_map (run_case! lang task prog)

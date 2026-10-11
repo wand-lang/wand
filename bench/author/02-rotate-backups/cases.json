@@ -1,0 +1,275 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "b",
+   "2"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "deleted backup-2026-01-01.tar\nkept 2"
+ },
+ {
+  "name": "only real backups count",
+  "args": [
+   "b",
+   "1"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2025-12-31.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-01-10.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-01-02.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-01-01.tar.gz",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-latest.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-1-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/sub/backup-2020-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-05-05.tar",
+    "text": "x"
+   }
+  ],
+  "stdout": "deleted backup-2025-12-31.tar\ndeleted backup-2026-01-02.tar\ndeleted backup-2026-01-10.tar\nkept 1"
+ },
+ {
+  "name": "keep none",
+  "args": [
+   "b",
+   "0"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "deleted backup-2026-01-01.tar\ndeleted backup-2026-02-01.tar\ndeleted backup-2026-03-01.tar\nkept 0"
+ },
+ {
+  "name": "keep more than there are",
+  "args": [
+   "b",
+   "10"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "kept 3"
+ },
+ {
+  "name": "empty directory",
+  "args": [
+   "b",
+   "3"
+  ],
+  "files": [
+   {
+    "path": "b/readme",
+    "text": "x"
+   }
+  ],
+  "stdout": "kept 0"
+ },
+ {
+  "name": "directory with a space",
+  "args": [
+   "my backups",
+   "1"
+  ],
+  "files": [
+   {
+    "path": "my backups/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "my backups/backup-2026-01-02.tar",
+    "text": "x"
+   }
+  ],
+  "stdout": "deleted backup-2026-01-01.tar\nkept 1"
+ },
+ {
+  "name": "negative N",
+  "args": [
+   "b",
+   "-1"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "N is a word",
+  "args": [
+   "b",
+   "two"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "N is a fraction",
+  "args": [
+   "b",
+   "1.5"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing N",
+  "args": [
+   "b"
+  ],
+  "files": [
+   {
+    "path": "b/backup-2026-01-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-02-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/backup-2026-03-01.tar",
+    "text": "x"
+   },
+   {
+    "path": "b/notes.txt",
+    "text": "x"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "no arguments",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "not a directory",
+  "args": [
+   "nope",
+   "1"
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

@@ -1,0 +1,1 @@
+{"planted": true, "effect": "the filter is an || where it must be an &&, so every file in the spool tree older than a day is deleted, .tmp or not -- the queued uploads with it; no manifest change"}

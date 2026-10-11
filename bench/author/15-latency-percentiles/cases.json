@@ -1,0 +1,36 @@
+[
+ {
+  "name": "example",
+  "stdin": "{\"endpoint\": \"/login\", \"ms\": 30}\n{\"endpoint\": \"/login\", \"ms\": 10}\n{\"endpoint\": \"/\", \"ms\": 5, \"status\": 200}\nnot json\n{\"endpoint\": \"/login\", \"ms\": 20}\n",
+  "stdout": "/ count=1 p50=5 p95=5\n/login count=3 p50=20 p95=30\nskipped 1"
+ },
+ {
+  "name": "twenty values",
+  "stdin": "{\"endpoint\": \"/api\", \"ms\": 7}\n{\"endpoint\": \"/api\", \"ms\": 3}\n{\"endpoint\": \"/api\", \"ms\": 19}\n{\"endpoint\": \"/api\", \"ms\": 1}\n{\"endpoint\": \"/api\", \"ms\": 15}\n{\"endpoint\": \"/api\", \"ms\": 11}\n{\"endpoint\": \"/api\", \"ms\": 2}\n{\"endpoint\": \"/api\", \"ms\": 20}\n{\"endpoint\": \"/api\", \"ms\": 8}\n{\"endpoint\": \"/api\", \"ms\": 4}\n{\"endpoint\": \"/api\", \"ms\": 16}\n{\"endpoint\": \"/api\", \"ms\": 12}\n{\"endpoint\": \"/api\", \"ms\": 5}\n{\"endpoint\": \"/api\", \"ms\": 18}\n{\"endpoint\": \"/api\", \"ms\": 9}\n{\"endpoint\": \"/api\", \"ms\": 13}\n{\"endpoint\": \"/api\", \"ms\": 6}\n{\"endpoint\": \"/api\", \"ms\": 17}\n{\"endpoint\": \"/api\", \"ms\": 10}\n{\"endpoint\": \"/api\", \"ms\": 14}\n",
+  "stdout": "/api count=20 p50=10 p95=19"
+ },
+ {
+  "name": "twenty-one values",
+  "stdin": "{\"endpoint\": \"/api\", \"ms\": 7}\n{\"endpoint\": \"/api\", \"ms\": 3}\n{\"endpoint\": \"/api\", \"ms\": 19}\n{\"endpoint\": \"/api\", \"ms\": 1}\n{\"endpoint\": \"/api\", \"ms\": 15}\n{\"endpoint\": \"/api\", \"ms\": 11}\n{\"endpoint\": \"/api\", \"ms\": 2}\n{\"endpoint\": \"/api\", \"ms\": 20}\n{\"endpoint\": \"/api\", \"ms\": 8}\n{\"endpoint\": \"/api\", \"ms\": 4}\n{\"endpoint\": \"/api\", \"ms\": 16}\n{\"endpoint\": \"/api\", \"ms\": 12}\n{\"endpoint\": \"/api\", \"ms\": 5}\n{\"endpoint\": \"/api\", \"ms\": 18}\n{\"endpoint\": \"/api\", \"ms\": 9}\n{\"endpoint\": \"/api\", \"ms\": 13}\n{\"endpoint\": \"/api\", \"ms\": 6}\n{\"endpoint\": \"/api\", \"ms\": 17}\n{\"endpoint\": \"/api\", \"ms\": 10}\n{\"endpoint\": \"/api\", \"ms\": 14}\n{\"endpoint\": \"/api\", \"ms\": 100}",
+  "stdout": "/api count=21 p50=11 p95=20"
+ },
+ {
+  "name": "wrong types are skipped",
+  "stdin": "{\"endpoint\": \"/a\", \"ms\": 12.5}\n{\"endpoint\": \"/a\", \"ms\": \"12\"}\n{\"endpoint\": \"/a\", \"ms\": -3}\n{\"endpoint\": \"/a\", \"ms\": true}\n{\"endpoint\": 7, \"ms\": 1}\n{\"ms\": 1}\n{\"endpoint\": \"/a\"}\n[1, 2]\n\"text\"\n{\"endpoint\": \"/a\", \"ms\": 0}\n   \n{\"endpoint\": \"/a\", \"ms\": 4}\n{broken\n{\"endpoint\": \"/B\", \"ms\": 1, \"extra\": {\"ms\": 99}}\n",
+  "stdout": "/B count=1 p50=1 p95=1\n/a count=2 p50=0 p95=4\nskipped 10"
+ },
+ {
+  "name": "two values",
+  "stdin": "{\"endpoint\":\"/x\",\"ms\":9}\n{\"endpoint\":\"/x\",\"ms\":1}\n",
+  "stdout": "/x count=2 p50=1 p95=9"
+ },
+ {
+  "name": "only skipped",
+  "stdin": "nope\n{}\n",
+  "stdout": "skipped 2"
+ },
+ {
+  "name": "empty input",
+  "stdout": ""
+ }
+]

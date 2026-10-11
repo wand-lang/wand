@@ -1,0 +1,15 @@
+uses {IO, Shell(kubectl)}
+
+import IO
+
+-- Apply the manifests in k8s/ to the current cluster.
+
+let context = $(kubectl config current-context)
+
+IO.println "deploying to %{context}"
+
+let applied = $(kubectl apply -f k8s/)
+
+IO.println applied
+
+IO.println "done"

@@ -1,0 +1,57 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import Int
+import List
+import Path
+import Proc
+import Regex
+import Result
+import String
+
+let fail code message = (IO.println_err message; Proc.exit code)
+
+-- The value of `column` on one numbered line, or the error that ends the run.
+let value index (n, line) =
+  match List.get index (String.split "," line) with
+  | None -> Ok 0
+  | Some "" -> Ok 0
+  | Some v when Regex.match? r/^-?[0-9]+$/ v -> Int.of_string v
+  | Some v -> Error "line %{n}: not a whole number: %{v}"
+
+let sum text column = (
+  let rows =
+    String.lines text
+    |> List.indexed
+    |> List.map (fn (i, line) -> (i + 1, line))
+    |> List.filter (fn (_, line) -> !(String.empty? line));
+  match rows with
+  | [] -> fail 2 "no column: %{column}"
+  | [(_, header) :: body] -> (
+    let found =
+      String.split "," header |> List.indexed |> List.find (fn (_, name) -> name == column);
+    match found with
+    | None -> fail 2 "no column: %{column}"
+    | Some(index, _) -> (
+      let total =
+        List.fold_left
+          (fn acc row -> Result.and_then
+            (fn t -> Result.map (fn v -> t + v) (value index row))
+            acc)
+          (Ok 0)
+          body;
+      match total with
+      | Ok t -> IO.println "%{t}"
+      | Error why -> fail 1 why
+    )
+  )
+)
+
+match Proc.args () with
+| [file, column] -> (
+  match FS.read_file (Path.of_string file) with
+  | Ok text -> sum text column
+  | Error why -> fail 1 why
+)
+| _ -> fail 2 "usage: prog FILE COLUMN"

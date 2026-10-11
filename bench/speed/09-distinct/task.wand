@@ -1,0 +1,32 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Option
+import Path
+import Proc
+import Stream
+import String
+
+-- How many distinct addresses, distinct address and component pairs, and
+-- distinct lines `app.log` holds.
+
+let ip line = String.words line |> List.find (fn w -> String.starts_with? "ip=" w)
+
+let pair line =
+  match String.words line with
+  | [_ :: _ :: component :: _] -> ip line |> Option.map (fn a -> "%{a} %{component}")
+  | _ -> None
+
+let distinct! f log =
+  FS.stream_lines log |> Stream.filter_map f |> Stream.unique |> Stream.count
+
+match Proc.args () with
+| [dir :: _] -> (
+  let log = Path.join (Path.of_string dir) ./app.log;
+  IO.println "ips %{distinct! ip log}";
+  IO.println "pairs %{distinct! pair log}";
+  IO.println "lines %{distinct! (fn l -> Some l) log}"
+)
+| [] -> Proc.exit 2

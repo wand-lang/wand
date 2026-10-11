@@ -1,0 +1,68 @@
+[
+ {
+  "name": "example",
+  "stdin": "build 1h30m\ntest 45s\nbuild 40m\n",
+  "stdout": "build 2h10m\ntest 45s\ntotal 2h10m45s"
+ },
+ {
+  "name": "carries seconds and minutes",
+  "stdin": "lint 59s\nlint 1s\n  deploy   90m  \n\nbuild 2h5s\nBuild 0s\nzz 0h0m0s\npush 3600s\n",
+  "stdout": "Build 0s\nbuild 2h5s\ndeploy 1h30m\nlint 1m\npush 1h\nzz 0s\ntotal 4h31m5s"
+ },
+ {
+  "name": "zero total",
+  "stdin": "idle 0s\n",
+  "stdout": "idle 0s\ntotal 0s"
+ },
+ {
+  "name": "only blank lines",
+  "stdin": "\n  \n",
+  "stdout": "total 0s"
+ },
+ {
+  "name": "empty input",
+  "stdout": "total 0s"
+ },
+ {
+  "name": "wrong order",
+  "stdin": "ok 1m\nx 30m1h\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "repeated unit",
+  "stdin": "ok 1m\nx 1h1h\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "fraction",
+  "stdin": "ok 1m\nx 1.5h\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "no unit",
+  "stdin": "ok 1m\n\nx 10\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "days",
+  "stdin": "x 5d\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "three fields",
+  "stdin": "ok 1m\nx 1m 2s\n",
+  "stdout": "",
+  "code": 1
+ },
+ {
+  "name": "name only",
+  "stdin": "x\n",
+  "stdout": "",
+  "code": 1
+ }
+]

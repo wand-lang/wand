@@ -1,0 +1,16 @@
+uses {IO, Shell(docker)}
+
+import IO
+import List
+import Proc
+
+-- Remove dangling images older than a week.
+--
+-- --dry-run lists what would go, and removes nothing.
+
+let age = "until=168h"
+
+let dry_run = List.any? (fn a -> a == "--dry-run") (Proc.args ())
+
+if dry_run then IO.println $(docker image ls -q --filter "dangling=true" --filter %{age})
+else IO.println $(docker image prune -f --filter %{age})

@@ -1,0 +1,23 @@
+uses {FS.Read, FS.Write, IO, Shell(pgrep)}
+
+import FS
+import IO
+import Shell
+
+-- Rotate app.log when it is larger than 100MB, keeping two old
+-- generations. Not while app-server runs: it holds the file open and
+-- would go on writing into the renamed one.
+
+let log = ./app.log
+
+let writer_running? () = Shell.ok? $?(pgrep -x app-server)
+
+let due! () = FS.file? log && FS.size! log > 100MB
+
+if writer_running? () then IO.println "app-server is running; not rotating"
+else if due! () then (
+  if FS.file? ./app.log.1 then FS.rename! ./app.log.1 ./app.log.2;
+  FS.rename! log ./app.log.1;
+  FS.write_file! log "";
+  IO.println "rotated"
+)

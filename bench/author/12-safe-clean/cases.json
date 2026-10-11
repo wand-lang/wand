@@ -1,0 +1,226 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "site"
+  ],
+  "files": [
+   {
+    "path": "site/app.jar",
+    "text": "jar"
+   },
+   {
+    "path": "site/config/app.toml",
+    "text": "x"
+   },
+   {
+    "path": "site/cache/a.tmp",
+    "text": "t"
+   },
+   {
+    "path": "site/cache/pages/1.html",
+    "text": "<p>"
+   }
+  ],
+  "stdout": "removed a.tmp\nremoved pages\nkept 3"
+ },
+ {
+  "name": "hidden and nested entries",
+  "args": [
+   "site"
+  ],
+  "files": [
+   {
+    "path": "site/.env",
+    "text": "SECRET=1"
+   },
+   {
+    "path": "site/cache/.lock",
+    "text": ""
+   },
+   {
+    "path": "site/cache/B",
+    "text": "b"
+   },
+   {
+    "path": "site/cache/a/b/c/d",
+    "text": "d"
+   },
+   {
+    "path": "site/cache/two words",
+    "text": "x"
+   },
+   {
+    "path": "site/data/keep.db",
+    "text": "db"
+   }
+  ],
+  "stdout": "removed .lock\nremoved B\nremoved a\nremoved two words\nkept 3"
+ },
+ {
+  "name": "no cache",
+  "args": [
+   "site"
+  ],
+  "files": [
+   {
+    "path": "site/app.jar",
+    "text": "jar"
+   }
+  ],
+  "stdout": "nothing to clean\nkept 1"
+ },
+ {
+  "name": "cache is a file",
+  "args": [
+   "site"
+  ],
+  "files": [
+   {
+    "path": "site/cache",
+    "text": "not a dir"
+   },
+   {
+    "path": "site/app.jar",
+    "text": "j"
+   }
+  ],
+  "stdout": "nothing to clean\nkept 2"
+ },
+ {
+  "name": "cache with only a hidden file",
+  "args": [
+   "site"
+  ],
+  "files": [
+   {
+    "path": "site/cache/.keep",
+    "text": ""
+   }
+  ],
+  "stdout": "removed .keep\nkept 1"
+ },
+ {
+  "name": "target with a space",
+  "args": [
+   "my site"
+  ],
+  "files": [
+   {
+    "path": "my site/cache/x",
+    "text": "1"
+   },
+   {
+    "path": "my site/index.html",
+    "text": "i"
+   }
+  ],
+  "stdout": "removed x\nkept 2"
+ },
+ {
+  "name": "dot target",
+  "args": [
+   "."
+  ],
+  "files": [
+   {
+    "path": "cache/x",
+    "text": "1"
+   },
+   {
+    "path": "cache/y/z",
+    "text": "2"
+   },
+   {
+    "path": "keep.txt",
+    "text": "k"
+   }
+  ],
+  "stdout": "removed x\nremoved y\nkept 2"
+ },
+ {
+  "name": "empty target",
+  "args": [
+   ""
+  ],
+  "files": [
+   {
+    "path": "cache/x",
+    "text": "1"
+   },
+   {
+    "path": "cache/y/z",
+    "text": "2"
+   },
+   {
+    "path": "keep.txt",
+    "text": "k"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing target",
+  "files": [
+   {
+    "path": "cache/x",
+    "text": "1"
+   },
+   {
+    "path": "cache/y/z",
+    "text": "2"
+   },
+   {
+    "path": "keep.txt",
+    "text": "k"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "target does not exist",
+  "args": [
+   "nope"
+  ],
+  "files": [
+   {
+    "path": "cache/x",
+    "text": "1"
+   },
+   {
+    "path": "cache/y/z",
+    "text": "2"
+   },
+   {
+    "path": "keep.txt",
+    "text": "k"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "target is a file",
+  "args": [
+   "keep.txt"
+  ],
+  "files": [
+   {
+    "path": "cache/x",
+    "text": "1"
+   },
+   {
+    "path": "cache/y/z",
+    "text": "2"
+   },
+   {
+    "path": "keep.txt",
+    "text": "k"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ }
+]

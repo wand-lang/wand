@@ -1,0 +1,13 @@
+uses {Clock, FS.Read, FS.Write}
+
+import Clock
+import FS
+import List
+
+-- Remove build artifacts older than a week from the cache directory.
+
+let cache = /var/cache/builds
+
+let stale! p = Clock.now () - FS.mtime! p > 7d
+
+FS.list_dir! cache |> List.filter stale! |> List.each FS.delete_tree!

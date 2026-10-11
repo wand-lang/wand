@@ -1,0 +1,41 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import JSON
+import List
+import Map
+import Path
+import Proc
+import Result
+import Stream
+
+-- For each endpoint in `events.jsonl`: how many requests, and the 95th
+-- percentile of their `ms`, by nearest rank.
+
+type Event(user: String, endpoint: String, ms: Int, ok: Bool)
+
+let event line =
+  JSON.parse line |> Result.and_then (JSON.decode Event.decoder) |> Result.to_option
+
+-- The nearest-rank percentile: the smallest value with at least `p`
+-- percent of the values at or below it.
+let percentile p xs =
+  let sorted = List.sort xs;
+  let rank = (p * List.length sorted + 99) / 100;
+  List.get (rank - 1) sorted
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.stream_lines (Path.join (Path.of_string dir) ./events.jsonl)
+  |> Stream.filter_map event
+  |> Stream.fold_left
+    (fn m (Event(endpoint, ms)) -> Map.update endpoint [] (fn xs -> ms :: xs) m)
+    Map.empty
+  |> Map.to_list
+  |> List.sort
+  |> List.each (fn (endpoint, xs) ->
+    match percentile 95 xs with
+    | Some p -> IO.println "%{endpoint} %{List.length xs} %{p}"
+    | None -> ())
+| [] -> Proc.exit 2

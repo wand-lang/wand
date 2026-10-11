@@ -1,0 +1,19 @@
+uses {Env, FS.Read, IO, Shell(rsync)}
+
+import Env
+import FS
+import IO
+import List
+import Option
+import String
+
+-- Sync the built site to every web host listed in hosts.txt.
+
+let target = Env.get "DEPLOY_PATH" |> Option.default "/srv/www"
+
+let hosts =
+  FS.read_file! ./hosts.txt |> String.lines |> List.filter (fn h -> !(String.empty? h))
+
+let sync! host = $(rsync -az --delete ./public/ "%{host}:%{target}/")
+
+List.each (fn h -> (IO.println "syncing %{h}"; sync! h)) hosts

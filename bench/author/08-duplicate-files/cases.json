@@ -1,0 +1,146 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "d"
+  ],
+  "files": [
+   {
+    "path": "d/a.txt",
+    "text": "hello"
+   },
+   {
+    "path": "d/logs/b.txt",
+    "text": "hello"
+   },
+   {
+    "path": "d/c.txt",
+    "text": "bye"
+   },
+   {
+    "path": "d/d.txt",
+    "text": "bye"
+   },
+   {
+    "path": "d/e.txt",
+    "text": "other"
+   }
+  ],
+  "stdout": "a.txt\nlogs/b.txt\n\nc.txt\nd.txt"
+ },
+ {
+  "name": "deep, hidden, empty and near misses",
+  "args": [
+   "d"
+  ],
+  "files": [
+   {
+    "path": "d/x/y/z/deep.bin",
+    "text": "same\n"
+   },
+   {
+    "path": "d/top",
+    "text": "same\n"
+   },
+   {
+    "path": "d/.hidden",
+    "text": "same\n"
+   },
+   {
+    "path": "d/empty1",
+    "text": ""
+   },
+   {
+    "path": "d/sub/empty2",
+    "text": ""
+   },
+   {
+    "path": "d/near",
+    "text": "same"
+   },
+   {
+    "path": "d/B.txt",
+    "text": "case"
+   },
+   {
+    "path": "d/a.txt",
+    "text": "case"
+   },
+   {
+    "path": "d/unique",
+    "text": "only me"
+   }
+  ],
+  "stdout": ".hidden\ntop\nx/y/z/deep.bin\n\nB.txt\na.txt\n\nempty1\nsub/empty2"
+ },
+ {
+  "name": "no duplicates",
+  "args": [
+   "d"
+  ],
+  "files": [
+   {
+    "path": "d/a",
+    "text": "1"
+   },
+   {
+    "path": "d/b",
+    "text": "2"
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "directory with a space",
+  "args": [
+   "my dir"
+  ],
+  "files": [
+   {
+    "path": "my dir/one copy",
+    "text": "x"
+   },
+   {
+    "path": "my dir/two copy",
+    "text": "x"
+   }
+  ],
+  "stdout": "one copy\ntwo copy"
+ },
+ {
+  "name": "dot means here",
+  "args": [
+   "."
+  ],
+  "files": [
+   {
+    "path": "p",
+    "text": "x"
+   },
+   {
+    "path": "q/r",
+    "text": "x"
+   }
+  ],
+  "stdout": "p\nq/r"
+ },
+ {
+  "name": "missing argument",
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "not a directory",
+  "args": [
+   "file"
+  ],
+  "files": [
+   {
+    "path": "file",
+    "text": "x"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

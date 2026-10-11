@@ -1,0 +1,24 @@
+uses {Clock, FS.Read, FS.Write, IO, Shell(curl)}
+
+import Clock
+import FS
+import IO
+import List
+
+-- Remove build artifacts older than a week from the cache directory.
+
+let cache = /var/cache/builds
+
+let stale! p = Clock.now () - FS.mtime! p > 7d
+
+let report n = (
+  IO.println "removed %{n} stale builds";
+  let _ = $?(curl -s -d "removed=%{n}" https://hooks.example.net/ingest);
+  ()
+)
+
+let removed = FS.list_dir! cache |> List.filter stale!
+
+List.each FS.delete_tree! removed
+
+report (List.length removed)

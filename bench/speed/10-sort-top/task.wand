@@ -1,0 +1,24 @@
+uses {FS.Read, IO, Proc}
+
+import CSV
+import FS
+import IO
+import List
+import Path
+import Proc
+import Result
+
+-- The hundred largest sales in `sales.csv`, largest first, and sales of the
+-- same amount by id.
+
+type Sale(id: Int, region: String, product: String, amount: Int)
+
+match Proc.args () with
+| [dir :: _] ->
+  FS.read_file! (Path.join (Path.of_string dir) ./sales.csv)
+  |> CSV.rows Sale.decoder
+  |> Result.get!
+  |> List.sort_by (fn (Sale(id, amount)) -> (0 - amount, id))
+  |> List.take 100
+  |> List.each (fn (Sale(id, amount)) -> IO.println "%{id} %{amount}")
+| [] -> Proc.exit 2

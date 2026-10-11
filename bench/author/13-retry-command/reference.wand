@@ -1,0 +1,21 @@
+uses {IO, Proc, Shell(sh)}
+
+import IO
+import Int
+import Proc
+import Regex
+import Shell
+
+let attempt () = $?(sh flaky.sh)
+
+let retry k attempts =
+  if k > attempts then (IO.println "gave up after %{attempts} attempts"; Proc.exit 1)
+  else (
+    let r = attempt ();
+    if Shell.ok? r then (IO.println "attempt %{k}: ok"; IO.println "output: %{r.stdout}")
+    else (IO.println "attempt %{k}: exit %{r.code}"; retry (k + 1) attempts)
+  )
+
+match Proc.args () with
+| [n] when Regex.match? r/^0*[1-9][0-9]*$/ n -> retry 1 (Int.of_string! n)
+| _ -> (IO.println_err "usage: prog N, where N is 1 or more"; Proc.exit 2)

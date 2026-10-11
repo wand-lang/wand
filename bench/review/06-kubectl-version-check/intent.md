@@ -1,0 +1,1 @@
+Split the deploy script into functions, and fail early with a clear message when the installed kubectl is older than 1.28, which our manifests need. Also print the namespace count before and after, to make the deploy log easier to read.

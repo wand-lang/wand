@@ -1,0 +1,111 @@
+uses {Env, FS.Read, FS.Write, IO, Proc, Shell}
+
+import FS
+import IO
+import JSON
+import List
+import Path
+import Proc
+import Result
+import String
+
+let {langs, lang_name, extension, wand_exe, run_cases!} = import ./lib
+let {generate!} = import ./speed/gen
+let {disagreements!, tasks!} = import ./speed
+let {Truth, items!, sides} = import ./review
+
+-- The check for the benchmark. It runs nothing against a model. It checks
+-- that what the benchmark scores against is still right, so that a run
+-- months from now does not discover a task that no program could pass.
+--
+--   authoring  each task's reference, in each language, passes every
+--              hidden case
+--   speed      each task's three programs print the same thing, on a
+--              small input
+--   review     each item's wand files typecheck with nothing to report,
+--              its Python parses, and its truth.json reads
+--
+-- A reference that stops passing means the language changed under the
+-- task, or the task is wrong. CI does not run this; run it after a change
+-- to the language and before a benchmark run, so that a broken task is
+-- found before it costs a run.
+--
+-- WAND names the build under test, as for the tools in `tools/`.
+
+let named (p: Path) = Path.to_string (Path.basename p)
+
+let author_problems! () =
+  FS.list_dir! ./bench/author
+  |> List.filter FS.dir?
+  |> List.sort
+  |> List.map (fn task ->
+    langs
+    |> List.map (fn lang ->
+      let prog = Path.join task (Path.of_string "reference.%{extension lang}");
+      if FS.file? prog then
+        run_cases! lang task prog
+        |> List.map (fn why -> "author/%{named task}: %{lang_name lang}: %{why}")
+      else ["author/%{named task}: no reference in %{lang_name lang}"])
+    |> List.flatten)
+  |> List.flatten
+
+let speed_problems! () =
+  with FS.temp_dir "bench_speed_" as data -> (
+    generate! data 2000;
+    disagreements! data (tasks! None)
+    |> List.map (fn (task, outs) ->
+      String.join "\n" ("speed/%{task}: the programs disagree" :: outs))
+  )
+
+-- What is wrong with one side of a review item.
+let side_problems (item: Path) (lang, ext) =
+  let dir = Path.join item (Path.of_string lang);
+  [Path.of_string "before.%{ext}", Path.of_string "after.%{ext}"]
+  |> List.filter_map (fn name -> (
+    let file = Path.join dir name;
+    let where = "review/%{named item}/%{lang}/%{name}";
+    if !(FS.file? file) then Some "%{where}: missing"
+    else match lang with
+      | "wand" -> (
+        let r = $?(%{wand_exe} t %{file});
+        if r.code == 0 && String.empty? r.stdout && String.empty? r.stderr then None
+        else Some "%{where}: %{r.stdout} %{r.stderr}"
+      )
+      | _ -> (
+        let r =
+          $?(python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" %{file});
+        if r.code == 0 then None else Some "%{where}: %{r.stderr}"
+      )
+  ))
+
+let review_problems! () =
+  items! ()
+  |> List.map (fn item ->
+    let truth =
+      JSON.read_file (Path.join item ./truth.json)
+      |> Result.and_then (JSON.decode Truth.decoder);
+    let truth_problem =
+      match truth with
+      | Ok _ -> []
+      | Error why -> ["review/%{named item}/truth.json: %{why}"]
+    in
+    let intent_problem =
+      if FS.file? (Path.join item ./intent.md) then []
+      else ["review/%{named item}: no intent.md"];
+    List.flatten [
+      truth_problem,
+      intent_problem,
+      List.flatten (List.map (side_problems item) sides)
+    ])
+  |> List.flatten
+
+let main! () = (
+  let problems = List.flatten [author_problems! (), speed_problems! (), review_problems! ()];
+  List.each IO.println_err problems;
+  if List.empty? problems then
+    IO.println
+      "bench: every reference passes, every speed task agrees, every review item reads"
+  else Proc.exit 1
+)
+
+main! ()

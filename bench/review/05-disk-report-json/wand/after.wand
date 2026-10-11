@@ -1,0 +1,36 @@
+uses {IO, Shell(df)}
+
+import Int
+import IO
+import JSON
+import List
+import Option
+import Proc
+import Result
+import String
+
+-- Print every mount that is more than 80% full.
+--
+-- --json prints them as a JSON list instead, for the monitoring job.
+
+type Mount(mount: String, used: Int)
+
+let parse line =
+  match String.words line with
+  | [_ :: _ :: _ :: _ :: percent :: mount :: _] ->
+    Int.of_string (String.replace "%" "" percent)
+    |> Result.to_option
+    |> Option.map (fn used -> Mount(mount, used))
+  | _ -> None
+
+let full =
+  $(df -Pk)
+  |> String.lines
+  |> List.drop 1
+  |> List.filter_map parse
+  |> List.filter (fn (m: Mount) -> m.used > 80)
+
+let as_json = List.any? (fn a -> a == "--json") (Proc.args ())
+
+if as_json then IO.println (JSON.stringify (JSON.of_list (List.map Mount.encoder full)))
+else List.each (fn (m: Mount) -> IO.println "%{m.mount} %{m.used}%") full

@@ -1,0 +1,147 @@
+[
+ {
+  "name": "example",
+  "args": [
+   "base.env",
+   "over.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "# defaults\nPORT=8080\nHOST=localhost\n"
+   },
+   {
+    "path": "over.env",
+    "text": "PORT=9090\nDSN=postgres://db/app?sslmode=require\n"
+   }
+  ],
+  "stdout": "DSN=postgres://db/app?sslmode=require\nHOST=localhost\nPORT=9090"
+ },
+ {
+  "name": "comments, spaces and repeated keys",
+  "args": [
+   "base.env",
+   "over.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "  # indented comment\n\nexport_ok=1\nNAME=first\nNAME=second\n  SPACED\t=  keeps value spaces\nnot a setting\n=no key\nEMPTY=\nlower=x\nUpper=y\n\t\n"
+   },
+   {
+    "path": "over.env",
+    "text": "#X=1\nEMPTY=now set\nlower=overridden\nB64=YWJj==\n"
+   }
+  ],
+  "stdout": "B64=YWJj==\nEMPTY=now set\nNAME=second\nSPACED=  keeps value spaces\nUpper=y\nexport_ok=1\nlower=overridden"
+ },
+ {
+  "name": "empty override",
+  "args": [
+   "base.env",
+   "over.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "# defaults\nPORT=8080\nHOST=localhost\n"
+   },
+   {
+    "path": "over.env",
+    "text": ""
+   }
+  ],
+  "stdout": "HOST=localhost\nPORT=8080"
+ },
+ {
+  "name": "both empty",
+  "args": [
+   "base.env",
+   "over.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": ""
+   },
+   {
+    "path": "over.env",
+    "text": ""
+   }
+  ],
+  "stdout": ""
+ },
+ {
+  "name": "no final newline",
+  "args": [
+   "base.env",
+   "over.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "A=1\nB=2"
+   },
+   {
+    "path": "over.env",
+    "text": "B=3"
+   }
+  ],
+  "stdout": "A=1\nB=3"
+ },
+ {
+  "name": "names with spaces",
+  "args": [
+   "my base.env",
+   "my over.env"
+  ],
+  "files": [
+   {
+    "path": "my base.env",
+    "text": "A=1\n"
+   },
+   {
+    "path": "my over.env",
+    "text": "A=2\n"
+   }
+  ],
+  "stdout": "A=2"
+ },
+ {
+  "name": "missing override argument",
+  "args": [
+   "base.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "# defaults\nPORT=8080\nHOST=localhost\n"
+   },
+   {
+    "path": "over.env",
+    "text": "PORT=9090\nDSN=postgres://db/app?sslmode=require\n"
+   }
+  ],
+  "stdout": "",
+  "code": 2
+ },
+ {
+  "name": "missing file",
+  "args": [
+   "base.env",
+   "nope.env"
+  ],
+  "files": [
+   {
+    "path": "base.env",
+    "text": "# defaults\nPORT=8080\nHOST=localhost\n"
+   },
+   {
+    "path": "over.env",
+    "text": "PORT=9090\nDSN=postgres://db/app?sslmode=require\n"
+   }
+  ],
+  "stdout": "",
+  "code": 1
+ }
+]

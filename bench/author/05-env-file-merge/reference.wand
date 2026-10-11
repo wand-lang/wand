@@ -1,0 +1,41 @@
+uses {FS.Read, IO, Proc}
+
+import FS
+import IO
+import List
+import Map
+import Path
+import Proc
+import String
+
+-- One line as a setting, or `None` for a line that holds none.
+let setting line = (
+  let bare = String.trim line;
+  if String.empty? bare || String.starts_with? "#" bare then None
+  else match String.split "=" line with
+    | [key :: rest] when !(List.empty? rest) && !(String.empty? (String.trim key)) -> Some (
+      String.trim key,
+      String.join "=" rest
+    )
+    | _ -> None
+)
+
+let read! file =
+  FS.read_file! (Path.of_string file)
+  |> String.lines
+  |> List.filter_map setting
+  |> List.fold_left (fn m (k, v) -> Map.set k v m) Map.empty
+
+let merge! base over =
+  let merged = Map.merge (read! base) (read! over);
+  Map.to_list merged
+  |> List.sort_by (fn (k, _) -> k)
+  |> List.each (fn (k, v) -> IO.println "%{k}=%{v}")
+
+match Proc.args () with
+| [base, over] -> (
+  match try merge! base over with
+  | Ok _ -> ()
+  | Error why -> (IO.println_err why; Proc.exit 1)
+)
+| _ -> (IO.println_err "usage: prog BASE OVERRIDE"; Proc.exit 2)

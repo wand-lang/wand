@@ -1,0 +1,7 @@
+uses {IO}
+
+import IO
+
+-- Nothing but starting up: the cost of the interpreter itself.
+
+IO.println "hello"
