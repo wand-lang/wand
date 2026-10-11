@@ -513,10 +513,9 @@ let cwd () = fs_cwd ()
 -- Files only: a directory whose name fits is not in the answer.
 -- `FS.list_dir` reads a directory's entries, subdirectories included.
 --
--- A `*`, `**` or `?` does not match a name that starts with a dot, as in a
--- shell, so `FS.glob **.txt` skips `.hidden.txt` and the files in a dot
--- directory. Write the dot (`./.*.txt`), or use `Glob.with_dotfiles` to
--- include dotfiles.
+-- A name that starts with a dot is a name like any other: `*.txt` matches
+-- `.hidden.txt`, and `**` goes into `.cache/`. `.*` matches only those
+-- names.
 --
 -- >> List.length (FS.glob *.wand) >= 0
 -- true : Bool
@@ -536,10 +535,8 @@ let glob pattern =
 -- with `dir`: `FS.glob_in ./**/*.ml ./src` gives `./src/lib/a.ml`, not
 -- `lib/a.ml`. `Path.relative_to dir` takes the directory off.
 --
--- A `*`, `**` or `?` does not match a name that starts with a dot, as in a
--- shell: `FS.glob_in ./**/* d` skips `.env` and the files in a dot
--- directory. Write the dot (`./.*`), or use `Glob.with_dotfiles` to include
--- dotfiles: `FS.glob_in (Glob.with_dotfiles ./**/*) d` gives every file.
+-- A name that starts with a dot is a name like any other: `./**/*` gives
+-- `.env` and the files under `.git/` too. `.*` matches only those names.
 --
 -- >> with FS.temp_dir "ex_" as d ->
 -- ..   (FS.mkdir! (Path.join d ./logs);

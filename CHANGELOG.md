@@ -7,7 +7,7 @@
 - `List.flat_map` (#132).
 - `List.contains?` tells if a list holds a value: `List.contains? 2 [1, 2, 3]` is `true` (#136).
 - `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
-- `Glob.with_dotfiles` gives a glob whose `*`, `**` and `?` also match a name that starts with a dot. `FS.glob`, `FS.glob_in` and `Glob.matches?` obey it (#138).
+- `.*.txt` is a glob literal, as `*.txt` is (#138).
 
 ### Changed
 
@@ -15,6 +15,7 @@
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).
 - `result` is an ordinary name outside an `ensures` clause (#128).
+- `*`, `**` and `?` in a glob match a name that starts with a dot: `FS.glob_in ./**/* d` gives `.env` and the files under `.git/` (#138).
 - An arm that starts a line to the left of a nested `match`'s first arm belongs to the outer `match` (#135).
 - The same column rule applies to the arms of a nested `handle` (#135).
 - A `then` or `else` branch that starts on a line of its own holds one statement per line (#137).
@@ -22,19 +23,12 @@
 - A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
 - A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).
 - `List.mapi`, `List.mem`, `Option.unwrap_or`, `String.drop` and similar names from other languages give a hint that names the wand function (#136).
-- The parse error for the glob `.*.txt` says to write `./.*.txt` (#138).
 
 ### Fixed
 
 - `IO.eprintln` and similar names give the hint `IO.println_err`, not `println`, which writes to stdout; `List.nth` gives `List.get` (#130).
 - An unknown constructor from another language names the wand constructor: `Err` gives `the constructors of Result are Ok and Error` (#129).
 - A type error in a pattern of a `match` shows the line and column of that pattern, not of the `match` (#129).
-
-### Documentation
-
-- `wand d FS.glob`, `FS.glob_in` and `Glob.matches?` say that `*`, `**` and `?` do not match a name that starts with a dot, and how to include dotfiles (#138).
-- The reference's Glob section says the same (#138).
-- The guide in CLAUDE.md says that `*` and `**` skip dotfiles, and names `Glob.with_dotfiles` (#138).
 
 ## [0.104.1] - 2026-10-10
 

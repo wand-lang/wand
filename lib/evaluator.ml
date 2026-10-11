@@ -249,9 +249,7 @@ type value =
   | VBool     of bool
   | VUnit
   | VPath     of string
-  (* A pattern, and whether its wildcards match a name that starts with a
-     dot. A literal does not; `Glob.with_dotfiles` gives one that does. *)
-  | VGlob     of string * bool
+  | VGlob     of string
   | VDateTime of string
   | VDuration of string
   (* A URL, and the `Net(...)` bound of the file whose text wrote it. The
@@ -887,7 +885,7 @@ let rec render ~quote v =
   | VBool b     -> string_of_bool b
   | VUnit       -> "()"
   | VPath s     -> s
-  | VGlob (s, _) -> s
+  | VGlob s     -> s
   (* An instant shows as the moment it names, in UTC and in full, whichever
      of its spellings was written. A bare day is that day at midnight, and
      an offset resolves; the source keeps whatever it wrote, which is the
@@ -2429,7 +2427,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
   | Bool b     -> VBool b
   | Unit       -> VUnit
   | Path s     -> VPath s
-  | Glob s     -> VGlob (s, false)
+  | Glob s     -> VGlob s
   | DateTime s -> VDateTime s
   | Duration s -> VDuration s
   | URL (s, allow) -> VURL (s, allow)
@@ -4237,7 +4235,7 @@ let glob_strip_dot s =
    the same pattern would eventually answer differently, and the difference
    would show up as a walk finding a file the predicate says it should not
    have. *)
-let glob_compile ?(dotfiles = false) pat =
+let glob_compile pat =
   (* `**/` is zero or more directories, as in bash's globstar and
      .gitignore: `./**/*.ml` takes `a.ml` as well as `sub/b.ml`. `Re.Glob`
      reads it as one or more, so the pattern is compiled with each `**/`
@@ -4251,11 +4249,12 @@ let glob_compile ?(dotfiles = false) pat =
       List.concat_map (fun rest -> [before ^ "**/" ^ rest; before ^ rest])
         (variants after)
   in
-  (* A `*`, `**` or `?` does not match a name that starts with a dot, as in
-     a shell: `~period:true`. `Glob.with_dotfiles` turns that off, so one
-     pattern can take the dotfiles too (#138). *)
+  (* A name that starts with a dot is a name like any other: `*`, `**` and
+     `?` match it, so `FS.glob_in ./**/* d` gives `.env` and the files under
+     `.cache/` as well (#138). A shell skips them, and an author who asked
+     for every file did not expect that. *)
   let one p =
-    Re.Glob.glob ~anchored:true ~double_asterisk:true ~period:(not dotfiles) p
+    Re.Glob.glob ~anchored:true ~double_asterisk:true ~period:false p
   in
   match Re.compile (Re.alt (List.map one (variants (glob_strip_dot pat)))) with
   | re -> Ok re
@@ -6036,7 +6035,7 @@ let stdlib_eval_env : env = [
             first time it is matched moves the failure away from the text
             that caused it. *)
          (match glob_compile text with
-          | Ok _ -> VConstr (Ctor.Builtin "Ok", [VGlob (text, false)])
+          | Ok _ -> VConstr (Ctor.Builtin "Ok", [VGlob text])
           | Error why ->
             VConstr (Ctor.Builtin "Error", [VString
               (Printf.sprintf "cannot parse %S as Glob: %s" s why)])))
@@ -6046,25 +6045,21 @@ let stdlib_eval_env : env = [
      the two cannot disagree about a pattern -- which is the whole reason
      this is a builtin rather than the rules written again in wand. *)
   ("glob_matches", VBuiltin (function
-    | VGlob (pat, dotfiles) -> VBuiltin (function
+    | VGlob pat -> VBuiltin (function
       | VPath p | VString p ->
-        (match glob_compile ~dotfiles pat with
+        (match glob_compile pat with
          | Ok re -> VBool (Re.execp re (glob_strip_dot p))
          (* Unreachable: a Glob exists only if it compiled. *)
          | Error _ -> VBool false)
       | _ -> raise (EvalError "glob_matches: expected Path"))
     | _ -> raise (EvalError "glob_matches: expected Glob")));
   ("glob_to_str", VBuiltin (function
-    | VGlob (g, _) -> VString g
+    | VGlob g -> VString g
     | _ -> raise (EvalError "glob_to_str: expected Glob")));
-  (* The same pattern, with its wildcards free to match a leading dot. *)
-  ("glob_with_dotfiles", VBuiltin (function
-    | VGlob (g, _) -> VGlob (g, true)
-    | _ -> raise (EvalError "glob_with_dotfiles: expected Glob")));
   (* The directory part before the first wildcard: where a walk has to start,
      and above which is ground the pattern cannot reach. *)
   ("glob_base", VBuiltin (function
-    | VGlob (g, _) -> VPath (glob_base_of g)
+    | VGlob g -> VPath (glob_base_of g)
     | _ -> raise (EvalError "glob_base: expected Glob")));
   ("str_to_url", VBuiltin (function
     | VString s ->
@@ -6748,15 +6743,13 @@ let stdlib_eval_env : env = [
     VBuiltin (fun dir ->
       perform_wand ("FS!glob", VTuple [pattern; dir]))));
   ("fs_glob_impl", VBuiltin (function
-    | (VString _ | VGlob _) as pattern ->
-      let pat, dotfiles = match pattern with
-        | VGlob (g, d) -> (g, d) | VString g -> (g, false) | _ -> ("", false) in
+    | VString pat | VGlob pat ->
       VBuiltin (function
         | VString base | VPath base ->
           (* The same compile `Glob.matches?` uses, so a walk and the
              predicate cannot disagree about one pattern. *)
           let re =
-            match glob_compile ~dotfiles pat with
+            match glob_compile pat with
             | Ok re -> re
             | Error why -> raise (EvalError ("fs_glob: " ^ why))
           in
@@ -8097,7 +8090,7 @@ and json_of_value (v : value) : Yojson.Basic.t =
   | VBool b   -> `Bool b
   | VUnit     -> `Null
   | VPath s | VDuration s | VURL (s, None) | VSize s | VVersion s
-  | VDateTime s | VIPv4 s | VCIDR s | VGlob (s, _) -> `String s
+  | VDateTime s | VIPv4 s | VCIDR s | VGlob s -> `String s
   (* A port reads back from either spelling, so it goes out as the number a
      document would have held. *)
   | VPort n -> `Int n
@@ -8446,7 +8439,7 @@ let decode_builtins : env = [
        | Some why -> decode_error path (Printf.sprintf "expected Glob, got %S: %s" s why)
        | None ->
          (match glob_compile text with
-          | Ok _ -> Ok (VGlob (text, false))
+          | Ok _ -> Ok (VGlob text)
           | Error why -> decode_error path (Printf.sprintf "expected Glob, got %S: %s" s why)))
     | _ -> expected "Glob" path j));
   ("decode_duration", VDecoder (decode_lexed "Duration"
@@ -8703,7 +8696,7 @@ let rec toml_of_value (v : value) : Toml.Types.value =
   | VString s -> Toml.Types.TString s
   | VBool b   -> Toml.Types.TBool b
   | VPath s | VDuration s | VURL (s, None) | VSize s | VVersion s
-  | VDateTime s | VIPv4 s | VCIDR s | VGlob (s, _) -> Toml.Types.TString s
+  | VDateTime s | VIPv4 s | VCIDR s | VGlob s -> Toml.Types.TString s
   | VPort n -> Toml.Types.TInt n
   | VConstr (Ctor.Builtin "Some", [x]) -> toml_of_value x
   | VList vs -> Toml.Types.TArray (toml_array vs)

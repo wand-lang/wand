@@ -15,9 +15,8 @@ import Result
 -- A leading `./` is not part of either: it is a way of writing "here", so
 -- it comes off both before they meet.
 --
--- A `*`, `**` or `?` does not match a name that starts with a dot, as in a
--- shell. A pattern that writes the dot, such as `./.*.txt`, matches it. To
--- let the wildcards match dotfiles too, use `Glob.with_dotfiles`.
+-- A `*`, `**` or `?` matches a name that starts with a dot, as it matches
+-- any other name.
 --
 -- >> Glob.matches? *.wand /src/main.wand
 -- false : Bool
@@ -29,27 +28,11 @@ import Result
 -- true : Bool
 --
 -- >> Glob.matches? **/*.txt ./a/.x.txt
+-- true : Bool
+--
+-- >> Glob.matches? .*.txt ./notes.txt
 -- false : Bool
 let matches? g p = glob_matches g p
-
--- The same pattern, but its `*`, `**` and `?` also match a name that
--- starts with a dot.
---
--- Without it, a wildcard skips dotfiles and dot directories, as in a
--- shell. `FS.glob`, `FS.glob_in` and `Glob.matches?` all obey it.
---
--- >> Glob.matches? (Glob.with_dotfiles **/*.txt) ./a/.x.txt
--- true : Bool
---
--- >> Glob.matches? (Glob.with_dotfiles **/*.txt) ./.cache/a.txt
--- true : Bool
---
--- >> with FS.temp_dir "ex_" as d ->
--- ..   (FS.write_file! (Path.join d ./.env) "x";
--- ..    FS.write_file! (Path.join d ./a.txt) "x";
--- ..    List.filter_map (Path.relative_to d) (FS.glob_in (Glob.with_dotfiles ./*) d))
--- [.env, a.txt] : List Path
-let with_dotfiles g = glob_with_dotfiles g
 
 -- The directory part before the first wildcard: where a walk over this
 -- pattern has to start, and above which is ground the pattern cannot reach.

@@ -5455,7 +5455,6 @@ let stdlib_type_env : env = [
   ("str_to_glob",   generalize [] ((TString @-> TResult (TString, TGlob))));
   ("glob_matches",  generalize [] ((TGlob @-> (TPath @-> TBool))));
   ("glob_to_str",   generalize [] ((TGlob @-> TString)));
-  ("glob_with_dotfiles", generalize [] ((TGlob @-> TGlob)));
   ("glob_base",     generalize [] ((TGlob @-> TPath)));
   ("str_to_url",       generalize [] ((TString @-> TResult (TString, TURL))));
   ("str_to_ipv4",      generalize [] ((TString @-> TResult (TString, TIPv4))));

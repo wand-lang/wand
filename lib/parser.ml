@@ -606,16 +606,8 @@ let expect_field_name ?(puns = false) s =
        fail_at loc (Printf.sprintf
          "'%s' is a keyword, so this field cannot take the short form: write '%s = %s_'"
          name name name)
-     (* `.*.txt` lexes as a `.` and then the glob `*.txt`, so the dot reads
-        as a field access. A glob that starts with a dot is written with
-        `./` before it, and the message gives that spelling (#138). *)
      | None ->
-       let hint = match t with
-         | Token.Glob g ->
-           Printf.sprintf "; a glob that starts with a dot needs `./` before it: write `./.%s`" g
-         | _ -> ""
-       in
-       fail_at loc (Format.asprintf "expected a field name, got %a%s" Token.pp t hint))
+       fail_at loc (Format.asprintf "expected a field name, got %a" Token.pp t))
 
 (* A word the language has taken, standing where a name goes. Saying only
    "expected identifier" or "unexpected token" leaves the reader looking at

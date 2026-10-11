@@ -1497,22 +1497,9 @@ files. A glob literal uses `*`, `**`, `?` or `[...]`:
 `**/` is zero or more directories, as in bash's globstar and `.gitignore`:
 `./**/*.ml` matches `a.ml` as well as `sub/b.ml`.
 
-A `*`, `**` or `?` does not match a name that starts with a dot, as in a
-shell. So `./**/*.txt` does not match `.hidden.txt`, or `a.txt` in a
-directory called `.cache`. There are two ways to include those names:
-
-- Write the dot in the pattern. `./.*.txt` matches `.hidden.txt`.
-- Use `Glob.with_dotfiles`. It gives the same pattern, but its wildcards
-  also match a leading dot. `FS.glob`, `FS.glob_in` and `Glob.matches?`
-  all obey it.
-
-```ocaml
-FS.glob_in ./**/*.txt ./d                      -- skips d/.hidden.txt
-FS.glob_in (Glob.with_dotfiles ./**/*.txt) ./d -- includes it
-```
-
-A glob that starts with a dot needs the `./` prefix too: write `./.*.txt`,
-not `.*.txt`. Without it, the `.` reads as a field access.
+A name that starts with a dot is a name like any other. A shell skips it,
+and wand does not: `*.txt` matches `.hidden.txt`, and `./**/*` goes into
+`.git/` and `.cache/`. To match only those names, write the dot: `.*.txt`.
 
 A pattern that starts with a bare word needs the `./` prefix. Each relative
 path does. Write `./file*.txt`, not `file*.txt`. Without the prefix, `file` is
@@ -6403,7 +6390,6 @@ way round.
 
 ```ocaml
 matches?  : Glob -> Path -> Bool
-with_dotfiles : Glob -> Glob
 base      : Glob -> Path
 to_string : Glob -> String
 of_string : String -> Result String Glob
@@ -6426,11 +6412,6 @@ its answer. [`FS.dir?`](#fs) is what tells the two apart, and
 
 A leading `./` is not part of either side. It is a way of writing "here", so
 it comes off the pattern and the path before they meet.
-
-A `*`, `**` or `?` does not match a name that starts with a dot, in
-`matches?` and in `FS.glob` alike: `matches? **/*.txt ./a/.x.txt` is false.
-`with_dotfiles` gives the same pattern with that rule off, and both
-functions obey it: `matches? (with_dotfiles **/*.txt) ./a/.x.txt` is true.
 
 `of_string` is the only way to build a glob from text, and the only way to
 write one that begins with a bare name — `src/**/*.ts` as a literal reads as

@@ -1223,6 +1223,9 @@ let next_token s =
        | '.' when peek2 s = '/' ->
          ignore (advance s); ignore (advance s); read_path_body s "../"
        | '.' -> ignore (advance s); DotDot
+       (* `.*.txt` is a glob, as `*.txt` is. A field name never starts with
+          `*`, so a dot before a star is never a field access (#138). *)
+       | '*' -> read_path_body s "."
        | _   -> Dot)
     | '$'  ->
       if peek s = '?' && peek2 s = '(' then (

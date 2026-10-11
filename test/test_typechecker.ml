@@ -1332,19 +1332,14 @@ let _ = FS.glob *.wand" with
    | Ok () -> ()
    | Error e -> Alcotest.failf "FS.glob *.wand should typecheck, got: %s" e)
 
-(* `.*.txt` lexes as a `.` and then the glob `*.txt`, so the dot reads as a
-   field access. The error gives the spelling that works, and that spelling
-   does parse as a glob (#138). *)
+(* `.*.txt` is a glob, as `*.txt` is: a dot before a star is never a
+   field access (#138). *)
 let test_leading_dot_glob () =
-  (match type_of_program_with_imports "import FS\nlet _ = FS.glob_in .*.txt ./d" with
-   | Ok () -> Alcotest.fail "expected a parse error"
-   | Error e ->
-     let want = "write `./.*.txt`" in
-     if not (contains e want) then
-       Alcotest.failf "expected %S in the error, got: %s" want e);
-  (match type_of_program_with_imports "import FS\nlet _ = FS.glob_in ./.*.txt ./d" with
-   | Ok () -> ()
-   | Error e -> Alcotest.failf "./.*.txt should typecheck, got: %s" e)
+  List.iter (fun src ->
+    match type_of_program_with_imports ("import FS\nlet _ = FS.glob_in " ^ src ^ " ./d") with
+    | Ok () -> ()
+    | Error e -> Alcotest.failf "%s should typecheck, got: %s" src e)
+    [".*.txt"; ".*"; "./.*.txt"; "**/.*"]
 
 let test_generic_type_errors () =
   (match type_of_program "type Foo 'a = Bar 'b; 1" with

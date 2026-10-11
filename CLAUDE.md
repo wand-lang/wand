@@ -367,7 +367,7 @@ Values are written directly; the shape carries the type:
 | literal | type |
 |---|---|
 | `/etc/hosts`, `./build`, `~/x` | Path |
-| `*.wand`, `./file*.txt` | Glob — a *relative* glob with a directory part needs the `./` prefix; `*` and `**` skip names that start with a dot, and `Glob.with_dotfiles` includes them |
+| `*.wand`, `.*.txt`, `./file*.txt` | Glob — a *relative* glob with a directory part needs the `./` prefix; `*` and `**` match dotfiles too |
 | `30s`, `5min`, `2h` | Duration |
 | `100MB`, `4KB` | Size |
 | `2024-01-15T14:30:00Z`, `2024-01-15` | DateTime — the bare day is that day at midnight UTC |
