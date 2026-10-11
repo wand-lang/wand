@@ -177,7 +177,7 @@ let and_map d df = map2 (fn f v -> f v) df d
 -- every alternative's complaint is reported, since which one is the real
 -- reason is not the decoder's to guess.
 --
--- >> let text = Decode.one_of [Decode.string, Decode.map String.of_int Decode.int]
+-- >> let text = Decode.one_of [Decode.string, Decode.map Int.to_string Decode.int]
 -- >> JSON.decode text (JSON.parse! "8080")
 -- Ok("8080") : Result String String
 let one_of ds = decode_one_of ds

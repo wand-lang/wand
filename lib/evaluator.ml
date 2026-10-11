@@ -876,11 +876,23 @@ let quoted s =
   Buffer.add_char buf '"';
   Buffer.contents buf
 
+(* A Float as text: six significant digits when they are enough to read the
+   same Float back, and more digits only when they are not. `Float.of_string`
+   of the text is the Float again, so `Float.to_string` and `%{...}` lose
+   nothing. NaN is not equal to itself, so it takes all seventeen digits and
+   shows as "nan". *)
+let float_text f =
+  let rec go p =
+    let s = Printf.sprintf "%.*g" p f in
+    if p >= 17 || float_of_string s = f then s else go (p + 1)
+  in
+  go 6
+
 let rec render ~quote v =
   let sub = render ~quote in
   match v with
   | VInt n      -> string_of_int n
-  | VFloat f    -> Printf.sprintf "%g" f
+  | VFloat f    -> float_text f
   | VString s   -> if quote then quoted s else s
   | VBool b     -> string_of_bool b
   | VUnit       -> "()"
@@ -5954,6 +5966,27 @@ let stdlib_eval_env : env = [
   ("int_to_str", VBuiltin (function
     | VInt n -> VString (string_of_int n)
     | _ -> raise (EvalError "int_to_str: expected Int")));
+  (* The `to_string` of each type that has a literal. Each one gives the
+     text that `%{...}` gives for the value, because that text is the
+     value's text, and `of_string` reads it back. *)
+  ("float_to_str", VBuiltin (function
+    | VFloat _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "float_to_str: expected Float")));
+  ("bool_to_str", VBuiltin (function
+    | VBool _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "bool_to_str: expected Bool")));
+  ("dur_to_str", VBuiltin (function
+    | VDuration _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "dur_to_str: expected Duration")));
+  ("size_to_str", VBuiltin (function
+    | VSize _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "size_to_str: expected Size")));
+  ("dt_to_str", VBuiltin (function
+    | VDateTime _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "dt_to_str: expected DateTime")));
+  ("port_to_str", VBuiltin (function
+    | VPort _ as v -> VString (to_text v)
+    | _ -> raise (EvalError "port_to_str: expected Port")));
   ("float_of_int", VBuiltin (function
     | VInt n -> VFloat (float_of_int n)
     | _ -> raise (EvalError "float_of_int: expected Int")));

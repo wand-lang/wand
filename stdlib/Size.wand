@@ -33,6 +33,14 @@ let of_string s = str_to_size s
 -- 10MB : Size
 let of_string! s = Result.get! (of_string s)
 
+-- The Size as text: the text that `"%{s}"` gives. A Size keeps the unit it
+-- was written in, and `Size.of_string` reads the text back. To round it to
+-- a unit that is easy to read, use `Size.format`.
+--
+-- >> Size.to_string 6466B
+-- "6466B" : String
+let to_string s = size_to_str s
+
 implement Ord Size =
   -- The larger of two Sizes.
   --

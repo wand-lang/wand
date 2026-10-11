@@ -76,6 +76,21 @@ let of_string s = str_to_float s
 -- 1.5 : Float
 let of_string! s = Result.get! (of_string s)
 
+-- The Float as text: the text that `"%{f}"` gives. It has the digits that
+-- `Float.of_string` needs to read the same Float back, and no more. A
+-- Float whose value is whole has no point. To write a fixed number of
+-- digits, use `Float.format`.
+--
+-- >> Float.to_string 1.5
+-- "1.5" : String
+--
+-- >> Float.to_string 3.0
+-- "3" : String
+--
+-- >> Float.to_string (0.1 + 0.2)
+-- "0.30000000000000004" : String
+let to_string f = float_to_str f
+
 implement Ord Float =
   -- The larger of two Floats.
   --

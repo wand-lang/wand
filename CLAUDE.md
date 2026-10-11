@@ -403,6 +403,9 @@ today at midnight is `Clock.now () |> DateTime.day_start`.
 
 - Fallible operations return `Result`/`Option`; every one has a raising sibling named with `!` (`FS.copy` returns a `Result`, `FS.copy!` raises). A function you write that can raise gets a `!` name too; predicates end in `?` (`failed?`).
 - Handle a `Result` by matching it, or `try f x` to capture a raise as a `Result`. Discarding a `Result` silently is a `V-DROP1` warning; bind it to `_` only when the failure genuinely does not matter.
+- A type converts in its own module: `T.of_string` reads one from text
+  and `T.to_string` writes it as text (`Int.to_string`, `Path.to_string`,
+  `Duration.to_string`). `to_string` gives what `"%{x}"` gives.
 - A typed hole `?` asks the typechecker what belongs there: `List.fold_left ? Map.empty xs`, then `wand t` reports the hole's type.
 
 ### Imports and tests
@@ -434,7 +437,7 @@ gives one name's type and examples.
 | `Proc` | args exit pid |
 | `Args` | help? parse read |
 | `IO` | flush print print_err println println_err read_all(!) read_line(!) stdin_lines |
-| `String` | between? bytes clamp contains? empty? ends_with? join length lines lower max min of_int repeat replace reverse slice split starts_with? trim trim_left trim_right truncate upper word(!) words |
+| `String` | between? bytes clamp contains? empty? ends_with? join length lines lower max min repeat replace reverse slice split starts_with? trim trim_left trim_right truncate upper word(!) words |
 | `List` | all? any? concat contains? drop drop_while each empty empty? filter filter_map find flat_map flatten fold_left fold_right get(!) head(!) indexed length map max min range reverse sort sort_by sum tail(!) take take_while tally unique zip |
 | `Map` | delete empty empty? filter from_list get(!) has? keys map merge set size to_list update values |
 | `FS` | append(!) append_lines(!) copy(!) copy_tree(!) create_file(!) cwd delete(!) delete_tree(!) dir? exists? file? glob glob_in list_dir(!) lock(!) lock_wait(!) mkdir(!) mtime(!) read_file(!) rename(!) size(!) stream_lines stream_lines_all temp_dir temp_file write_atomic(!) write_file(!) write_lines(!) write_lines_atomic(!) |
@@ -442,7 +445,7 @@ gives one name's type and examples.
 | `Regex` | capture compile(!) match? match_all replace replace_all split |
 | `Option` | and_then default get! map none? or_else some? to_result |
 | `Result` | and_then default error? flatten get! map map_error ok? reason to_option |
-| `Int` | abs between? clamp max max_value min min_value of_string(!) pow |
+| `Int` | abs between? clamp max max_value min min_value of_string(!) pow to_string |
 
 Big files stream instead of loading (and `Shell.stream` reads a command the
 same way): `FS.stream_lines log |>

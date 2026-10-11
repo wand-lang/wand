@@ -1024,6 +1024,80 @@ let ctor_extent (l : Token.loc) name =
 let replace_fix at from_ to_ =
   pending_fix := Some (Diag.ReplaceAt { at; from_; to_ })
 
+(* The expression `x` as it is written inside `l`: the tokens the formatter
+   writes for `x`, where they stand inside `l` once only. Also the number
+   of those tokens, and whether a bracket stands on each side of them. A
+   text that the formatter writes differently from the source is not found,
+   and then there is no extent. *)
+let expr_extent (l : Token.loc) (x : expr) =
+  (* Read first: the formatter lexes text of its own, and that text can
+     take the place of the source of a file that has no name. *)
+  let file = l.Token.file in
+  let src = Hashtbl.find_opt Lexer.sources file in
+  let toks = tokens_of_file file in
+  let want =
+    match Doc.to_string (Formatter.emit_splice 0 x) with
+    | text ->
+      (* Not at base 0, so the lexer does not keep this text as the source
+         of a file. *)
+      (match Lexer.tokenize ~base:1 text with
+       | ts ->
+         Array.of_list (List.filter_map (fun (t, _) ->
+           if skippable_token t || t = Token.EOF then None else Some t) ts)
+       | exception _ -> [||])
+    | exception _ -> [||]
+  in
+  Option.iter (Hashtbl.replace Lexer.sources file) src;
+  let n = Array.length want and total = Array.length toks in
+  let tok i = fst toks.(i) in
+  let matches_at i =
+    i + n <= total
+    && inside l (snd toks.(i)) && inside l (snd toks.(i + n - 1))
+    && (let rec same k = k >= n || (tok (i + k) = want.(k) && same (k + 1)) in
+        same 0)
+    (* `p` in `x.p` or `p.x` is part of a longer name, not the value. *)
+    && (i = 0 || tok (i - 1) <> Token.Dot)
+    && (i + n >= total || tok (i + n) <> Token.Dot)
+  in
+  match src with
+  | None -> None
+  | Some _ when n = 0 -> None
+  | Some src ->
+    match List.filter matches_at (List.init total Fun.id) with
+    | [i] ->
+      let bracketed =
+        i > 0 && i + n < total
+        && tok (i - 1) = Token.LParen && tok (i + n) = Token.RParen
+      in
+      Some (join_locs (snd toks.(i)) (snd toks.(i + n - 1)), n, bracketed,
+            src)
+    | _ -> None
+
+(* A value of type `T` given where a String is expected (#143): the name of
+   `T`, and the change that puts `T.to_string` around the value when its
+   extent is certain. It is recorded where the error is raised, and used
+   where the check gives the error back, because only there can the
+   standard library be asked if `T.to_string` exists. *)
+let string_offer : (string * Diag.fix option) option ref = ref None
+
+(* The change that puts `m.to_string` around `x`. An argument of a call
+   that has no brackets of its own gets them, because `f m.to_string x`
+   gives two arguments to `f`. A value of one token needs no brackets of
+   its own, unless it starts with `-`. *)
+let to_string_fix ~arg (l : Token.loc) x m =
+  match expr_extent l x with
+  | Some (at, n, bracketed, src)
+    when at.Token.offset >= 0 && at.Token.end_offset <= String.length src ->
+    let from_ =
+      String.sub src at.Token.offset (at.Token.end_offset - at.Token.offset)
+    in
+    let atom = n = 1 && not (String.starts_with ~prefix:"-" from_) in
+    let call = Printf.sprintf "%s.to_string %s" m
+        (if atom then from_ else "(" ^ from_ ^ ")") in
+    let to_ = if arg && not bracketed then "(" ^ call ^ ")" else call in
+    Some (Diag.ReplaceAt { at; from_; to_ })
+  | _ -> None
+
 (* A parameter written as a plain name, and what is needed to find it in
    the text again: the start of the body it is bound over, and the names of
    the parameters from it to the last, which are plain names too. Read
@@ -1386,7 +1460,7 @@ let foreign_name_hint = function
   | "begin" -> Some "expressions group with parentheses, not \
                      'begin ... end'"
   | "int_of_string" -> Some "Int.of_string reads an Int out of a String \
-                             (as a Result); String.of_int goes the other way"
+                             (as a Result); Int.to_string goes the other way"
   | "string_of_int" | "string_of_float" ->
     Some "interpolation makes strings of anything: \"%{n}\""
   | "read_lines" -> Some "FS.read_file! reads a whole file, and \
@@ -1439,6 +1513,8 @@ let foreign_member_hint ns member =
     Some (Printf.sprintf "use Decode.%s"
             (if member = "decode" then "run" else "lines"))
   | "String", "to_path" -> Some "use Path.of_string"
+  (* Removed in #143: each type writes its own text. *)
+  | "String", "of_int" -> Some "use Int.to_string (import Int)"
   | "String", ("to_int" | "to_int!" | "to_float" | "to_float!"
               | "to_bool" | "to_bool!" | "to_glob" | "to_glob!"
               | "to_url" | "to_url!" | "to_ipv4" | "to_ipv4!"
@@ -1491,6 +1567,7 @@ let foreign_member_fix ns member =
   | "Shell", "decode" -> Some "Decode.run"
   | "Shell", "lines" -> Some "Decode.lines"
   | "String", "to_path" -> Some "Path.of_string"
+  | "String", "of_int" -> Some "Int.to_string"
   (* `String.to_int` and the others: the hint names the function, as
      "use Int.of_string (import Int)". *)
   | "String", m when String.starts_with ~prefix:"to_" m ->
@@ -1521,6 +1598,20 @@ let suffix_member name members =
    raised one is located by the `Located` it passes on the way out; a
    recorded one never leaves, so it reads the position here. *)
 let cur_loc : Token.loc option ref = ref None
+
+(* Record the offer for `x` when it was given where a String is expected and
+   its type is one with a module of its own name: `Path`, `Int`. Whether
+   that module has `to_string` is asked later. *)
+let offer_to_string ~arg x ~expected ~got =
+  match repr expected, repr got with
+  | TString, (TName _ | TVar _) -> ()
+  | TString, t ->
+    let m = string_of_typ t in
+    if List.mem m stdlib_module_names then
+      string_offer := Some (m, match !cur_loc with
+        | Some l -> to_string_fix ~arg l x m
+        | None -> None)
+  | _ -> ()
 
 (* The same idea for a constructor: one spelled as another language spells
    it. `Err` is Rust's and Elm's, and was the error an agent met most often
@@ -4226,7 +4317,12 @@ let rec infer tenv (env : env) (e : expr) : typ =
        sequence_read_as_call tf f x;
        let tr = fresh () in
        let latent = Effect_set.unknown () in
-       unify_expected ~expected:tf ~got:(TFun (tx, tr, latent));
+       (try unify_expected ~expected:tf ~got:(TFun (tx, tr, latent))
+        with TypeError _ as ex ->
+          (match repr tf with
+           | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
+           | _ -> ());
+          raise ex);
        performs_call env f latent;
        tr))
   | Let (p, e1, e2, _) ->
@@ -5413,7 +5509,12 @@ and infer_app_spine ?extra tenv (env : env) head args =
       let tr = fresh () in
       let latent = Effect_set.unknown () in
       at loc (fun () ->
-        unify_expected ~expected:!cur ~got:(TFun (tx, tr, latent)));
+        try unify_expected ~expected:!cur ~got:(TFun (tx, tr, latent))
+        with TypeError _ as ex ->
+          (match repr !cur with
+           | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
+           | _ -> ());
+          raise ex);
       performs_call env head latent;
       cur := tr) args;
   (* A piped value is an argument written to the left of the call, so it
@@ -5511,7 +5612,10 @@ and infer_binop tenv (env : env) op a b : typ =
            "'++' joins two strings; two lists are joined with \
             'List.concat xs ys'")
        | _ -> ());
-      unify_expected ~expected:TString ~got:t
+      try unify_expected ~expected:TString ~got:t
+      with TypeError _ as ex ->
+        offer_to_string ~arg:false e ~expected:TString ~got:t;
+        raise ex
     in
     operand a;
     operand b;
@@ -5732,6 +5836,12 @@ let stdlib_type_env : env = [
   ("ct_equal",       generalize [] ((TString @-> (TString @-> TBool))));
   ("str_bytes",      generalize [] ((TString @-> TList TString)));
   ("int_to_str",       generalize [] ((TInt @-> TString)));
+  ("float_to_str",     generalize [] ((TFloat @-> TString)));
+  ("bool_to_str",      generalize [] ((TBool @-> TString)));
+  ("dur_to_str",       generalize [] ((TDuration @-> TString)));
+  ("size_to_str",      generalize [] ((TSize @-> TString)));
+  ("dt_to_str",        generalize [] ((TDateTime @-> TString)));
+  ("port_to_str",      generalize [] ((TPort @-> TString)));
   ("float_of_int",     generalize [] ((TInt @-> TFloat)));
   ("float_round",      generalize [] ((TFloat @-> TInt)));
   ("float_floor",      generalize [] ((TFloat @-> TInt)));
@@ -7051,6 +7161,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   last_shell_static := true;
   last_shell_allow := None;
   pending_fix := None;
+  string_offer := None;
   param_sites := [];
   current_eff := Effect_set.absorb ~ambient:(Effect_set.unknown ())
       (Effect_set.of_list (Effect_set.EffSet.elements init_effects));
@@ -7655,6 +7766,36 @@ let string_of_scheme_brief = function
   | Mono t | Poly (_, _, t) -> string_of_typ_with ~expand_aliases:false t
   | Namespace _           -> "<namespace>"
 
+(* The type of a member of a standard library module, or None. The runner
+   supplies it, because the typechecker cannot load a module. *)
+let stdlib_member : (string -> string -> scheme option) ref =
+  ref (fun _ _ -> None)
+
+(* `expected String, got Path` says what to call when `Path.to_string`
+   exists and takes a Path: the hint, and the fix that the error site found
+   for it. The standard library is asked only here, when the check is done,
+   because loading a module checks it, and that must not occur during the
+   check of another file. *)
+let with_to_string msg fix =
+  let offer = !string_offer in
+  string_offer := None;
+  match offer with
+  | Some (m, offer_fix)
+    when String.ends_with ~suffix:("expected String, got " ^ m) msg ->
+    let takes_m =
+      match (try !stdlib_member m "to_string" with _ -> None) with
+      | Some (Mono t | Poly (_, _, t)) ->
+        (match repr t with
+         | TFun (a, r, _) -> string_of_typ a = m && repr r = TString
+         | _ -> false)
+      | _ -> false
+    in
+    if takes_m then
+      (Printf.sprintf "%s; %s.to_string gives its text" msg m,
+       (match offer_fix with Some _ -> offer_fix | None -> fix))
+    else (msg, fix)
+  | _ -> (msg, fix)
+
 (* The Error side is (position, message, correction): everything the raise
    site knew, as data. *)
 let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
@@ -7685,8 +7826,12 @@ let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
   | TypeError msg ->
     (match answer_with_unbound () with
      | Some (loc, m) -> Error (loc, m, None)
-     | None -> Error (None, msg, take_pending_fix ()))
+     | None ->
+       let (msg, fix) = with_to_string msg (take_pending_fix ()) in
+       Error (None, msg, fix))
   | TypeErrorAt (loc, msg) ->
     (match answer_with_unbound () with
      | Some (l, m) -> Error (l, m, None)
-     | None -> Error (Some loc, msg, take_pending_fix ()))
+     | None ->
+       let (msg, fix) = with_to_string msg (take_pending_fix ()) in
+       Error (Some loc, msg, fix))

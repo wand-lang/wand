@@ -411,6 +411,67 @@ let test_lines_bracketed () =
     refuse "uses {IO}\n\nimport IO\nlet () = match Some 1 with\n  | Some n -> IO.println \"a\" -- one\n      IO.println \"b\"\n  | None -> ()\n" in
   Alcotest.(check bool) "a comment among the lines: no fix" true (d.Diag.fix = None)
 
+(* The error a check gives, fix or no fix. *)
+let type_error src =
+  match Runner.typecheck_source ~path:"wand_fix_test.wand" src with
+  | Error d -> d
+  | Ok _ -> Alcotest.failf "expected a type error:\n%s" src
+
+(* `String.of_int` is gone (#143). Its hint names `Int.to_string`, and the
+   fix changes it; the import of `Int` is the next fix. *)
+let test_string_of_int_renamed () =
+  let d = type_error "import String\nlet s = String.of_int 3\n" in
+  Alcotest.(check bool) "the hint names Int.to_string" true
+    (Lint.contains d.Diag.message "use Int.to_string (import Int)");
+  let (fixed, _) = fix_clean "import String\nlet s = String.of_int 3\n" in
+  Alcotest.(check string) "String.of_int becomes Int.to_string"
+    "import Int\nlet s = Int.to_string 3\n" fixed
+
+(* A value given where a String is expected, of a type whose module has
+   `to_string` (#143): the error names it, and the fix puts it around the
+   value. *)
+let test_to_string_around_a_value () =
+  let d =
+    type_error "import Path\nimport Regex\nlet b = Regex.match? r/^b/ (Path.basename ./a/b.tar)\n" in
+  Alcotest.(check bool) "the error names Path.to_string" true
+    (Lint.contains d.Diag.message
+       "expected String, got Path; Path.to_string gives its text");
+  let (fixed, applied) =
+    fix_clean "import Path\nimport Regex\nlet b = Regex.match? r/^b/ (Path.basename ./a/b.tar)\n" in
+  Alcotest.(check string) "inside the brackets that are there"
+    "import Path\nimport Regex\nlet b = Regex.match? r/^b/ (Path.to_string (Path.basename ./a/b.tar))\n"
+    fixed;
+  Alcotest.(check (list string)) "by the E-TYPE fix" ["E-TYPE"] (codes applied);
+  let (fixed, _) =
+    fix_clean "import Path\nimport Regex\nlet p = ./a\nlet b = Regex.match? r/^b/ p\n" in
+  Alcotest.(check string) "an argument that is a name gets brackets"
+    "import Path\nimport Regex\nlet p = ./a\nlet b = Regex.match? r/^b/ (Path.to_string p)\n"
+    fixed;
+  let (fixed, _) = fix_clean "let n = 3\nlet s = \"n: \" ++ n\n" in
+  Alcotest.(check string) "an operand of ++, and then the import"
+    "import Int\n\nlet n = 3\nlet s = \"n: \" ++ Int.to_string n\n" fixed;
+  let (fixed, _) = fix_clean "import String\nlet n = String.length (-3)\n" in
+  Alcotest.(check string) "a value that starts with - keeps its brackets"
+    "import Int\nimport String\nlet n = String.length (Int.to_string (-3))\n"
+    fixed
+
+(* Not when the extent is not certain, not the other way round, and not
+   for a type with no `to_string`. *)
+let test_to_string_not_offered () =
+  let d =
+    refuse "import String\nlet f a b = a ++ b\nlet p = ./x\nlet y = f p p\n" in
+  Alcotest.(check bool) "the value stands twice: the hint" true
+    (Lint.contains d.Diag.message "Path.to_string gives its text");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None);
+  let d = refuse "import Path\nlet x = Path.basename \"a\"\n" in
+  Alcotest.(check bool) "a String where a Path is expected: no hint" false
+    (Lint.contains d.Diag.message "to_string");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None);
+  let d = refuse "import String\nlet n = String.length r/x/\n" in
+  Alcotest.(check bool) "Regex has no to_string: no hint" false
+    (Lint.contains d.Diag.message "to_string");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None)
+
 (* The engine's test for a substitution at an extent the fix carries: the
    text there must be what the fix says, and the result must parse. *)
 let test_replace_at_is_checked () =
@@ -474,6 +535,11 @@ let () =
       Alcotest.test_case "a parameter, not certain" `Quick
         test_parameter_not_certain;
       Alcotest.test_case "lines read as one" `Quick test_lines_bracketed;
+      Alcotest.test_case "String.of_int" `Quick test_string_of_int_renamed;
+      Alcotest.test_case "a value that has to_string" `Quick
+        test_to_string_around_a_value;
+      Alcotest.test_case "to_string, not offered" `Quick
+        test_to_string_not_offered;
       Alcotest.test_case "a replacement is checked" `Quick
         test_replace_at_is_checked;
     ];

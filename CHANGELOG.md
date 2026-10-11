@@ -9,6 +9,7 @@
 - `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
 - `.*.txt` is a glob literal, as `*.txt` is (#138).
 - A match guard can start with `if`: `| Ok n if n >= 1 -> n` (#142).
+- `Int.to_string`, `Float.to_string`, `Bool.to_string`, `Duration.to_string`, `Size.to_string`, `DateTime.to_string` and `Port.to_string` write a value as the text that `"%{x}"` gives, and `of_string` reads it back (#143).
 
 ### Changed
 
@@ -33,6 +34,14 @@
 - `wand t --json` gives a `replace_at` fix, which holds the extent to change (#140).
 - `wand t --fix` makes up to 50 passes, not 5, because each error with a fix takes one pass (#140).
 - `wand f` writes a `when` guard with `if` (#142).
+- `"%{f}"` writes a Float with the digits that `Float.of_string` needs to read it back: `0.1 + 0.2` is `0.30000000000000004`, not `0.3` (#143).
+- A value of type `T` where a `String` is expected gives the hint `T.to_string` when that function exists: `expected String, got Path; Path.to_string gives its text` (#143).
+- `wand t --fix` puts `T.to_string` around a value of type `T` where a `String` is expected (#143).
+- `wand t --fix` changes `String.of_int` to `Int.to_string` (#143).
+
+### Removed
+
+- `String.of_int`. Use `Int.to_string` (#143).
 
 ### Fixed
 

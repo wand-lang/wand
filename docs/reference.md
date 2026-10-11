@@ -2193,10 +2193,10 @@ and it cannot resume a read with an `Int`:
 
 ```ocaml
 | FS!write_file (path, _) k -> path ++ "!" ++ k ()
--- expected String, got Path
+-- expected String, got Path; Path.to_string gives its text
 
 | FS!read_file _ k -> k 42
--- expected String, got Int
+-- expected String, got Int; Int.to_string gives its text
 ```
 
 `Shell!run` and `Shell!capture` are the exception. Each one carries a
@@ -4710,7 +4710,6 @@ lines        : String -> List String
 words        : String -> List String
 word         : Int -> String -> Option String
 word!        : Int -> String -> String ! {Raise}
-of_int       : Int -> String
 max          : String -> String -> String
 min          : String -> String -> String
 clamp        : String -> String -> String -> String
@@ -4750,11 +4749,12 @@ character in half. `truncate` is the one that will not:
 [A `String` is bytes](#a-string-is-bytes) says which functions are safe on
 any input and why the model is the right one.
 
-A type reads itself from text with `of_string`, in its own module:
-`Int.of_string`, `Bool.of_string`, `Duration.of_string`, `Port.of_string`
-and the others. A conversion is on the type it produces, so `String.of_int`
-is the one in this module. Each `of_string` reads a value as a script writes
-it, and returns a `Result` that names the rule the text broke:
+A type reads itself from text with `of_string`, and writes itself as text
+with `to_string`, in its own module: `Int.of_string` and `Int.to_string`,
+`Bool`, `Duration`, `Port` and the others. This module has no conversion of
+its own. `to_string` gives the text that `"%{x}"` gives, and `of_string`
+reads that text back to the same value. Each `of_string` reads a value as a
+script writes it, and returns a `Result` that names the rule the text broke:
 
 ```ocaml
 Duration.of_string "30s"      -- Ok 30s
@@ -5376,6 +5376,7 @@ date_string : DateTime -> String
 time_string : DateTime -> String
 of_string   : String -> Result String DateTime
 of_string!  : String -> DateTime ! {Raise}
+to_string   : DateTime -> String
 max         : DateTime -> DateTime -> DateTime
 min         : DateTime -> DateTime -> DateTime
 clamp       : DateTime -> DateTime -> DateTime -> DateTime
@@ -5385,7 +5386,8 @@ between?    : DateTime -> DateTime -> DateTime -> Bool
 There is one instant type and one resolution, the second. `2024-01-15` is a
 spelling of `2024-01-15T00:00:00Z`, so a day and an instant are one value
 written two ways, and a `Duration` moves either by the same amount. A value
-prints in full; `date_string` is how the short form is written.
+prints in full, and `to_string` gives that text; `date_string` is how the
+short form is written.
 
 Nothing here reads a clock — `Clock.now` does, and this module takes what it
 answers apart:
@@ -6172,11 +6174,12 @@ type Spec(replicas: Int, containers: List Container)
 ```ocaml
 of_string  : String -> Result String Bool
 of_string! : String -> Bool ! {Raise}
+to_string  : Bool -> String
 ```
 
 `&&`, `||` and `!` are the operations on a `Bool`, so this module holds the
-one conversion an operator does not spell. `of_string` reads `"true"` or
-`"false"`, in any case.
+two conversions an operator does not spell. `of_string` reads `"true"` or
+`"false"`, in any case, and `to_string` writes one of them.
 
 ### `Float`
 
@@ -6189,6 +6192,7 @@ abs      : Float -> Float
 format   : Int -> Float -> String
 of_string  : String -> Result String Float
 of_string! : String -> Float ! {Raise}
+to_string  : Float -> String
 max      : Float -> Float -> Float
 min      : Float -> Float -> Float
 clamp    : Float -> Float -> Float -> Float
@@ -6198,6 +6202,11 @@ between? : Float -> Float -> Float -> Bool
 `Float.format` writes a fixed number of digits after the point, and fills
 them in: `Float.format 1 0.3333` is `"0.3"` and `Float.format 2 1.5` is
 `"1.50"`. A width is a printing decision, so it answers a `String`.
+
+`Float.to_string` is the text that `"%{f}"` gives: six significant digits
+when they are enough for `Float.of_string` to read the same `Float` back,
+and more digits only when they are not. So `Float.to_string 1.5` is
+`"1.5"`, and `Float.to_string (0.1 + 0.2)` is `"0.30000000000000004"`.
 
 These functions cross between the two members of `Num`. Arithmetic never
 converts for you. `1.5 + 1` is a type error, and it names these functions. So
@@ -6226,6 +6235,7 @@ max_value : Int
 min_value : Int
 of_string  : String -> Result String Int
 of_string! : String -> Int ! {Raise}
+to_string  : Int -> String
 max       : Int -> Int -> Int
 min       : Int -> Int -> Int
 clamp     : Int -> Int -> Int -> Int
@@ -6234,7 +6244,7 @@ between?  : Int -> Int -> Int -> Bool
 
 What an operator does not spell. Arithmetic is `+ - * / %`, so this module
 is the remainder: distance from zero, repeated multiplication, the ends of
-the range, and reading one from text.
+the range, and reading one from text and writing one as text.
 
 ```ocaml
 Int.abs (-7)            -- 7
@@ -6254,10 +6264,10 @@ divides by zero, exactly as writing that division would.
 [`Int`](#primitives) already documents. Arithmetic outside it is a runtime
 error rather than a wrap, and it is not the `Raise` effect.
 
-There is no `Int.to_string` and no `Int.to_float`. wand puts a conversion on
-the type it produces, so those are `String.of_int` and `Float.of_int`, and
-`Int.of_string` reads an `Int` from text. Drawing a number is `Random.int`,
-which carries the effect that belongs with it.
+`Int.of_string` reads an `Int` from text, and `Int.to_string` writes one as
+text. There is no `Int.to_float`: a crossing between the two members of
+`Num` is in `Float`, so it is `Float.of_int`. Drawing a number is
+`Random.int`, which carries the effect that belongs with it.
 
 ### `Duration`
 
@@ -6273,6 +6283,7 @@ format   : Duration -> String
 to_ms    : Duration -> Int
 of_string  : String -> Result String Duration
 of_string! : String -> Duration ! {Raise}
+to_string  : Duration -> String
 max      : Duration -> Duration -> Duration
 min      : Duration -> Duration -> Duration
 clamp    : Duration -> Duration -> Duration -> Duration
@@ -6287,6 +6298,7 @@ of_bytes : Int -> Size
 format   : Size -> String
 of_string  : String -> Result String Size
 of_string! : String -> Size ! {Raise}
+to_string  : Size -> String
 max      : Size -> Size -> Size
 min      : Size -> Size -> Size
 clamp    : Size -> Size -> Size -> Size
@@ -6298,7 +6310,9 @@ it as a number: `100MB` is `100000000`, because `KB` is the SI thousand
 and not 1024. Going the other way has to pick units, so `of_bytes` picks
 bytes and stays exact — `Size.of_bytes 6466` is `6466B`. `format` is the
 readable spelling of the same size, `"6.5KB"`, the way `Duration.format`
-renders a duration. A byte count below zero reads as `0B`.
+renders a duration. `to_string` keeps the units, as `"%{s}"` does:
+`Size.to_string 6466B` is `"6466B"`, and `Duration.to_string 90s` is
+`"90s"`. A byte count below zero reads as `0B`.
 
 [`FS.size`](#fs) answers a `Size`, in bytes, so a threshold is the literal
 it is: `FS.size! p < 4KB`.
@@ -6310,6 +6324,7 @@ to_int   : Port -> Int
 of_int   : Int -> Result String Port
 of_string  : String -> Result String Port
 of_string! : String -> Port ! {Raise}
+to_string  : Port -> String
 max      : Port -> Port -> Port
 min      : Port -> Port -> Port
 clamp    : Port -> Port -> Port -> Port
@@ -6317,7 +6332,8 @@ between? : Port -> Port -> Port -> Bool
 ```
 
 The colon is the literal's punctuation and stays in every string a port
-makes, so `"host%{:8080}"` is `"host:8080"` — the address. Use `to_int`
+makes, so `"host%{:8080}"` is `"host:8080"` — the address, and
+`Port.to_string :8080` is `":8080"`. Use `to_int`
 where a command wants the number as an argument of its own, as in
 `$(nc -z localhost %{Port.to_int port})`.
 
@@ -8388,7 +8404,10 @@ line is therefore a correction, not a hint. An error that names one certain
 change carries it too. `List.iter` becomes `List.each`, `List.contains`
 becomes `List.contains?`, `Err` becomes `Error`, a parameter read only
 through a field gets the type that has the field, and lines read as one
-expression get the brackets and the `;` that the message shows. An error
+expression get the brackets and the `;` that the message shows. A value of
+type `T` where a `String` is expected gets `T.to_string` around it, when
+the module `T` has `to_string`: `expected String, got Path; Path.to_string
+gives its text`. `String.of_int` becomes `Int.to_string`. An error
 whose change is a choice, such as a guess by spelling or two types that have
 the field, keeps only its text. A fix applies only where the text at its
 extent is the text it replaces, and only when the file still parses after

@@ -4027,6 +4027,23 @@ let test_results_json
     (String.concat "," tests) (String.concat "," errors)
     passed (List.length outcomes - passed)
 
+(* The type of a member of a standard library module, for an error that
+   names a function of that module (#143). The module is loaded for its
+   types only, once per process. A module that does not load has no
+   members here. *)
+let stdlib_sig_cache = Hashtbl.create 8
+
+let () =
+  Typechecker.stdlib_member := fun m member ->
+    if not (List.mem m Typechecker.stdlib_module_names) then None
+    else
+      match
+        load_module (Module_types.Embedded m) ~cache:stdlib_sig_cache
+          ~loading:(ref []) ~evaluate:false
+      with
+      | (_, own_type, _, _, _, _, _) -> List.assoc_opt member own_type
+      | exception _ -> None
+
 (* ── REPL session ─────────────────────────────────────────────────────────── *)
 
 type repl_result =

@@ -940,7 +940,7 @@ let test_a_multiline_paren_closes_on_its_own_line () =
      continuation they look like. The guard that used to bracket this was
      written when a newline ended a definition whatever the indent. *)
   ok_after_format "a wrapped value needs no brackets"
-    "import List\nimport String\nlet total xs =\n  List.fold_left (fn acc s -> acc + String.length s) 0 xs\nString.of_int (total [\"aaaaaaaaaaaaaaaaaaaaaaaaa\", \"bbbbbbbbbbbbbbbbbbbbbbbbbb\"])"
+    "import Int\nimport List\nimport String\nlet total xs =\n  List.fold_left (fn acc s -> acc + String.length s) 0 xs\nInt.to_string (total [\"aaaaaaaaaaaaaaaaaaaaaaaaa\", \"bbbbbbbbbbbbbbbbbbbbbbbbbb\"])"
     "51"
 
 (* A case body wide enough to wrap has to come back as a program. It once
@@ -965,7 +965,7 @@ let test_a_wrapped_case_body_keeps_its_brackets () =
   (* The arm below it is still an arm, and a definition after the match is
      still its own: a wrapped body reaches neither. *)
   ok_after_format "an arm and a definition below it both survive"
-    "import String\nlet f xs =\n  match xs with\n  | [] -> String.upper \"a considerable message here, long enough to wrap past\"\n  | _ -> \"some\"\nlet g = 9\nf [] ++ String.of_int g"
+    "import Int\nimport String\nlet f xs =\n  match xs with\n  | [] -> String.upper \"a considerable message here, long enough to wrap past\"\n  | _ -> \"some\"\nlet g = 9\nf [] ++ Int.to_string g"
     "A CONSIDERABLE MESSAGE HERE, LONG ENOUGH TO WRAP PAST9"
 
 (* The block of plain imports stands off from whatever follows it, whether

@@ -125,11 +125,11 @@ test "bytes splits a multi-byte character" (fn t ->
 test "bytes counts what length counts" (fn t ->
   t.eq (String.length "café") (List.length (String.bytes "café")))
 
--- ── of_int / to_int / to_float ─────────────────────────────────────────
+-- ── Int.to_string / to_int / to_float ──────────────────────────────────
 
-test "of_int" (fn t -> t.eq "42" (String.of_int 42))
+test "Int.to_string" (fn t -> t.eq "42" (Int.to_string 42))
 test "to_int ok" (fn t -> t.eq (Ok 123) (Int.of_string "123"))
-test "of_int negative" (fn t -> t.eq "-7" (String.of_int (-7)))
+test "Int.to_string negative" (fn t -> t.eq "-7" (Int.to_string (-7)))
 test "to_float ok" (fn t -> t.eq (Ok 3.14) (Float.of_string "3.14"))
 test "to_float int-like" (fn t -> t.eq (Ok 42.0) (Float.of_string "42"))
 test "to_int err" (fn t ->

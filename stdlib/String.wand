@@ -134,12 +134,6 @@ let truncate n s = str_truncate n s
 -- ["w", "a", "n", "d"] : List String
 let bytes s = str_bytes s
 
--- Convert an integer to its string representation.
---
--- >> String.of_int 42
--- "42" : String
-let of_int n = int_to_str n
-
 -- Join a list of strings with a separator.
 --
 -- >> String.join ", " ["a", "b", "c"]
