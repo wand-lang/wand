@@ -3380,14 +3380,15 @@ let overlay_read name (v : value) : (value, string) result option =
        uses, against the path relative to the base, so a pattern cannot mean
        one thing on disk and another here. *)
     | "FS!glob", _, VTuple [pattern; dir] ->
-      let pat = match pattern with
-        | VGlob g | VString g -> Some g | _ -> None in
+      let pat, dotfiles = match pattern with
+        | VGlob (g, d) -> (Some g, d) | VString g -> (Some g, false)
+        | _ -> (None, false) in
       let base = match dir with
         | VPath d | VString d -> Some (normal d) | _ -> None in
       let written = match dir with VPath d | VString d -> d | _ -> "." in
       (match pat, base with
        | Some pat, Some base when Hashtbl.length o.paths > 0 ->
-         (match Evaluator.glob_compile pat with
+         (match Evaluator.glob_compile ~dotfiles pat with
           | Error _ -> None
           | Ok re ->
             let real =

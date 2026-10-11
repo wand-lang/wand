@@ -175,3 +175,96 @@ test "a directory matching the pattern is not in the answer" (fn t ->
 -- top is under it too.
 test "a double star matches no directory at all" (fn t ->
   t.eq [true, true] [Glob.matches? ./**/*.ml ./a.ml, Glob.matches? ./**/*.ml ./x/y/a.ml])
+
+-- ── names that start with a dot ────────────────────────────────────────
+
+-- A `*`, `**` or `?` does not match a leading dot, as in a shell, and
+-- `Glob.with_dotfiles` turns that off (#138). The tree has a dotfile at
+-- the top, a dotfile in a subdirectory and a file in a dot directory, so
+-- each place a dot can stop a wildcard is here.
+let dot_tree! dir = (
+  (FS.mkdir! (Path.join dir ./sub); FS.mkdir! (Path.join dir ./.cfg));
+  ["n.txt", ".hidden.txt", "sub/y.txt", "sub/.x.txt", ".cfg/z.txt"]
+  |> List.each (fn n -> FS.write_file! (Path.join dir (Path.of_string n)) "x")
+)
+
+let below dir paths = List.filter_map (Path.relative_to dir) paths
+
+test "a wildcard skips a name that starts with a dot" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    t.eq [./n.txt] (below dir (FS.glob_in ./*.txt dir))
+  ))
+
+test "a double star skips dotfiles and dot directories" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    t.eq [./n.txt, ./sub/y.txt] (below dir (FS.glob_in ./**/*.txt dir))
+  ))
+
+test "a pattern that writes the dot matches it" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    t.eq [./.hidden.txt] (below dir (FS.glob_in ./.*.txt dir))
+  ))
+
+test "with_dotfiles lets a star match a dotfile" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    t.eq [./.hidden.txt, ./n.txt] (below dir (FS.glob_in (Glob.with_dotfiles ./*.txt) dir))
+  ))
+
+test "with_dotfiles lets a double star go into a dot directory" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    t.eq
+      [./.cfg/z.txt, ./.hidden.txt, ./n.txt, ./sub/.x.txt, ./sub/y.txt]
+      (below dir (FS.glob_in (Glob.with_dotfiles ./**/*.txt) dir))
+  ))
+
+test "matches? skips a leading dot too" (fn t ->
+  t.eq [false, false, false, true] [
+    Glob.matches? ./*.txt ./.hidden.txt,
+    Glob.matches? ./**/*.txt ./sub/.x.txt,
+    Glob.matches? ./**/*.txt ./.cfg/z.txt,
+    Glob.matches? ./.*.txt ./.hidden.txt
+  ])
+
+test "matches? obeys with_dotfiles" (fn t ->
+  let g = Glob.with_dotfiles ./**/*.txt;
+  t.eq [true, true, true, false] [
+    Glob.matches? g ./.hidden.txt,
+    Glob.matches? g ./sub/.x.txt,
+    Glob.matches? g ./.cfg/z.txt,
+    Glob.matches? g ./sub/y.md
+  ])
+
+-- The walk and the predicate agree on each file of the tree, with and
+-- without dotfiles.
+test "FS.glob_in and matches? agree on dotfiles" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    let names = [./n.txt, ./.hidden.txt, ./sub/y.txt, ./sub/.x.txt, ./.cfg/z.txt];
+    let agree g =
+      let found = below dir (FS.glob_in g dir);
+      names |> List.all? (fn n -> List.contains? n found == Glob.matches? g n);
+    t.eq [true, true, true, true] [
+      agree ./**/*.txt,
+      agree (Glob.with_dotfiles ./**/*.txt),
+      agree ./*.txt,
+      agree (Glob.with_dotfiles ./*.txt)
+    ]
+  ))
+
+test "FS.glob obeys with_dotfiles" (fn t ->
+  with FS.temp_dir "glob_dot_" as dir -> (
+    dot_tree! dir;
+    let pattern = Glob.of_string! "%{Path.to_string dir}/**/*.txt";
+    t.eq (2, 5) (
+      List.length (FS.glob pattern),
+      List.length (FS.glob (Glob.with_dotfiles pattern))
+    )
+  ))
+
+test "with_dotfiles keeps the pattern's text" (fn t ->
+  t.eq "*.txt" (Glob.to_string (Glob.with_dotfiles *.txt)))
