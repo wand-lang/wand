@@ -274,7 +274,7 @@ let _body_length pairs = (
   | (_, []) -> Ok 0
   | (_, [(_, n)]) -> (
     match Int.of_string n with
-    | Ok length when length >= 0 -> Ok length
+    | Ok length if length >= 0 -> Ok length
     | _ -> Error (400, "the Content-Length is not a number")
   )
   | _ -> Error (400, "the request has more than one Content-Length")

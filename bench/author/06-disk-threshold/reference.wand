@@ -28,7 +28,7 @@ let report! limit =
 let percent arg =
   if Regex.match? r/^[0-9]+$/ arg then
     match Int.of_string arg with
-    | Ok n when n <= 100 -> Some n
+    | Ok n if n <= 100 -> Some n
     | _ -> None
   else None
 

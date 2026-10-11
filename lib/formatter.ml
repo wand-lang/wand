@@ -2499,7 +2499,17 @@ and emit_match ?col indent scr cases =
      | None -> prev_end := max_int);
     let guard_s = match guard with
       | None -> Doc.empty
-      | Some g -> Doc.text " when " ^^ emit_expr arm_indent g
+      | Some g ->
+        (* Every guard is written with `if` (#142). A guard that is itself
+           an `if` or an `unless` goes in brackets, so that the keyword
+           does not stand twice in a row and the reader sees where the
+           guard ends. *)
+        let g_s = emit_expr arm_indent g in
+        let g_s = match strip_located g with
+          | If _ | Unless _ -> Doc.text "(" ^^ g_s ^^ Doc.text ")"
+          | _ -> g_s
+        in
+        Doc.text " if " ^^ g_s
     in
     (* The body starts after the pattern and the arrow, not at the case's
        indent -- which is the whole of this bug. *)

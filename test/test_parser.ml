@@ -751,6 +751,42 @@ let test_match () =
     (Match (Var "x", [
       (PVar "n", Some (BinOp (">", Var "n", Int 0)), Bool true);
       (Wild,     None,                               Bool false);
+    ]));
+  (* `if` starts a guard (#142); `when` above is the earlier spelling. *)
+  e "an if guard"
+    "match x with\n| n if n > 0 -> true\n| _ -> false"
+    (Match (Var "x", [
+      (PVar "n", Some (BinOp (">", Var "n", Int 0)), Bool true);
+      (Wild,     None,                               Bool false);
+    ]));
+  e "an if guard after a constructor pattern"
+    "match r with\n| Ok n if n >= 1 -> n\n| _ -> 0"
+    (Match (Var "r", [
+      (PConstr ("Ok", [PVar "n"]), Some (BinOp (">=", Var "n", Int 1)), Var "n");
+      (Wild, None, Int 0);
+    ]));
+  e "an if expression as a guard, in brackets"
+    "match x with\n| n if (if a then n > 0 else n < 0) -> 1\n| _ -> 2"
+    (Match (Var "x", [
+      (PVar "n",
+       Some (If (Var "a", BinOp (">", Var "n", Int 0),
+                 BinOp ("<", Var "n", Int 0))),
+       Int 1);
+      (Wild, None, Int 2);
+    ]));
+  e "an if after the arrow is the body, not a guard"
+    "match x with\n| n -> if a then 1 else 2"
+    (Match (Var "x", [
+      (PVar "n", None, If (Var "a", Int 1, Int 2));
+    ]));
+  e "an if guard on a match inside a handle arm"
+    "handle body with\n| FS!read_file p k ->\n  match p with\n  | q if q == p -> k q\n  | _ -> k p"
+    (Handle (Var "body", [
+      Ast.EffectCase ("FS!read_file", PVar "p", "k",
+        Match (Var "p", [
+          (PVar "q", Some (BinOp ("==", Var "q", Var "p")), App (Var "k", Var "q"));
+          (Wild, None, App (Var "k", Var "p"));
+        ]));
     ]))
 
 let test_constr_pats () =

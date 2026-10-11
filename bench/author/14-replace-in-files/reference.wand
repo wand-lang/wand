@@ -37,6 +37,6 @@ let run! (root: Path) old new = (
 )
 
 match Proc.args () with
-| [dir, old, new] when !(String.empty? old) -> if FS.dir? (Path.of_string dir) then run! (Path.of_string dir) old new
+| [dir, old, new] if !(String.empty? old) -> if FS.dir? (Path.of_string dir) then run! (Path.of_string dir) old new
   else (IO.println_err "not a directory: %{dir}"; Proc.exit 1)
 | _ -> (IO.println_err "usage: prog DIR OLD NEW, where OLD is not empty"; Proc.exit 2)

@@ -28,7 +28,7 @@ let rotate! (dir: Path) keep = (
 match Proc.args () with
 | [dir, n] -> (
   match Int.of_string n with
-  | Ok keep when keep >= 0 && Regex.match? r/^[0-9]+$/ n -> (
+  | Ok keep if keep >= 0 && Regex.match? r/^[0-9]+$/ n -> (
     let d = Path.of_string dir;
     if FS.dir? d then rotate! d keep
     else (IO.println_err "not a directory: %{dir}"; Proc.exit 1)

@@ -17,7 +17,7 @@ let value index (n, line) =
   match List.get index (String.split "," line) with
   | None -> Ok 0
   | Some "" -> Ok 0
-  | Some v when Regex.match? r/^-?[0-9]+$/ v -> Int.of_string v
+  | Some v if Regex.match? r/^-?[0-9]+$/ v -> Int.of_string v
   | Some v -> Error "line %{n}: not a whole number: %{v}"
 
 let sum text column = (

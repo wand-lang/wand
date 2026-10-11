@@ -40,5 +40,5 @@ let bump_file! part =
   )
 
 match Proc.args () with
-| [part] when List.any? (fn p -> p == part) ["major", "minor", "patch"] -> bump_file! part
+| [part] if List.any? (fn p -> p == part) ["major", "minor", "patch"] -> bump_file! part
 | _ -> fail 2 "usage: prog major|minor|patch"

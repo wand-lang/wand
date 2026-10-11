@@ -89,9 +89,9 @@ let _object_of_spec spec args =
     -- like, which is the only way to pass an argument that begins with two
     -- dashes.
     | ["--" :: rest] -> Ok(acc, List.concat positional rest)
-    | [arg :: rest] when !(_flag? arg) -> go acc (List.concat positional [arg]) rest
+    | [arg :: rest] if !(_flag? arg) -> go acc (List.concat positional [arg]) rest
     -- Only flags get past the guard above, so `=` here means `--key=value`.
-    | [arg :: rest] when _inline? arg -> (
+    | [arg :: rest] if _inline? arg -> (
       let (k, v) = _inline_pair arg in go (set k v acc) positional rest
     )
     | [arg :: rest] -> (
@@ -101,7 +101,7 @@ let _object_of_spec spec args =
         | [v :: more] -> go (set k v acc) positional more
         -- Asking for help is not reading a command line, so it is answered
         -- before one is read rather than by a field nobody declared.
-        | [] when k == "help" ->
+        | [] if k == "help" ->
           Error "--help expects a value; `Args.help?` answers it instead"
         | [] -> Error "--%{k} expects a value"
     )

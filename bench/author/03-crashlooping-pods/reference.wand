@@ -40,5 +40,5 @@ let report file threshold =
     |> List.each (fn (name, n) -> IO.println "%{name} %{n}")
 
 match Proc.args () with
-| [file, t] when Regex.match? r/^[0-9]+$/ t -> report file (Int.of_string! t)
+| [file, t] if Regex.match? r/^[0-9]+$/ t -> report file (Int.of_string! t)
 | _ -> (IO.println_err "usage: prog FILE THRESHOLD"; Proc.exit 2)

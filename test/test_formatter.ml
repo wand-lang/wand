@@ -2156,6 +2156,38 @@ let test_import_region_with_comment_left_alone () =
     "import String\n-- FS does the writing\nimport FS\n\nlet x = 1\nx\n"
     (fmt "import String\n-- FS does the writing\nimport FS\nlet x = 1\nx")
 
+(* `wand f` writes every guard with `if` (#142). `when` is the earlier
+   spelling, and it becomes `if`. A guard that is an `if` expression keeps
+   its brackets, and an `if` after the arrow stays the body. *)
+let test_a_guard_is_written_with_if () =
+  let check label src want =
+    let out = fmt src in
+    Alcotest.(check string) label want out;
+    Alcotest.(check string) (label ^ ": and settles") out (fmt out)
+  in
+  check "when becomes if"
+    "let f x =\n  match x with\n  | n when n > 0 -> 1\n  | _ -> 0\n"
+    "let f x =\n  match x with\n  | n if n > 0 -> 1\n  | _ -> 0\n";
+  check "an if guard is kept"
+    "let f x =\n  match x with\n  | Ok n if n >= 1 -> n\n  | _ -> 0\n"
+    "let f x =\n  match x with\n  | Ok n if n >= 1 -> n\n  | _ -> 0\n";
+  check "an if expression as a guard keeps its brackets"
+    "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n"
+    "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n";
+  check "an if expression after when gets brackets"
+    "let f a x =\n  match x with\n  | n when if a then n > 0 else n < 0 -> 1\n  | _ -> 0\n"
+    "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n";
+  check "an if after the arrow stays the body"
+    "let f a x =\n  match x with\n  | n -> if a then n else 0\n"
+    "let f a x =\n  match x with\n  | n -> if a then n else 0\n";
+  ok_after_format "an if guard runs the same after a format"
+    {|let f a x = match x with
+| n when n < 0 -> "neg"
+| n if (if a then n > 5 else n > 50) -> "big"
+| n -> if n == 0 then "zero" else "pos"
+[f true 7, f false 7, f true (-1), f true 0, f false 3]|}
+    {|["big", "pos", "neg", "zero", "pos"]|}
+
 let () =
   Alcotest.run "Formatter" [
     "idempotency", [
@@ -2313,5 +2345,7 @@ let () =
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
       Alcotest.test_case "a constructor and its bracket are kept" `Quick
         test_a_constructor_and_its_bracket_are_kept;
+      Alcotest.test_case "a guard is written with if" `Quick
+        test_a_guard_is_written_with_if;
     ];
   ]

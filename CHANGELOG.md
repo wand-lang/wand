@@ -8,6 +8,7 @@
 - `List.contains?` tells if a list holds a value: `List.contains? 2 [1, 2, 3]` is `true` (#136).
 - `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
 - `.*.txt` is a glob literal, as `*.txt` is (#138).
+- A match guard can start with `if`: `| Ok n if n >= 1 -> n` (#142).
 
 ### Changed
 
@@ -31,6 +32,7 @@
 - `wand t --fix` and the editor's quick fix do not apply a change that gives a file that does not parse (#140).
 - `wand t --json` gives a `replace_at` fix, which holds the extent to change (#140).
 - `wand t --fix` makes up to 50 passes, not 5, because each error with a fix takes one pass (#140).
+- `wand f` writes a `when` guard with `if` (#142).
 
 ### Fixed
 

@@ -1010,10 +1010,19 @@ With guards:
 
 ```ocaml
 match n with
-| x when x < 0  -> "negative"
-| x when x == 0 -> "zero"
-| _             -> "positive"
+| x if x < 0  -> "negative"
+| x if x == 0 -> "zero"
+| _           -> "positive"
 ```
+
+A guard starts with `if` after the pattern. A pattern never holds `if`, so an
+`if` before the `->` always starts a guard. An `if` after the `->` starts the
+arm's body, as in `| x -> if x > 0 then "up" else "down"`. A guard that is
+itself an `if` expression goes in brackets:
+`| x if (if strict then x > 0 else x >= 0) -> ...`.
+
+`when` is the earlier spelling of a guard. wand still accepts it with the same
+meaning, and `wand f` writes it as `if`.
 
 ### A match inside an arm
 
@@ -1084,7 +1093,7 @@ let g xs = match xs with | [x] -> x
 `[x]` matches a list of exactly one element. A match on a list needs an arm
 for `[]`, or a last `| _ ->` arm.
 
-A guard (`when`) can fail to fire, so a guarded case never covers anything
+A guard (`if`) can fail to fire, so a guarded case never covers anything
 by itself. It always needs a plain case beside it.
 
 Some types hold too many values to list: `Int`, `Float`, `String` and the

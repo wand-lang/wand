@@ -20,6 +20,6 @@ let clean! (target: Path) = (
 )
 
 match Proc.args () with
-| [target] when !(String.empty? target) && FS.dir? (Path.of_string target) ->
+| [target] if !(String.empty? target) && FS.dir? (Path.of_string target) ->
   clean! (Path.of_string target)
 | _ -> (IO.println_err "usage: prog TARGET, where TARGET is a directory"; Proc.exit 2)

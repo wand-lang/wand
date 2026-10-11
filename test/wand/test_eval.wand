@@ -153,7 +153,7 @@ test "guard pass" (fn t ->
   t.eq
     true
     (match 5 with
-    | x when x > 3 -> true
+    | x if x > 3 -> true
     | _ -> false
     ))
 
@@ -161,9 +161,26 @@ test "guard fail" (fn t ->
   t.eq
     false
     (match 2 with
-    | x when x > 3 -> true
+    | x if x > 3 -> true
     | _ -> false
     ))
+
+-- A guard starts with `if` (#142). A guard that is an `if` expression goes
+-- in brackets, and an `if` after the arrow is the body of the arm.
+let _sign strict n =
+  match n with
+  | Ok x if (if strict then x > 0 else x >= 0) -> "up"
+  | Ok x -> if x == 0 then "zero" else "down"
+  | Error _ -> "none"
+
+test "guard written as an if expression" (fn t ->
+  t.eq ["up", "zero", "up", "down", "none"] [
+    _sign true (Ok 2),
+    _sign true (Ok 0),
+    _sign false (Ok 0),
+    _sign false (Ok (-1)),
+    _sign true (Error "x")
+  ])
 
 -- ── Tuples ──────────────────────────────────────────────────────────────
 

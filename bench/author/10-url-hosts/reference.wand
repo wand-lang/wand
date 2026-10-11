@@ -11,7 +11,7 @@ let host line =
   match Regex.capture r/^https?:\/\/([^\/?#]*)/ line with
   | [_, authority] -> (
     match String.split ":" authority with
-    | [name :: _] when !(String.empty? name) -> Some (String.lower name)
+    | [name :: _] if !(String.empty? name) -> Some (String.lower name)
     | _ -> None
   )
   | _ -> None

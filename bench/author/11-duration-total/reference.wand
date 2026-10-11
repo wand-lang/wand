@@ -14,7 +14,7 @@ import String
 let seconds text = (
   let part s = if String.empty? s then Ok 0 else Int.of_string s;
   match Regex.capture r/^(?:([0-9]+)h)?(?:([0-9]+)m)?(?:([0-9]+)s)?$/ text with
-  | [_, h, m, s] when !(String.empty? text) ->
+  | [_, h, m, s] if !(String.empty? text) ->
     Result.and_then
       (fn hs -> Result.and_then
         (fn ms -> Result.map (fn ss -> hs * 3600 + ms * 60 + ss) (part s))

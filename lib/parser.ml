@@ -2052,8 +2052,12 @@ and match_ s =
        position after it. *)
     let at = peek_loc s in
     let p = PLocated (at, pat_ s) in
+    (* A guard starts with `if` (#142). A pattern never holds `if`, so an
+       `if` before the arrow can only start a guard. `when` is the earlier
+       spelling and has the same meaning; `wand f` writes it as `if`. A
+       guard that is itself an `if` expression goes in brackets. *)
     let guard =
-      if peek s = Token.When then begin
+      if peek s = Token.When || peek s = Token.If then begin
         ignore (advance s);
         Some (locate s (fun () -> expr_ 0 s))
       end else None

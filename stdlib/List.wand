@@ -162,7 +162,7 @@ let zip xs ys =
 let take n xs =
   let go n xs acc =
     match xs with
-    | [h :: t] when n > 0 -> go (n - 1) t (h :: acc)
+    | [h :: t] if n > 0 -> go (n - 1) t (h :: acc)
     | _ -> _onto acc []
   in
   go n xs []
@@ -177,7 +177,7 @@ let take n xs =
 -- [1, 2, 3] : List Int
 let drop n xs =
   match xs with
-  | [_ :: t] when n > 0 -> drop (n - 1) t
+  | [_ :: t] if n > 0 -> drop (n - 1) t
   | _ -> xs
 
 -- Take elements while the predicate holds, stopping at the first miss.

@@ -13,7 +13,7 @@ let setting line = (
   let bare = String.trim line;
   if String.empty? bare || String.starts_with? "#" bare then None
   else match String.split "=" line with
-    | [key :: rest] when !(List.empty? rest) && !(String.empty? (String.trim key)) -> Some (
+    | [key :: rest] if !(List.empty? rest) && !(String.empty? (String.trim key)) -> Some (
       String.trim key,
       String.join "=" rest
     )
