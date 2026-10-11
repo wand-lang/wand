@@ -728,6 +728,13 @@ let test_lines_read_as_one_expression () =
   ok "two statements in a match arm run one after the other"
     "match Some 1 with\n| Some n ->\n  n + 1\n  n * 10\n| None -> 0"
     "10";
+  (* A `;` at the end of each line says the same as the newline (#131). *)
+  ok "a ; after a statement continues the body"
+    "let f x =\n  let a = x + 1;\n  a * 10;\n  a\nf 1"
+    "2";
+  ok "and an arm's"
+    "match Some 1 with\n| Some n ->\n  n + 1;\n  n * 10\n| None -> 0"
+    "10";
   (* Inside brackets a newline means nothing, so two lines there are still
      one call. The excerpt and the fix hold the lines' own text, not the
      `let f x = (` beside them. *)

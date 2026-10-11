@@ -819,9 +819,20 @@ match found with
 | None -> 0
 ```
 
+A `;` at the end of a line says the same as the newline, so a body written
+with one after each statement runs the same way:
+
+```ocaml
+let report n =
+  IO.println "found %{n}";
+  n
+```
+
 `wand f` writes these lines as one bracketed sequence,
 `(IO.println "found %{n}"; n)`. A body that starts on the `=` or `->` line is
-one statement, and the lines under it continue that statement.
+one statement, and the lines under it continue that statement. A line after a
+`;` that falls back inside the body's column is not part of the body, and
+wand reports it, since the `;` there ended the definition.
 
 Inside a bracket that a statement opened, a newline is formatting again and
 an application continues across it. That is what lets an argument list run

@@ -301,16 +301,26 @@ let of_hex algorithm text =
   String.length lower == want
 ```
 
-A statement that binds nothing is joined to what follows by neither a `;`
-nor a newline, so sequencing those still wants the parentheses:
+A body that starts on a line of its own -- of a definition, a `fn`, or a
+`match` or `handle` arm -- holds one statement per line, and they run in
+order. A `;` at the end of a line says the same as the newline, so both of
+these work:
 
 ```
-let deploy! target = (
+let deploy! target =
+  FS.mkdir! (Path.of_string target)
+  FS.write_file! (Path.of_string "%{target}/v") "1\n"
+  "deployed"
+
+let deploy! target =
   FS.mkdir! (Path.of_string target);
   FS.write_file! (Path.of_string "%{target}/v") "1\n";
   "deployed"
-)
 ```
+
+A line that falls back inside the body's column is not part of it. A body
+written on the `=` or `->` line is one statement; to sequence there, use
+parentheses: `fn x -> (log! x; x)`.
 
 `in`, the block's `;` and the newline that ends a right-hand side all bind
 the name over the same body, so they are one thing and `wand f` writes the

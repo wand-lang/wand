@@ -1099,16 +1099,33 @@ let test_handler_continuation_binder () =
    inside brackets, which is two rules for one piece of punctuation and the
    reason a binding inside a block needed a `;` or an `in` that the same
    binding at the top level did not. *)
-(* A `;` inside an unbracketed body ends the definition, and the indented
-   lines below it become top-level statements. That parsed silently and ran
+(* A `;` inside an unbracketed body ended the definition, and the indented
+   lines below it became top-level statements. That parsed silently and ran
    in a surprising order -- `let go () = a; b; c` printed b, c, a -- and the
    only diagnostic was the `!`-naming lint reporting the opposite of the
-   truth. It is a parse error now, and the message names the fix. *)
+   truth. It became a parse error that named the fix.
+
+   Since #43 a newline there sequences the body, and the `;` now does too
+   (#131): an author from OCaml ends each line with one, and that was the
+   error an agent met most often in the authoring benchmark. What stays an
+   error is a line that falls back inside the body's column. *)
 let test_semicolon_body_without_parens () =
-  parse_error "an unbracketed ; body is refused"
-    "import IO\nlet go () =\n  IO.println \"one\";\n  IO.println \"two\"\ngo ()\n"
-    "put the body in parentheses";
   let parse src = Lexer.tokenize src |> Parser.parse_program in
+  let one_item label src name =
+    match (parse src).Ast.items with
+    | [TLImport _; TLLet (n, _, _); _] when n = name -> ()
+    | items -> Alcotest.failf "%s: expected the import, %s and one statement, got %d items"
+                 label name (List.length items)
+    | exception Parser.ParseError (_, m) -> Alcotest.failf "%s: %s" label m
+  in
+  one_item "a ; between a body's statements sequences them"
+    "import IO\nlet go () =\n  IO.println \"one\";\n  IO.println \"two\"\ngo ()\n" "go";
+  one_item "after a binding's ; too (#131)"
+    "import IO\nlet f x =\n  let a = x + 1;\n  IO.println \"a\";\n  a\nf 1\n" "f";
+  one_item "a match arm's body"
+    "import IO\nlet g o =\n  match o with\n  | Some n ->\n    IO.println \"arm\";\n    n + 1\n  | None -> 0\ng None\n" "g";
+  one_item "a fn's body"
+    "import IO\nlet h = fn x ->\n  IO.println \"fn\";\n  x * 2\nh 1\n" "h";
   let ok label src =
     match parse src with
     | _ -> ()

@@ -672,6 +672,32 @@ let semicolon_joins_the_body s anchor =
   && is_expr_start (fst s.tokens.(!i))
   && (snd s.tokens.(!i)).Token.col >= anchor
 
+(* Whether the `;` just ahead joins the statement before it to the next line
+   of the same body, as a newline there does. A body of statements sequences
+   its lines, and an author from OCaml ends each one with `;` -- which ended
+   the definition, so the next line was reported as a statement of its own.
+
+   Only outside every bracket, and only for a line below the `;`, at or past
+   the body's column. That is exactly the case the file's loop rejects with
+   "the ';' above ended the definition": nothing that parses changes. Inside
+   a bracket a `;` is the block's own separator and already means
+   something, and `a; b` on one line ends the item as it always did. *)
+let semicolon_continues_the_body s =
+  let n = Array.length s.tokens in
+  s.pos < n
+  && fst s.tokens.(s.pos) = Token.Semicolon
+  && s.paren_depth = 0
+  && s.stmt_depth = 0
+  && begin
+    let semi_line = (snd s.tokens.(s.pos)).Token.line in
+    let i = ref (s.pos + 1) in
+    while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
+    !i < n
+    && is_expr_start (fst s.tokens.(!i))
+    && (snd s.tokens.(!i)).Token.col >= s.stmt_col
+    && (snd s.tokens.(!i)).Token.line > semi_line
+  end
+
 let is_pat_atom_start = function
   | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _ | Token.Bool _
   | Token.Ident _ | Token.Underscore | Token.Upper _
@@ -1676,7 +1702,11 @@ and brace_map_ s =
    0. *)
 and parse_body s =
   let e = ref (locate s (fun () -> expr_ 0 s)) in
-  while is_expr_start (peek s) && peek_col s >= s.stmt_col do
+  let continues () =
+    if semicolon_continues_the_body s then (ignore (advance s); true)
+    else is_expr_start (peek s) && peek_col s >= s.stmt_col
+  in
+  while continues () do
     e := Seq (!e, locate s (fun () -> expr_ 0 s))
   done;
   !e
@@ -1849,9 +1879,9 @@ and let_ ?(block = false) s =
        `let a = 1; let b = 2` is untouched -- a top-level binding is read by
        the loop below rather than here, so its `;` never reaches this.
 
-       Sequencing two bare statements is unaffected and still wants
-       parentheses: a newline does not join those either, and this is the
-       newline's rule, not a new one. *)
+       Two bare statements sequence the same way, by the newline's rule
+       since #43 and by the `;`'s since #131 -- see
+       `semicolon_continues_the_body`. *)
     else if (not block) && peek s = Token.Semicolon
             && s.paren_depth = s.stmt_depth
             && semicolon_joins_the_body s s.stmt_col then begin
@@ -2060,7 +2090,12 @@ and statements_ s =
       if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
     (fun () ->
        let e = ref (locate s (fun () -> expr_ 0 s)) in
-       while anchored && is_expr_start (peek s) && peek_col s >= s.stmt_col do
+       let continues () =
+         anchored
+         && (if semicolon_continues_the_body s then (ignore (advance s); true)
+             else is_expr_start (peek s) && peek_col s >= s.stmt_col)
+       in
+       while continues () do
          e := Ast.Seq (!e, locate s (fun () -> expr_ 0 s))
        done;
        !e)
@@ -2713,9 +2748,12 @@ let parse_program_generic ~on_item tokens =
     s.stmt_depth <- 0;
     (* A line indented past the definition above it is read as the
        continuation it looks like -- see `newline_breaks_expr` -- so it
-       normally never reaches this loop at all. A `;` is the one thing that
-       ends the definition first, and then the indented lines below it do
-       arrive here, as statements of their own. That parses, and it runs:
+       normally never reaches this loop at all. A `;` at the end of a body's
+       line now continues the body too (#131), so what still arrives here is
+       a line that falls back inside the body's column, or a `;` inside a
+       bracket that the body was read in. Before #131 any `;` did this, and
+       the indented lines below it arrived as statements of their own. That
+       parsed, and it ran:
 
          let go () =
            IO.println "one";
