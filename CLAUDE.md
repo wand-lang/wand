@@ -191,6 +191,9 @@ row are not the flake; read the log.
 Write the script, then let the tools drive the edits:
 
 ```bash
+wand d List                 # a module's members; `wand d` alone lists the modules
+wand d List.sort_by         # one name: its type, its doc and its examples
+wand -e 'String.words "a b"'  # evaluate an expression, to try a call before using it
 wand t script.wand          # typecheck a file (wand t -e "..." for a snippet)
 wand t --fix script.wand    # apply the fixes findings carry (manifest lines, missing and dead imports)
 wand f script.wand          # format in place
@@ -261,6 +264,10 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `type D(port "Port": Int)` a field's key in a document | a hand-written decoder for one odd key |
 | `type Shape = Circle Int \| Rect Int Int` | `Circle of Int` |
 | `try e` yields a `Result` | `try ... with`, `raise` |
+| `Ok x`, `Error e` | `Err e` |
+| `IO.println_err` to stderr | `eprintln`, `prerr_endline` |
+| `List.each f xs` | `List.iter` |
+| `List.get n xs` (an `Option`), `List.get!` | `List.nth` |
 | no mutation — bind a new name | `ref`, `mutable`, `:=` |
 
 `type X = <a type>` is an alias — another name for a type that already
