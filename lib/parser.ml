@@ -2017,7 +2017,12 @@ and conditional s =
   (* the keyword already consumed *)
   let cond  = locate s (fun () -> expr_ 0 s) in
   expect s Token.Then;
-  let then_ = locate s (fun () -> expr_ 0 s) in
+  (* A branch is a body like the others (#137): one expression on the
+     `then` or `else` line, and one statement per line where it begins a
+     line of its own. The `else` ends the `then` branch, since it starts no
+     statement, and a line that falls back left of the branch ends it, as
+     it ends any body. *)
+  let then_ = locate s (fun () -> statements_ s) in
   (* A one-armed `if` is `else ()`. Scripting is full of conditionals that
      do something or nothing -- reporting a count only when there is one --
      and writing the empty branch out adds a line that says nothing. The
@@ -2026,7 +2031,7 @@ and conditional s =
   if peek s <> Token.Else then (cond, then_, Unit)
   else begin
     ignore (advance s);
-    let else_ = locate s (fun () -> expr_ 0 s) in
+    let else_ = locate s (fun () -> statements_ s) in
     (cond, then_, else_)
   end
 
@@ -2158,9 +2163,9 @@ and parse_contract_body s =
   if !reqs = [] && !ens = [] then body
   else Ast.Contract (!reqs, !ens, body)
 
-(* The body of a definition, a `fn`, or a `match` or `handle` arm: one
-   statement, or -- where it begins a line of its own -- each line level
-   with the first, run one after the other.
+(* The body of a definition, a `fn`, a `match` or `handle` arm, or a `then`
+   or `else` branch: one statement, or -- where it begins a line of its own
+   -- each line level with the first, run one after the other.
 
    An arm read one expression, so the same two lines under an arm were one
    call, the first line applied to the second, where under a definition they

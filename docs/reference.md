@@ -695,6 +695,25 @@ if ready then 1
 `wand f` removes an empty `else`: `if c then f () else ()` comes back as
 `if c then f ()`.
 
+A branch that starts on a line of its own holds one statement for each line,
+as the body of a definition does (see [Sequencing](#sequencing)). The branch
+ends at the `else`, and at a line that falls back to the column of the `if`
+or to its left:
+
+```ocaml
+if !(Regex.match? num n) then
+  IO.println_err "N must be a whole number of 0 or more"
+  Proc.exit 2
+else
+  let count = Int.of_string! n
+  IO.println "counting to %{count}"
+  count
+```
+
+A branch that starts on the `then` or `else` line is one statement, and the
+lines under it continue that statement. `wand f` writes a branch of several
+statements as one bracketed sequence, `then (IO.println_err "..."; Proc.exit 2)`.
+
 ### `unless`
 
 `unless` is `if` with the condition the other way. The `then` branch runs
@@ -831,9 +850,10 @@ there is no block. So the newline is a way to write a binding, not a third
 form to read.
 
 A body that starts on a line of its own holds one statement for each line.
-This is true for the body of a definition, of a `fn`, and of a `match` or
-`handle` arm. The lines run one after the other, and the body's value is
-the value of the last one:
+This is true for the body of a definition, of a `fn`, of a `match` or
+`handle` arm, and for a `then` or `else` branch (see
+[If expressions](#if-expressions)). The lines run one after the other, and
+the body's value is the value of the last one:
 
 ```ocaml
 match found with

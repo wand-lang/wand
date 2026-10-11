@@ -16,6 +16,7 @@
 - `result` is an ordinary name outside an `ensures` clause (#128).
 - An arm that starts a line to the left of a nested `match`'s first arm belongs to the outer `match` (#135).
 - The same column rule applies to the arms of a nested `handle` (#135).
+- A `then` or `else` branch that starts on a line of its own holds one statement per line (#137).
 - A reserved word where a name goes gives an error that says it is reserved: `'type' is a reserved word; use another name, such as type_` (#128).
 - A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
 - A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).

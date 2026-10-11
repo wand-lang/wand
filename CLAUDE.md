@@ -308,9 +308,9 @@ let of_hex algorithm text =
   String.length lower == want
 ```
 
-A body that starts on a line of its own -- of a definition, a `fn`, or a
-`match` or `handle` arm -- holds one statement per line, and they run in
-order. A `;` at the end of a line says the same as the newline, so both of
+A body that starts on a line of its own -- of a definition, a `fn`, a
+`match` or `handle` arm, or a `then` or `else` branch -- holds one
+statement per line, and they run in order. A `;` at the end of a line says the same as the newline, so both of
 these work:
 
 ```
