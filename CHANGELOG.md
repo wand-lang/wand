@@ -23,6 +23,7 @@
 
 ### Fixed
 
+- `IO.eprintln` and similar names give the hint `IO.println_err`, not `println`, which writes to stdout; `List.nth` gives `List.get` (#130).
 - An unknown constructor from another language names the wand constructor: `Err` gives `the constructors of Result are Ok and Error` (#129).
 - A type error in a pattern of a `match` shows the line and column of that pattern, not of the `match` (#129).
 

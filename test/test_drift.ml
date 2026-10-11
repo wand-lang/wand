@@ -188,7 +188,11 @@ let test_foreign_members () =
     [ "List", ["enumerate"; "mapi"; "with_index"], "use List.indexed";
       "List", ["mem"; "elem"; "includes?"; "includes"], "use List.contains?";
       "Option", ["unwrap_or"; "get_or"; "with_default"], "use Option.default";
-      "String", ["drop"; "substring"; "sub"], "use String.slice" ];
+      "String", ["drop"; "substring"; "sub"], "use String.slice";
+      "IO", ["eprintln"; "eprint"; "prerr_endline"; "prerr_string"; "eprintf"],
+      "use IO.println_err (or IO.print_err)";
+      "List", ["nth"; "nth!"; "at"; "get_nth"],
+      "use List.get (an Option) or List.get!" ];
   expect_error "FS.read_lines" "import FS\nFS.read_lines /tmp/x"
     "FS.read_file! reads the whole file";
   expect_error "int_of_string" "int_of_string \"4\""

@@ -1276,6 +1276,13 @@ let foreign_member_hint ns member =
     Some "use List.contains?"
   | "Option", ("unwrap_or" | "get_or" | "with_default") ->
     Some "use Option.default"
+  (* The spelling guess for 'eprintln' was 'println', which writes to
+     stdout: a program that took it wrote its errors there (#130). *)
+  | "IO", ("eprintln" | "eprint" | "prerr_endline" | "prerr_string"
+          | "eprintf") ->
+    Some "use IO.println_err (or IO.print_err)"
+  | "List", ("nth" | "nth!" | "at" | "get_nth") ->
+    Some "use List.get (an Option) or List.get!"
   | "FS", "read_lines" -> Some "FS.read_file! reads the whole file; \
                                 String.lines splits it"
   (* `Ord` was a module of four functions until 0.79.0, and is a module
