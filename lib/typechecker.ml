@@ -1311,6 +1311,25 @@ let foreign_member_hint ns member =
   | "Int", "divmod" -> Some "write '(a / b, a % b)'"
   | _ -> None
 
+(* The same idea for a constructor: one spelled as another language spells
+   it. `Err` is Rust's and Elm's, and was the error an agent met most often
+   in the authoring benchmark; the spelling guess offers nothing for it.
+   Checked before that guess, as the member table is. *)
+let foreign_ctor_hint = function
+  | "Err" -> Some "the constructors of Result are Ok and Error"
+  | "Just" | "Nothing" -> Some "the constructors of Option are Some and None"
+  | "Left" | "Right" ->
+    Some "there is no Either; the constructors of Result are Ok and Error"
+  | "Nil" -> Some "the empty list is [], and 'h :: t' adds to a list"
+  | _ -> None
+
+(* What follows "unknown constructor 'X'": the foreign spelling's correction
+   when there is one, the spelling guess over `known` otherwise. *)
+let unknown_ctor_hint name known =
+  match foreign_ctor_hint name with
+  | Some h -> " -- " ^ h
+  | None -> Util.hint name known
+
 (* Named in unbound-name errors that have nothing better to offer: the
    binary can enumerate what exists, and a reader who has never seen wand
    has no other way to learn that. *)
@@ -3098,7 +3117,9 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     let saved = !cur_loc in
     cur_loc := Some loc;
     Fun.protect ~finally:(fun () -> cur_loc := saved)
-      (fun () -> infer_pat tenv inner t env)
+      (fun () ->
+         try infer_pat tenv inner t env
+         with TypeError msg -> raise (TypeErrorAt (loc, msg)))
   | PVar name  -> record_local name t; (name, Mono t) :: env
   | Wild       -> env
   | Int _      -> unify_expected ~expected:t ~got:TInt;      env
@@ -3167,8 +3188,8 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     (match (match builtin_result_scheme name with
             | Some _ as s -> s
             | None -> List.assoc_opt name ctor_env) with
-     | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s" name
-         (module_only_hint tenv name)))
+     | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s" name
+         (module_only_hint tenv name) (unknown_ctor_hint name [])))
      | Some s ->
        let ctor_t = instantiate s in
        let (arg_ts, result_t) = unwrap_ctor_type ctor_t in
@@ -3206,8 +3227,8 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
   | PConstrNamed (name, bindings) ->
     let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     (match find_ctor_in_tenv tenv name with
-     | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s" name
-         (module_only_hint tenv name)))
+     | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s" name
+         (module_only_hint tenv name) (unknown_ctor_hint name [])))
      | Some (tname, ctor) ->
        (* Field types come from the constructor's own scheme, the same way
           construction reads them. Converting the written type again here
@@ -3745,7 +3766,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
         | _ ->
           raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s"
             name (module_only_hint tenv name)
-            (Util.hint name (List.map fst ctor_env))))))
+            (unknown_ctor_hint name (List.map fst ctor_env))))))
   (* $NAME reads the environment. *)
   | EnvVar _ -> performs (Effect_set.single Effect_set.Env); TString
   | Hole ->
@@ -4098,7 +4119,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
              | _ -> ""))))
      | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s"
          name (module_only_hint tenv name)
-         (Util.hint name (List.map fst (tenv_to_ctor_env tenv)))))
+         (unknown_ctor_hint name (List.map fst (tenv_to_ctor_env tenv)))))
      | Some (tname, ctor) ->
        (* Types come from the constructor's own scheme rather than from each
           field expression on its own, so a generic type keeps its arguments:
@@ -4169,7 +4190,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
     (match find_ctor_in_tenv tenv name with
      | None -> raise (TypeError (Printf.sprintf "unknown constructor '%s'%s%s"
          name (module_only_hint tenv name)
-         (Util.hint name (List.map fst (tenv_to_ctor_env tenv)))))
+         (unknown_ctor_hint name (List.map fst (tenv_to_ctor_env tenv)))))
      | Some (tname, ctor) ->
        let (arg_ts, result_t), stored =
          match List.assoc_opt name (tenv_to_ctor_env tenv) with
