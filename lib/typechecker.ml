@@ -3401,8 +3401,24 @@ let rec render_witness (Witness (name, args) : witness) : string =
      told you to add was one the parser rejects with "cons is '::' -- a
      single ':' gives a name a type". A message that cannot be copied is
      worse than no message. *)
-  | "::", [h; t] -> "[" ^ render_witness_arg h ^ " :: " ^ render_witness_arg t ^ "]"
+  (* And it is written the way a person writes it: `[_, _]` for a list of
+     two, `[_ :: _ :: _]` for two or more -- not `[_ :: [_ :: []]]`, the
+     nesting the checker walks. *)
+  | "::", [_; _] ->
+    let (elems, tail) = witness_list_spine (Witness (name, args)) in
+    let elems = List.map render_witness_arg elems in
+    (match tail with
+     | Witness ("[]", []) -> "[" ^ String.concat ", " elems ^ "]"
+     | t -> "[" ^ String.concat " :: " (elems @ [render_witness_arg t]) ^ "]")
   | name, args -> name ^ " " ^ String.concat " " (List.map render_witness_arg args)
+(* The elements of a cons witness, front to back, and what ends them:
+   `[]` for a list of exactly that many, `_` for that many or more. *)
+and witness_list_spine (w : witness) : witness list * witness =
+  match w with
+  | Witness ("::", [h; t]) ->
+    let (rest, tail) = witness_list_spine t in
+    (h :: rest, tail)
+  | tail -> ([], tail)
 and render_witness_arg (Witness (name, args) as w : witness) : string =
   match name, args with
   | _, [] -> name
@@ -3410,6 +3426,46 @@ and render_witness_arg (Witness (name, args) as w : witness) : string =
      a second, wrong way of writing it. *)
   | "::", [_; _] -> render_witness w
   | _ -> "(" ^ render_witness w ^ ")"
+
+(* What a hand-written match is told when a case is missing: the case, and
+   the arm that closes it, in a form that pastes back in. A list gets its
+   shape in words, since `e.g. []` was read as "the `[...]` pattern is
+   wrong" -- in the authoring benchmark agents rewrote `[a, b]` as
+   `[a :: b :: []]`, which changes nothing, and saw the error again. A list
+   also has no end of shapes, so the catch-all is named beside the arm. *)
+let missing_case_message (w : witness) : string =
+  let number n =
+    match n with
+    | 1 -> "one" | 2 -> "two" | 3 -> "three" | 4 -> "four" | 5 -> "five"
+    | 6 -> "six" | 7 -> "seven" | 8 -> "eight" | 9 -> "nine"
+    | n -> string_of_int n
+  in
+  let pat = render_witness w in
+  let list_shape =
+    match w with
+    | Witness ("[]", []) -> Some "the empty list"
+    | Witness ("::", [_; _]) ->
+      let (elems, tail) = witness_list_spine w in
+      let n = List.length elems in
+      let wild = function Witness ("_", []) -> true | _ -> false in
+      if not (List.for_all wild elems) then None
+      else (match tail with
+        | Witness ("[]", []) when n = 1 -> Some "a list of one element"
+        | Witness ("[]", []) -> Some (Printf.sprintf "a list of exactly %s elements" (number n))
+        | Witness ("_", []) when n = 1 -> Some "a non-empty list"
+        | Witness ("_", []) -> Some (Printf.sprintf "a list of %s or more elements" (number n))
+        | _ -> None)
+    | _ -> None
+  in
+  match list_shape with
+  | Some shape ->
+    Printf.sprintf
+      "non-exhaustive match: no arm matches %s -- add an arm for it: | %s -> ..., \
+       or | _ -> ... for every list the arms leave out" shape pat
+  | None ->
+    Printf.sprintf
+      "non-exhaustive match: missing case, e.g. %s -- add an arm for it: | %s -> ..."
+      pat pat
 
 (* A multi-equation definition desugars to a match over synthetic `_p0.._pN`
    parameters (parser.ml's collapse_multi_equation). That exact shape is what
@@ -3462,9 +3518,8 @@ let is_equation_group (scrutinee : expr) (arity : int) =
       | _ -> false) vs (List.init arity (fun i -> i))
   | _ -> false
 
-(* Returns None if exhaustive, or Some human-readable witness pattern
-   naming one uncovered case. *)
-let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : string option =
+(* Returns None if exhaustive, or Some witness naming one uncovered case. *)
+let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : witness option =
   let ctor_env = tenv_to_ctor_env tenv in
   (* go types matrix: None if `matrix` covers every value of `types`,
      else Some witnesses -- one witness per column in `types`, describing
@@ -3524,7 +3579,7 @@ let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : string option 
   match go [scrutinee_t] (List.map (fun p -> [p]) pats) with
   | None -> None
   | Some [] -> None
-  | Some (w :: _) -> Some (render_witness w)
+  | Some (w :: _) -> Some w
 
 (* ── Expression inference ─────────────────────────────────────────────────── *)
 
@@ -3993,10 +4048,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
            | []               -> None
          in
          fail_at_opt group_loc (Printf.sprintf
-           "the equations%s do not cover every case, e.g. %s" fn_desc witness)
+           "the equations%s do not cover every case, e.g. %s" fn_desc
+           (render_witness witness))
        else
-         raise (TypeError (Printf.sprintf
-           "non-exhaustive match: missing case, e.g. %s" witness)));
+         raise (TypeError (missing_case_message witness)));
     result_t
   | Tuple es -> TTuple (List.map (infer tenv env) es)
   | List []        -> TList (fresh ())

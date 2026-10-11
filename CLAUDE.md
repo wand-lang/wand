@@ -330,6 +330,8 @@ ends on a `match` or `handle` arm, since an arm reads a `;` on it as part of
 itself, and `in` where it narrows — `(let x = 1 in x + 1; 9)` gives `x` to
 `x + 1` and to nothing after it. Prefer one `match` over multi-equation
 definitions. Pattern matching must be exhaustive or it is a type error.
+`[x]` and `[a, b]` match exactly one and two elements, so a match on a list
+needs a `| [] ->` arm or a last `| _ ->` arm.
 
 ### Domain literals
 

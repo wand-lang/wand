@@ -6,6 +6,7 @@
 
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML with `expected Int, got String "12"`, so a decoder made from a type refuses `{"ms": "12"}` for `ms: Int`; CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
+- A non-exhaustive match says what arm to add, and a missing list case is written as a person writes it: `| [] -> ...`, `| [_ :: _ :: _] -> ...` (#134).
 
 ## [0.104.1] - 2026-10-10
 

@@ -131,22 +131,31 @@ let test_map () =
    telling you to write what the other rejects. So the test is not what the
    message says, it is that following it works. *)
 
+(* The arm the message says to add: what stands between "add an arm for
+   it: | " and " -> ...". *)
 let witness_of msg =
-  let marker = "e.g. " in
-  let ml = String.length marker and n = String.length msg in
-  let rec find i =
-    if i + ml > n then None
-    else if String.sub msg i ml = marker then Some (String.sub msg (i + ml) (n - i - ml))
-    else find (i + 1)
+  let marker = "add an arm for it: | " and stop = " -> ..." in
+  let ml = String.length marker and sl = String.length stop
+  and n = String.length msg in
+  let rec find_from i needle len =
+    if i + len > n then None
+    else if String.sub msg i len = needle then Some i
+    else find_from (i + 1) needle len
   in
-  find 0
+  match find_from 0 marker ml with
+  | None -> None
+  | Some i ->
+    let start = i + ml in
+    (match find_from start stop sl with
+     | None -> None
+     | Some j -> Some (String.sub msg start (j - start)))
 
 let copyable label ~before ~after =
   match run before with
   | Ok s -> Alcotest.failf "%s: expected a non-exhaustive error, got: %s" label s
   | Error msg ->
     match witness_of msg with
-    | None -> Alcotest.failf "%s: no 'e.g.' witness in: %s" label msg
+    | None -> Alcotest.failf "%s: no suggested arm in: %s" label msg
     | Some w ->
       (* Splice the witness in as a new case and the match must close. *)
       let patched = Printf.sprintf after w in
@@ -165,9 +174,32 @@ let test_witness_copyable () =
   copyable "tuple gap"
     ~before:"let f p = match p with | (1, y) -> y"
     ~after:"let f p = match p with | (1, y) -> y | %s -> 0; f (1, 2)";
-  err_contains "cons renders with :: and brackets"
+  copyable "two-or-more gap"
+    ~before:"let f xs = match xs with | [] -> 0 | [a] -> a"
+    ~after:"let f xs = match xs with | [] -> 0 | [a] -> a | %s -> 1; f [1]";
+  copyable "exactly-three gap"
+    ~before:"let f xs = match xs with | [] -> 0 | [a] -> a | [a, b] -> a | [a :: b :: c :: d :: _] -> a"
+    ~after:"let f xs = match xs with | [] -> 0 | [a] -> a | [a, b] -> a | %s -> 1 | [a :: b :: c :: d :: _] -> a; f [1]";
+  (* Issue #134: the list is described and the arm is written as a person
+     writes it, not as the nested cons the checker walks. *)
+  err_contains "the empty list is named, with the arm to add"
+    "let f xs = match xs with | [h :: _] -> h"
+    "no arm matches the empty list -- add an arm for it: | [] -> ...";
+  err_contains "a one-element gap is written [_]"
     "let f xs = match xs with | [] -> 0 | [a :: [b :: _]] -> a + b"
-    "[_ :: []]"
+    "no arm matches a list of one element -- add an arm for it: | [_] -> ...";
+  err_contains "two or more is a flat cons chain"
+    "let f xs = match xs with | [] -> 0 | [a] -> a"
+    "no arm matches a list of two or more elements -- add an arm for it: | [_ :: _ :: _] -> ...";
+  err_contains "the catch-all is named beside the arm"
+    "let f xs = match xs with | [] -> 0 | [a] -> a"
+    "or | _ -> ... for every list the arms leave out";
+  err_contains "the error points at the match"
+    "let f xs =\n  match xs with\n  | [x] -> x\n  | x :: rest -> x"
+    "2:3: non-exhaustive match";
+  err_contains "a case that is not a bare list keeps e.g."
+    "let f o = match o with | Some [] -> 0 | None -> 1"
+    "missing case, e.g. Some [_ :: _] -- add an arm for it: | Some [_ :: _] -> ..."
 
 (* ── Suite ────────────────────────────────────────────────────────────────── *)
 
