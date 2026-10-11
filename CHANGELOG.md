@@ -11,6 +11,10 @@
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML with `expected Int, got String "12"`, so a decoder made from a type refuses `{"ms": "12"}` for `ms: Int`; CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 
+### Fixed
+
+- An unknown constructor from another language names the wand one (`Err` gives `the constructors of Result are Ok and Error`), and one in a `match` arm points at the arm (#129).
+
 ## [0.104.1] - 2026-10-10
 
 ### Fixed
