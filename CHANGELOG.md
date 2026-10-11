@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Path.relative_to` and `Path.relative_to!` give the path from a directory to a path below it, so `./d/logs/b.txt` from `FS.glob_in` becomes `logs/b.txt` (#133).
+
 ### Changed
 
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).

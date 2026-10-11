@@ -1409,12 +1409,20 @@ type error:
 ```ocaml
 import FS
 
-FS.glob    *.wand            -- List Path, relative to cwd
-FS.glob_in ./**/*.ml ./src   -- List Path, relative to ./src
+FS.glob    *.wand            -- List Path, searched from cwd
+FS.glob_in ./**/*.ml ./src   -- List Path, searched from ./src
 ```
 
 Both always return a list. The list is empty if nothing matches. Neither
 raises. The results are sorted by name.
+
+Each path from `FS.glob_in` starts with the directory you gave it:
+`./src/lib/a.ml`, not `lib/a.ml`. `FS.list_dir` does the same. To get the
+part below the directory, use `Path.relative_to`:
+
+```ocaml
+FS.glob_in ./**/*.ml ./src |> List.filter_map (Path.relative_to ./src)
+```
 
 wand matches a symlink like any other entry, and answers with the symlink
 itself. The walk does not go through it. So each answer is under the directory
@@ -4749,6 +4757,10 @@ append_lines! : Path -> Stream {..} String -> Unit ! {FS.Write, Raise | 'e}
 write_lines_atomic! : Path -> Stream {..} String -> Unit ! {FS.Read, FS.Write, Raise | 'e}
 ```
 
+Each path from `list_dir` starts with the directory it reads: the entries of
+`./d` are `./d/a` and `./d/b`. Use `Path.basename` for the name, or
+`Path.relative_to` for the part below the directory.
+
 `stream_lines` reads and `write_lines` writes, so a read-transform-write
 loop is two calls and holds one line at a time:
 
@@ -4999,6 +5011,8 @@ normalize      : Path -> Path
 to_string      : Path -> String
 of_string      : String -> Path
 components     : Path -> List String
+relative_to    : Path -> Path -> Option Path
+relative_to!   : Path -> Path -> Path ! {Raise}
 max            : Path -> Path -> Path
 min            : Path -> Path -> Path
 clamp          : Path -> Path -> Path -> Path
@@ -5015,6 +5029,18 @@ FS.copy! p (Path.join dest (Path.basename p))
 `extension` and `components` return text, because an extension and a list of
 segments are not paths. Use `Path.to_string` when the text of a basename is
 what you want.
+
+`relative_to dir p` is the path from `dir` to `p`. It is `None` when `p` is
+not under `dir`. It compares components, not text, so `./dd/x` is not under
+`./d`. It uses the same form as `==`, so `./d`, `d` and `d/` are the same
+directory. An absolute path is never under a relative path. A directory
+relative to itself is `.`:
+
+```ocaml
+Path.relative_to ./d ./d/logs/b.txt   -- Some(logs/b.txt)
+Path.relative_to ./d ./dd/x           -- None
+Path.relative_to ./d ./d              -- Some(.)
+```
 
 ### `IO`
 
