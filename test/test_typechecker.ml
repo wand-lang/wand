@@ -746,6 +746,15 @@ let test_lines_read_as_one_expression () =
   err_contains "and it writes the fix with the lines themselves"
     "import IO\nmatch Some 1 with\n| Some n -> IO.println \"a\"\n    IO.println \"b\"\n| None -> ()"
     "put them in brackets with ';' between them:\n  ( IO.println \"a\"; IO.println \"b\" )";
+  (* A `then` or `else` branch on lines of its own holds statements too
+     (#137), so the hint does not fire for it. A branch on the `then` line
+     is one expression, and two lines there are still one call. *)
+  ok "two statements in an if branch run one after the other"
+    "import IO\nlet f c =\n  if c then\n    IO.println \"a\"\n    1\n  else\n    IO.println \"b\"\n    2\n(f true, f false)"
+    "(1, 2)";
+  err_contains "a branch on the then line is still one expression"
+    "import IO\nlet f c = if c then IO.println \"a\"\n    IO.println \"b\"\nf true"
+    "lines 2 to 3 are read as one expression, so line 2 is called with line 3";
   ok "a call written over several lines is still a call"
     "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"
     "[2, 3]"

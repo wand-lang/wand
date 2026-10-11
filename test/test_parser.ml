@@ -1302,6 +1302,91 @@ let test_a_nested_match_ends_at_an_arm_to_its_left () =
      (r (Some 4), r None)"
     "(4, 0)"
 
+(* A `then` or `else` branch is a body like the others (#137): where it
+   begins a line of its own it holds one statement per line, and it ends
+   at a line that falls back left of it or at the `else`. Before, the
+   lines were one call, the first applied to the second. *)
+let test_an_if_branch_holds_statements () =
+  let issue_example label src =
+    match (parse_program src).Ast.items with
+    | [TLLet ("main!", [_], _)] -> ()
+    | items -> Alcotest.failf "%s: expected one definition, got %d items"
+                 label (List.length items)
+    | exception Parser.ParseError (_, m) -> Alcotest.failf "%s: %s" label m
+  in
+  issue_example "the issue's first example"
+    "let main! args =\n\
+    \  match args with\n\
+    \  | [dir, n] ->\n\
+    \    if !(Regex.match? num n) then\n\
+    \      IO.println_err \"N must be a whole number of 0 or more\"\n\
+    \      Proc.exit 2\n\
+    \    else if !(FS.dir? (Path.of_string dir)) then\n\
+    \      IO.println_err \"not a directory: %{dir}\"\n\
+    \      Proc.exit 1\n\
+    \    else\n\
+    \      0\n\
+    \  | _ -> 2\n";
+  issue_example "the issue's second example, with a let in the else branch"
+    "let main! args =\n\
+    \  match args with\n\
+    \  | [dir] ->\n\
+    \    if !(FS.dir? (Path.of_string dir)) then\n\
+    \      IO.println_err \"not a directory: %{dir}\"\n\
+    \      Proc.exit 1\n\
+    \    else\n\
+    \      let out = $(cd %{dir} && find . -type f);\n\
+    \      IO.println out\n\
+    \      0\n\
+    \  | _ -> 2\n";
+  let ab = Seq (Var "a", Var "b") in
+  e "both branches on lines of their own"
+    "if c then\n  a\n  b\nelse\n  d\n  f"
+    (If (Var "c", ab, Seq (Var "d", Var "f")));
+  e "an else at the branch's column ends it"
+    "if c then\n  a\n  b\n  else d"
+    (If (Var "c", ab, Var "d"));
+  e "an else if"
+    "if c then\n  a\n  b\nelse if d then\n  x\n  y\nelse z"
+    (If (Var "c", ab, If (Var "d", Seq (Var "x", Var "y"), Var "z")));
+  e "a ; at the line end continues the branch, as in #131"
+    "if c then\n  a;\n  b\nelse d"
+    (If (Var "c", ab, Var "d"));
+  e "a let in the branch"
+    "if c then a\nelse\n  let x = 1;\n  x + 2"
+    (If (Var "c", Var "a",
+         Let (PVar "x", Int 1, BinOp ("+", Var "x", Int 2), LetBlock)));
+  e "an if with no else"
+    "if c then\n  a\n  b"
+    (If (Var "c", ab, Unit));
+  e "unless reads its branch the same way"
+    "unless c then\n  a\n  b"
+    (Unless (Var "c", ab, Unit));
+  (* On the `then` or `else` line the branch is one expression, as a body
+     on the `=` line is, so the line below goes on being its argument. *)
+  e "a branch on the then line stays one expression"
+    "if c then f\n  x\nelse y"
+    (If (Var "c", App (Var "f", Var "x"), Var "y"));
+  e "a branch on the else line stays one expression"
+    "if c then a else f\n  x"
+    (If (Var "c", Var "a", App (Var "f", Var "x")));
+  e "a line that opens with an operator continues the statement"
+    "if c then\n  a\n  |> f\nelse d"
+    (If (Var "c", BinOp ("|>", Var "a", Var "f"), Var "d"));
+  runs "a line back at the if's column follows the if"
+    "let f c =\n  if c then\n    ()\n    ()\n  5\n\
+     let g c =\n  if c then\n    1\n    2\n  else\n    3\n    4\n\
+     (f true, g true, g false)"
+    "(5, 2, 4)";
+  runs "an if as the value of a let"
+    "let f c =\n  let x = if c then\n      0\n      1\n    else\n      2\n  x + 1\n\
+     (f true, f false)"
+    "(2, 3)";
+  runs "an if in an arm, and the next arm"
+    "let f o =\n  match o with\n  | Some n ->\n    if n > 0 then\n      0\n      n\n    else\n      0\n      0 - n\n  | None -> 0\n\
+     (f (Some 3), f (Some (0 - 2)), f None)"
+    "(3, 2, 0)"
+
 let test_indented_continuation () =
   let parse src = Lexer.tokenize src |> Parser.parse_program in
   let ok label src =
@@ -1405,6 +1490,8 @@ let () =
       Alcotest.test_case "; body without parens" `Quick test_semicolon_body_without_parens;
       Alcotest.test_case "a nested match ends at an arm to its left" `Quick
         test_a_nested_match_ends_at_an_arm_to_its_left;
+      Alcotest.test_case "an if branch holds statements" `Quick
+        test_an_if_branch_holds_statements;
     ];
     "handler cases", [
       Alcotest.test_case "continuation binder" `Quick test_handler_continuation_binder;

@@ -2251,10 +2251,13 @@ and emit_if ?col ~word indent c t el =
      | None when is_block t && not (Doc.has_newline cs) ->
        let head = Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then " in
        head ^^ emit_block ~col:(col + Doc.width head) indent t
+     (* Below the `then`, the branch is a body of its own and anchors at its
+        own column (#137), so a wrapped line level with it is a statement
+        and not an argument. *)
      | None ->
-       let ts = emit_expr indent t in
+       let ts = emit_expr (indent + 2) t in
        Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then\n" ^^ Doc.spaces (indent + 2)
-       ^^ bracket_if_wrapped_app_at ~anchor:indent t ts)
+       ^^ bracket_if_wrapped_app_at ~anchor:(indent + 2) t ts)
   | _ ->
     let one_line =
       if Doc.has_newline cs then None
