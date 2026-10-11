@@ -1002,8 +1002,20 @@ is a type error, not a surprise during a run:
 
 ```ocaml
 let f x = match x with | 0 -> "zero"
--- wand t: type error: non-exhaustive match: missing case, e.g. _
+-- wand t: type error: non-exhaustive match: missing case, e.g. _ -- add an arm for it: | _ -> ...
 ```
+
+For a list, the message names the shape that no arm matches, and gives the
+arm as you write it:
+
+```ocaml
+let g xs = match xs with | [x] -> x
+-- wand t: type error: non-exhaustive match: no arm matches the empty list
+--   -- add an arm for it: | [] -> ..., or | _ -> ... for every list the arms leave out
+```
+
+`[x]` matches a list of exactly one element. A match on a list needs an arm
+for `[]`, or a last `| _ ->` arm.
 
 A guard (`when`) can fail to fire, so a guarded case never covers anything
 by itself. It always needs a plain case beside it.

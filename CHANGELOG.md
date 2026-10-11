@@ -14,6 +14,8 @@
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).
 - `result` is an ordinary name outside an `ensures` clause (#128).
 - A reserved word where a name goes gives an error that says it is reserved: `'type' is a reserved word; use another name, such as type_` (#128).
+- A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
+- A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).
 
 ### Fixed
 
