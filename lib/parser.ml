@@ -147,6 +147,11 @@ type state = {
        what lets a definition run onto more lines without brackets, and what
        lets a newline end a binding inside a block the way it does at the top
        level. Saved and restored around each nested statement. *)
+  mutable arms_at : (int * int) option;
+    (* the bracket depth and the anchor column of the innermost `match` or
+       `handle` whose arms are being read, while one is -- see `arms_`. A
+       nested one at the same depth gives back an arm that sits left of its
+       own, since there is an outer one to take it. *)
   mutable shell_allow : string list option;
     (* the manifest's Shell(...) allowlist, once one has been parsed --
        stamped onto every $()/$?() site so the bound travels with the
@@ -161,8 +166,8 @@ type state = {
 let make tokens =
   { tokens = Array.of_list tokens; pos = 0;
     paren_depth = 0; top_fns = Hashtbl.create 16; with_owners = 0;
-    clause_name = None; stmt_depth = 0; stmt_col = 1; shell_allow = None;
-    net_allow = None }
+    clause_name = None; stmt_depth = 0; stmt_col = 1; arms_at = None;
+    shell_allow = None; net_allow = None }
 
 (* A parser for the source inside an interpolation hole. It is the same
    file, so a URL literal or a `$()` in the hole carries the file's manifest
@@ -346,6 +351,25 @@ let prev_col s =
   let i = ref (s.pos - 1) in
   while !i > 0 && is_skippable (fst s.tokens.(!i)) do decr i done;
   if !i >= 0 && !i < Array.length s.tokens then (snd s.tokens.(!i)).Token.col else 1
+
+(* The column of the first token on the line the next token is on. *)
+let line_start_col s =
+  let n = Array.length s.tokens in
+  let i = ref s.pos in
+  while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
+  if !i >= n then 1
+  else begin
+    let line = (snd s.tokens.(!i)).Token.line in
+    let col = ref (snd s.tokens.(!i)).Token.col in
+    let j = ref (!i - 1) in
+    while !j >= 0
+          && not (is_skippable (fst s.tokens.(!j)))
+          && (snd s.tokens.(!j)).Token.line = line do
+      col := min !col (snd s.tokens.(!j)).Token.col;
+      decr j
+    done;
+    !col
+  end
 
 let open_bracket s = s.paren_depth <- s.paren_depth + 1
 let close_bracket s = s.paren_depth <- max 0 (s.paren_depth - 1)
@@ -2017,35 +2041,78 @@ and match_ s =
   expect s Token.With;
   s.with_owners <- s.with_owners - 1;
   let arms_loc = peek_loc s in
-  let cases = ref [] in
-  let continue_ = ref true in
-  while !continue_ do
-    if peek s = Token.Pipe then begin
-      ignore (advance s);
-      (* Taken before the pattern is read: the arguments of a constructor
-         are evaluated right to left, so written inline this was the
-         position after it. *)
-      let at = peek_loc s in
-      let p = PLocated (at, pat_ s) in
-      let guard =
-        if peek s = Token.When then begin
-          ignore (advance s);
-          Some (locate s (fun () -> expr_ 0 s))
-        end else None
-      in
-      expect s Token.Arrow;
-      let body = locate s (fun () -> statements_ s) in
-      cases := !cases @ [(p, guard, body)]
-    end else
-      continue_ := false
-  done;
+  let cases = arms_ s (fun () ->
+    (* Taken before the pattern is read: the arguments of a constructor
+       are evaluated right to left, so written inline this was the
+       position after it. *)
+    let at = peek_loc s in
+    let p = PLocated (at, pat_ s) in
+    let guard =
+      if peek s = Token.When then begin
+        ignore (advance s);
+        Some (locate s (fun () -> expr_ 0 s))
+      end else None
+    in
+    expect s Token.Arrow;
+    let body = locate s (fun () -> statements_ s) in
+    (p, guard, body))
+  in
   (* A match with no arms has no value for any input, so nothing it could
      mean is worth inferring. Left alone it typechecked as 'a -> 'b and
      bound a name whose body had silently gone missing. *)
-  if !cases = [] then
+  if cases = [] then
     fail_at arms_loc
       "match has no cases; each begins with '|', as in `| Some x -> x`";
-  Match (scrutinee, !cases)
+  Match (scrutinee, cases)
+
+(* The arms of a `match` or a `handle`, each read by `read_one` once its `|`
+   is consumed. An arm runs to the next `|`, so a nested one with no
+   brackets around it took every arm below it, the outer one's included,
+   whatever their column: an outer `| _ -> 1` went to the inner match, and
+   the outer was reported as missing the very arm the author wrote (#135).
+
+   An arm that begins a line to the left of this one's anchor ends it and
+   goes to the one outside -- the column rule a body's lines follow (#43).
+   Only where there is an outer one at the same bracket depth to take it: a
+   lone match with a ragged arm reads as it always did, and inside a bracket
+   the inner one runs to the bracket.
+
+   The anchor is the first arm, not the `match`. Arms are written level with
+   one another, and under a `match` that ends a line -- `let y = match x
+   with`, `| [n] -> match x with` -- they sit left of the keyword. A first
+   arm on the `with` line has no column of its own to be level with, so the
+   anchor is the start of that line, and never level with the outer arms:
+   after `| [n] -> match n with | "a" -> 1 | _ -> 2`, an arm below level
+   with `| [n]` is the outer one's. *)
+and arms_ : 'a. state -> (unit -> 'a) -> 'a list = fun s read_one ->
+  let outer = s.arms_at in
+  let outer_anchor = match outer with
+    | Some (depth, col) when depth = s.paren_depth -> Some col
+    | _ -> None
+  in
+  let anchor = ref None in
+  let gives_back () =
+    match outer_anchor, !anchor with
+    | Some _, Some col -> has_newline_before_next s && peek_col s < col
+    | _ -> false
+  in
+  Fun.protect ~finally:(fun () -> s.arms_at <- outer) (fun () ->
+    let cases = ref [] in
+    while peek s = Token.Pipe && not (gives_back ()) do
+      if !anchor = None then begin
+        let col =
+          if has_newline_before_next s then peek_col s
+          else match outer_anchor with
+            | Some o -> max (line_start_col s) (o + 1)
+            | None -> line_start_col s
+        in
+        anchor := Some col;
+        s.arms_at <- Some (s.paren_depth, col)
+      end;
+      ignore (advance s);
+      cases := !cases @ [read_one ()]
+    done;
+    !cases)
 
 and contract_expr_ ~col s =
   let outer = s.stmt_col and outer_depth = s.stmt_depth in
@@ -2163,49 +2230,41 @@ and parse_handle_ s =
   let body = expr_ 0 s in
   expect s Token.With;
   s.with_owners <- s.with_owners - 1;
-  let cases = ref [] in
-  let continue_ = ref true in
-  while !continue_ do
-    if peek s = Token.Pipe then begin
-      ignore (advance s);
-      let case = match peek s with
-        | Token.Return ->
-          ignore (advance s);
-          let p = pat_atom_ s in
-          expect s Token.Arrow;
-          let b = locate s (fun () -> statements_ s) in
-          Ast.ReturnCase (p, b)
-        (* `FS!read_file` reaches here as the Upper token "FS!" followed by an
-           identifier, since `!` is a suffix character. Joining them gives the
-           operation name, which is the public call with a `!` where its dot
-           would be: you call FS.read_file, you intercept FS!read_file. *)
-        | Token.Upper family
-          when String.length family > 1
-            && family.[String.length family - 1] = '!' ->
-          ignore (advance s);
-          let verb = expect_ident s in
-          let op_name = family ^ verb in
-          let arg_pat = pat_atom_ s in
-          let cont_name = expect_cont_name s in
-          expect s Token.Arrow;
-          let b = locate s (fun () -> statements_ s) in
-          Ast.EffectCase (op_name, arg_pat, cont_name, b)
-        | Token.Ident op_name ->
-          ignore (advance s);
-          let arg_pat = pat_atom_ s in
-          let cont_name = expect_ident s in
-          expect s Token.Arrow;
-          let b = locate s (fun () -> statements_ s) in
-          Ast.EffectCase (op_name, arg_pat, cont_name, b)
-        | t ->
-          fail_at (peek_loc s) (Format.asprintf "unexpected token in handler case: %a"
-            Token.pp t)
-      in
-      cases := !cases @ [case]
-    end else
-      continue_ := false
-  done;
-  Ast.Handle (body, !cases)
+  let cases = arms_ s (fun () ->
+    match peek s with
+      | Token.Return ->
+        ignore (advance s);
+        let p = pat_atom_ s in
+        expect s Token.Arrow;
+        let b = locate s (fun () -> statements_ s) in
+        Ast.ReturnCase (p, b)
+      (* `FS!read_file` reaches here as the Upper token "FS!" followed by an
+         identifier, since `!` is a suffix character. Joining them gives the
+         operation name, which is the public call with a `!` where its dot
+         would be: you call FS.read_file, you intercept FS!read_file. *)
+      | Token.Upper family
+        when String.length family > 1
+          && family.[String.length family - 1] = '!' ->
+        ignore (advance s);
+        let verb = expect_ident s in
+        let op_name = family ^ verb in
+        let arg_pat = pat_atom_ s in
+        let cont_name = expect_cont_name s in
+        expect s Token.Arrow;
+        let b = locate s (fun () -> statements_ s) in
+        Ast.EffectCase (op_name, arg_pat, cont_name, b)
+      | Token.Ident op_name ->
+        ignore (advance s);
+        let arg_pat = pat_atom_ s in
+        let cont_name = expect_ident s in
+        expect s Token.Arrow;
+        let b = locate s (fun () -> statements_ s) in
+        Ast.EffectCase (op_name, arg_pat, cont_name, b)
+      | t ->
+        fail_at (peek_loc s) (Format.asprintf "unexpected token in handler case: %a"
+          Token.pp t))
+  in
+  Ast.Handle (body, cases)
 
 let build_multi_equation name arity eqs =
   let (p, b) = collapse_multi_equation arity eqs in

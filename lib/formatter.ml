@@ -2330,10 +2330,11 @@ and emit_if ?col ~word indent c t el =
       ^^ (match last with Some d -> else_ ^^ d | None -> Doc.empty)
 
 (* A `match`/`handle` case body ends only where the next `|`-prefixed case
-   begins -- there's no other terminator. So an unparenthesized Match or
-   Handle used as an case's *own* body would greedily swallow every
-   following `| ...` meant for the *outer* match/handle, silently
-   producing a different (and often ill-typed) program. Always wrap.
+   begins, or -- since #135 -- at a case that begins a line left of its own.
+   So an unparenthesized Match or Handle used as an case's *own* body takes
+   a following `| ...` meant for the *outer* match/handle wherever the
+   columns do not tell them apart, silently producing a different (and
+   often ill-typed) program. Always wrap.
 
    The danger isn't limited to the case body being *directly* a Match/Handle:
    `let x = e in <tail>` prints its tail expression completely unguarded
@@ -2421,11 +2422,16 @@ and emit_case_body ?col indent body =
   | _ ->
   match case_body_tail body with
   | Match _ | Handle _ ->
-    (* The parentheses are load-bearing (a bare nested match would swallow
-       the outer arms), so give them the same block shape a multi-line Seq
-       gets: open the block on the arrow's line, the nested match two
-       deeper, the closing paren back at the arm's indent -- rather than a
-       nested match whose arms sit flush with the outer ones. *)
+    (* The parentheses are load-bearing. Since #135 an outer arm that
+       begins a line left of the nested match's arms is the outer one's,
+       but an outer arm on the same line as the nested match -- a whole
+       match written on one line -- has no column to tell it by, and the
+       nested match still takes it. Kept for every nested match, so the
+       output does not depend on the width it lands at. Give them the same
+       block shape a multi-line Seq gets: open the block on the arrow's
+       line, the nested match two deeper, the closing paren back at the
+       arm's indent -- rather than a nested match whose arms sit flush with
+       the outer ones. *)
     let ind = Doc.spaces indent in
     let inner = Doc.spaces (indent + 2) in
     Doc.text "(\n" ^^ inner ^^ emit_expr (indent + 2) body ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"

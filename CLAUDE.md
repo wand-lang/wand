@@ -331,6 +331,19 @@ itself, and `in` where it narrows — `(let x = 1 in x + 1; 9)` gives `x` to
 `x + 1` and to nothing after it. Prefer one `match` over multi-equation
 definitions. Pattern matching must be exhaustive or it is a type error.
 
+A `match` inside an arm needs no parentheses. An arm that starts a line to
+the left of the inner match's first arm ends the inner match and belongs to
+the outer one; `handle` arms follow the same rule:
+
+```
+match args with
+| [n] ->
+  match Int.of_string n with
+  | Ok x -> x
+  | Error _ -> 0
+| _ -> 1
+```
+
 ### Domain literals
 
 Values are written directly; the shape carries the type:
