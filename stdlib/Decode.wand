@@ -33,6 +33,17 @@
 --
 -- >> JSON.decode Decode.int (JSON.parse! "3.5")
 -- Error("expected Int, got Float") : Result String Int
+--
+-- A document that has types says when a value is a string, so a string
+-- where a number belongs is wrong input. A source of text -- a CSV cell, a
+-- line of output, a flag -- has nothing but strings, and there the digits
+-- are read:
+--
+-- >> JSON.decode Decode.int (JSON.parse! `"3"`)
+-- Error("expected Int, got String \"3\"") : Result String Int
+--
+-- >> Decode.run Decode.int "3"
+-- Ok(3) : Result String Int
 let int = decode_int
 
 --

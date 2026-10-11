@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `List.flat_map` (#132).
+- `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
+
+### Changed
+
+- A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
+- `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
+- A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).
+- `result` is an ordinary name outside an `ensures` clause (#128).
+- A reserved word where a name goes gives an error that says it is reserved: `'type' is a reserved word; use another name, such as type_` (#128).
+
+### Fixed
+
+- An unknown constructor from another language names the wand constructor: `Err` gives `the constructors of Result are Ok and Error` (#129).
+- A type error in a pattern of a `match` shows the line and column of that pattern, not of the `match` (#129).
+
 ## [0.104.1] - 2026-10-10
 
 ### Fixed

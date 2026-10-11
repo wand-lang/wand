@@ -1,4 +1,5 @@
 let {test} = import Test
+import Option
 import Path
 
 -- ── join ────────────────────────────────────────────────────────────────
@@ -75,3 +76,37 @@ test "components relative" (fn t -> t.eq [".", "foo", "bar"] (Path.components ./
 test "the parent of the root is the root" (fn t -> t.eq /a (Path.normalize /../a))
 test "a path that goes back to where it began is ." (fn t ->
   t.eq "." (Path.to_string (Path.normalize (Path.of_string "a/.."))))
+
+-- ── relative_to ─────────────────────────────────────────────────────────
+
+-- The text is checked, not only the Path: `==` takes `./x` and `x` as one
+-- path, and the answer is written without the `./`.
+let rel dir p = Option.map Path.to_string (Path.relative_to dir p)
+
+test "relative_to takes the directory off" (fn t ->
+  t.eq (Some "logs/b.txt") (rel ./d ./d/logs/b.txt))
+test "relative_to compares components, not text" (fn t -> t.eq None (rel ./d ./dd/x))
+test "relative_to a path outside the directory" (fn t -> t.eq None (rel ./d ./e/x))
+test "relative_to a path above the directory" (fn t -> t.eq None (rel ./d/logs ./d))
+test "relative_to ./d and d are one directory" (fn t ->
+  t.eq (Some "x") (rel ./d (Path.of_string "d/x")))
+test "relative_to a trailing separator makes no difference" (fn t ->
+  t.eq (Some "x") (rel (Path.of_string "./d/") ./d/x))
+test "relative_to absolute paths" (fn t ->
+  t.eq (Some "log/syslog") (rel /var /var/log/syslog))
+test "relative_to the root" (fn t ->
+  t.eq (Some "etc/hosts") (rel (Path.of_string "/") /etc/hosts))
+test "relative_to an absolute path is not under a relative one" (fn t ->
+  t.eq None (rel ./var /var/log))
+test "relative_to a relative path is not under an absolute one" (fn t ->
+  t.eq None (rel /var ./var/log))
+test "relative_to a directory and itself is ." (fn t -> t.eq (Some ".") (rel ./d ./d/))
+test "relative_to the working directory" (fn t ->
+  t.eq (Some "a/b") (rel (Path.of_string ".") ./a/b))
+test "relative_to a .. that stays inside" (fn t ->
+  t.eq (Some "a/../b") (rel ./d ./d/a/../b))
+test "relative_to a .. that climbs out" (fn t -> t.eq None (rel ./d ./d/../e))
+test "relative_to joins back to the path" (fn t ->
+  t.eq ./d/logs/b.txt (Path.join ./d (Path.relative_to! ./d ./d/logs/b.txt)))
+test "relative_to! raises outside the directory" (fn t ->
+  t.raises (fn () -> Path.relative_to! ./d ./dd/x))

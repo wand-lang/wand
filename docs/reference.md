@@ -489,6 +489,30 @@ let timeout  = 30s
 let limit    = 100MB
 ```
 
+### Reserved words
+
+These words belong to the language, and a name cannot be one of them:
+
+```
+and  as  do  else  end  ensures  fn  for  fun  handle  if  implement
+import  in  interface  let  match  or  requires  return  then  try  type
+unless  when  with
+```
+
+`true` and `false` are the two `Bool` values, and `_` is the wildcard. A
+reserved word where a name goes is a parse error that names the word:
+
+```ocaml
+let type = 1
+-- parse error: 'type' is a reserved word; use another name, such as `type_`
+```
+
+A field name is the exception: `c.type` and `Condition (type = "Ready")`
+are allowed (see [A keyword names a field](#a-keyword-names-a-field)).
+
+`result` is not reserved. It is an ordinary name, and only an `ensures`
+clause gives it a meaning of its own (see [Contracts](#contracts)).
+
 ---
 
 ## Let bindings
@@ -819,9 +843,20 @@ match found with
 | None -> 0
 ```
 
+A `;` at the end of a line says the same as the newline, so a body written
+with one after each statement runs the same way:
+
+```ocaml
+let report n =
+  IO.println "found %{n}";
+  n
+```
+
 `wand f` writes these lines as one bracketed sequence,
 `(IO.println "found %{n}"; n)`. A body that starts on the `=` or `->` line is
-one statement, and the lines under it continue that statement.
+one statement, and the lines under it continue that statement. A line after a
+`;` that falls back inside the body's column is not part of the body, and
+wand reports it, since the `;` there ended the definition.
 
 Inside a bracket that a statement opened, a newline is formatting again and
 an application continues across it. That is what lets an argument list run
@@ -1398,12 +1433,20 @@ type error:
 ```ocaml
 import FS
 
-FS.glob    *.wand            -- List Path, relative to cwd
-FS.glob_in ./**/*.ml ./src   -- List Path, relative to ./src
+FS.glob    *.wand            -- List Path, searched from cwd
+FS.glob_in ./**/*.ml ./src   -- List Path, searched from ./src
 ```
 
 Both always return a list. The list is empty if nothing matches. Neither
 raises. The results are sorted by name.
+
+Each path from `FS.glob_in` starts with the directory you gave it:
+`./src/lib/a.ml`, not `lib/a.ml`. `FS.list_dir` does the same. To get the
+part below the directory, use `Path.relative_to`:
+
+```ocaml
+FS.glob_in ./**/*.ml ./src |> List.filter_map (Path.relative_to ./src)
+```
 
 wand matches a symlink like any other entry, and answers with the symlink
 itself. The walk does not go through it. So each answer is under the directory
@@ -2565,7 +2608,7 @@ Decode.optional "restarts" Decode.int    -- Decoder (Option Int)
 {"restarts": 4}      -- Ok (Some 4)
 {}                   -- Ok None
 {"restarts": null}   -- Ok None
-{"restarts": "many"} -- Error .restarts: expected Int, got "many"
+{"restarts": "many"} -- Error .restarts: expected Int, got String "many"
 ```
 
 The last line is the point. `optional` says that the field can be missing.
@@ -2584,7 +2627,7 @@ under:
 
 ```ocaml
 {"web-01": 3, "db-01": 12}   Decode.dict Decode.int   -- Ok (Map of 2)
-{"a": 1, "b": "x"}           Decode.dict Decode.int   -- Error .b: expected Int, got "x"
+{"a": 1, "b": "x"}           Decode.dict Decode.int   -- Error .b: expected Int, got String "x"
 ```
 
 `Decode.nullable` is the sibling of `optional`, one level down. `optional`
@@ -2620,21 +2663,51 @@ That rule lives in one place, so a literal, `Port.of_string` and
 `IPv4.of_string` all report it the same way, and `Port.of_string` accepts
 the same two spellings.
 
-### Text is read, never written
+### Text is read only where text is all there is
 
-A backend that carries types gives an `Int` as an `Int`. A backend without
-types gives the text, as a CSV cell does, or a line of output. Then
-`Decode.int` reads it as `Int.of_string` reads it. So one decoder serves a
-document and the output of a command:
+A backend that carries types -- JSON, TOML, YAML -- gives an `Int` as an
+`Int`. It also says when a value is a string, and a string where a number
+belongs is wrong input. So `Decode.int`, `Decode.float` and `Decode.bool`
+take only a number or a boolean from these backends:
 
 ```ocaml
 {"restarts": 4}     Decode.int   -- Ok 4
-{"restarts": "4"}   Decode.int   -- Ok 4
+{"restarts": "4"}   Decode.int   -- Error .restarts: expected Int, got String "4"
 ```
 
-The reverse never happens. `Decode.string` does not take a number and make a
-string of it. A `string` that accepts anything is the scrape that this layer
-replaces:
+A backend without types gives the text: a CSV cell, a line of output from
+`Decode.lines` or `Decode.run`, a flag that `Args` reads. Then `Decode.int`
+reads the text as `Int.of_string` reads it. So one decoder serves a document
+and the output of a command, and it is as strict as its source allows:
+
+```ocaml
+CSV.rows (Decode.field "restarts" Decode.int) "restarts\n4\n"   -- Ok [4]
+Decode.run Decode.int " 4 "                                    -- Ok 4
+```
+
+A decoder made from a type follows the same rule, so `type Pod(restarts: Int)`
+refuses `{"restarts": "4"}`. A type that a document has no value of its own
+for -- `Duration`, `Path`, `Version` and the other domain types -- is written
+as a string, so its decoder reads a string from every backend. `Port` reads
+a number or a string, as [the section above](#domain-literals-decode-as-themselves)
+says.
+
+Some documents hold their numbers as strings on purpose. Read one with
+`Decode.string` and convert it where it is read, so that the program says
+it expects this:
+
+```ocaml
+let count_text =
+  Decode.string
+  |> Decode.and_then (fn s ->
+    match Int.of_string s with
+    | Ok n -> Decode.succeed n
+    | Error why -> Decode.fail why)
+```
+
+The reverse never happens in any backend. `Decode.string` does not take a
+number and make a string of it. A `string` that accepts anything is the
+scrape that this layer replaces:
 
 ```ocaml
 {"restarts": 4}     Decode.string   -- Error .restarts: expected String, got Int
@@ -2662,7 +2735,7 @@ A backend that reads one record per row, or per line, first says which
 record failed. Then it says what was wrong:
 
 ```text
-[2].restarts: expected Int, got "many"
+[2].restarts: expected Int, got String "many"
 ```
 
 ### A type is its own decoder
@@ -3058,6 +3131,25 @@ let clamp! lo hi x =
     && hi - lo < 100
   if x < lo then lo else if x > hi then hi else x
 ```
+
+`result` has this meaning only inside an `ensures` clause. Everywhere else
+it is an ordinary name: `let result = ...`, a parameter, a field and a
+pattern can all use it. Inside the clause the return value wins, so a
+`result` bound outside the function is not visible there. A parameter of the
+same function cannot be called `result` when the function has an `ensures`
+clause, because the clause could not reach it:
+
+```ocaml
+let h! result =
+  ensures result > 0
+  result
+-- parse error: a parameter is called 'result', and in an `ensures` clause
+--   'result' is the value the body returns; rename the parameter
+```
+
+`requires` and `ensures` stay reserved. A body can start with a call, so a
+contextual `requires` would make `let f x = requires x` mean a contract or a
+call, depending on the reader.
 
 ---
 
@@ -4433,6 +4525,7 @@ twice without paying twice.
 map        : ('a -> 'b ! 'e) -> List 'a -> List 'b ! 'e
 filter     : ('a -> Bool ! 'e) -> List 'a -> List 'a ! 'e
 filter_map : ('a -> Option 'b ! 'e) -> List 'a -> List 'b ! 'e
+flat_map   : ('a -> List 'b ! 'e) -> List 'a -> List 'b ! 'e
 fold_left  : ('a -> 'b -> 'a ! 'e) -> 'a -> List 'b -> 'a ! 'e
 fold_right : ('a -> 'b -> 'b ! 'e) -> List 'a -> 'b -> 'b ! 'e
 length     : List 'a -> Int
@@ -4708,6 +4801,10 @@ append_lines! : Path -> Stream {..} String -> Unit ! {FS.Write, Raise | 'e}
 write_lines_atomic! : Path -> Stream {..} String -> Unit ! {FS.Read, FS.Write, Raise | 'e}
 ```
 
+Each path from `list_dir` starts with the directory it reads: the entries of
+`./d` are `./d/a` and `./d/b`. Use `Path.basename` for the name, or
+`Path.relative_to` for the part below the directory.
+
 `stream_lines` reads and `write_lines` writes, so a read-transform-write
 loop is two calls and holds one line at a time:
 
@@ -4958,6 +5055,8 @@ normalize      : Path -> Path
 to_string      : Path -> String
 of_string      : String -> Path
 components     : Path -> List String
+relative_to    : Path -> Path -> Option Path
+relative_to!   : Path -> Path -> Path ! {Raise}
 max            : Path -> Path -> Path
 min            : Path -> Path -> Path
 clamp          : Path -> Path -> Path -> Path
@@ -4974,6 +5073,18 @@ FS.copy! p (Path.join dest (Path.basename p))
 `extension` and `components` return text, because an extension and a list of
 segments are not paths. Use `Path.to_string` when the text of a basename is
 what you want.
+
+`relative_to dir p` is the path from `dir` to `p`. It is `None` when `p` is
+not under `dir`. It compares components, not text, so `./dd/x` is not under
+`./d`. It uses the same form as `==`, so `./d`, `d` and `d/` are the same
+directory. An absolute path is never under a relative path. A directory
+relative to itself is `.`:
+
+```ocaml
+Path.relative_to ./d ./d/logs/b.txt   -- Some(logs/b.txt)
+Path.relative_to ./d ./dd/x           -- None
+Path.relative_to ./d ./d              -- Some(.)
+```
 
 ### `IO`
 

@@ -175,10 +175,44 @@ let test_foreign_members () =
     "use List.each";
   expect_error "String.sub" "import String\nString.sub \"abc\" 0 1"
     "use String.slice";
+  List.iter (fun name ->
+      expect_error ("List." ^ name)
+        ("import List\nList." ^ name ^ " (fn x -> [x]) [1]")
+        "use List.flat_map")
+    ["concat_map"; "bind"; "collect"];
   expect_error "FS.read_lines" "import FS\nFS.read_lines /tmp/x"
     "FS.read_file! reads the whole file";
   expect_error "int_of_string" "int_of_string \"4\""
     "Int.of_string reads an Int out of a String"
+
+(* A constructor spelled as another language spells it. `Err` was the error
+   met most often in the authoring benchmark (#129). The arm form is checked
+   for where it points as well: it used to name 1:1, the start of the
+   `match`, and not the line the constructor is on. *)
+let test_foreign_constructors () =
+  let result = "the constructors of Result are Ok and Error" in
+  let option = "the constructors of Option are Some and None" in
+  expect_error "Err in an expression" "Err \"x\""
+    ("unknown constructor 'Err' -- " ^ result);
+  expect_error "Err in a pattern"
+    "match Ok 1 with\n| Ok n -> n\n| Err _ -> 0"
+    ("3:3: unknown constructor 'Err' -- " ^ result);
+  expect_error "Err in a nested pattern"
+    "match Some (Ok 1) with\n| Some (Ok n) -> n\n| Some (Err _) -> 0\n| None -> 0"
+    "3:3: unknown constructor 'Err'";
+  expect_error "Just" "let x = 1\nJust x"
+    ("2:1: unknown constructor 'Just' -- " ^ option);
+  expect_error "Nothing in a pattern"
+    "match Some 1 with\n| Some n -> n\n| Nothing -> 0"
+    ("3:3: unknown constructor 'Nothing' -- " ^ option);
+  expect_error "Left" "Left 1" "there is no Either";
+  expect_error "Right in a pattern"
+    "match Ok 1 with\n| Right n -> n\n| Error _ -> 0" "there is no Either";
+  expect_error "Nil" "Nil" "the empty list is []";
+  (* A file's own constructor of one of these names is no mistake. *)
+  ok "a declared Err" "type E = Err String | Fine\nmatch Err \"x\" with\n| Err s -> s\n| Fine -> \"\"";
+  (* A name not in the table keeps the spelling guess. *)
+  expect_error "a misspelling" "type S = Ready | Done\nRaedy" "did you mean 'Ready'"
 
 let test_discovery_pointers () =
   (* When no correction is known, the error hands over the enumerator --
@@ -253,6 +287,7 @@ let () =
       Alcotest.test_case "char literal"    `Quick test_char_literal;
       Alcotest.test_case "begin/end"       `Quick test_begin_end;
       Alcotest.test_case "foreign members" `Quick test_foreign_members;
+      Alcotest.test_case "foreign constructors" `Quick test_foreign_constructors;
       Alcotest.test_case "discovery"       `Quick test_discovery_pointers;
     ];
     "interpolation", [

@@ -148,3 +148,23 @@ let outer! n =
 test "a nested contract passes" (fn t -> t.eq 9 (outer! 4))
 test "a nested contract fails" (fn t ->
   t.ok (String.contains? "precondition failed" (try_msg (fn () -> outer! (-1)))))
+
+-- ── result outside a contract ───────────────────────────────────────────
+
+-- `result` is an ordinary name everywhere but an `ensures` clause.
+let total_of xs =
+  let result = List.fold_left (fn acc x -> acc + x) 0 xs;
+  result * 2
+test "result as a local name" (fn t -> t.eq 12 (total_of [1, 2, 3]))
+
+let echo result = result
+test "result as a parameter" (fn t -> t.eq "x" (echo "x"))
+
+-- Inside the clause it is the return value, whatever is bound further out.
+let result = 100
+
+let inc_ens! n =
+  ensures result == n + 1
+  n + 1
+test "the clause reads the return value" (fn t -> t.eq 4 (inc_ens! 3))
+test "the outer binding is untouched" (fn t -> t.eq 100 result)

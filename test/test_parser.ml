@@ -587,8 +587,6 @@ let test_keyword_field_names () =
   e "and again through one"
     "c.spec.type"
     (Field (Field (Var "c", "spec"), "type"));
-  (* Every keyword but `result` reaches this, and `result` is an expression
-     of its own inside a contract. *)
   e "another one"
     "C(when = 1)"
     (ConstrApp ("C", [(Some "when", Int 1)], None));
@@ -889,6 +887,64 @@ let test_a_contract_clause_takes_a_call () =
     "let f n =\n  requires n > 0\n    && n < 10\n  n\nf 3"
     "3"
 
+(* `result` is a name like any other, and only an `ensures` clause gives it
+   a meaning of its own -- the value the body returned. #128: it was a
+   keyword everywhere, so `let result = 1` was a parse error that did not
+   say why. *)
+let test_result_is_a_name () =
+  runs "a binding" "let result = 1\nresult" "1";
+  runs "a parameter" "let f result = result + 1\nf 2" "3";
+  runs "an annotated parameter"
+    "let f (result: String) = result\nf \"x\"" "x";
+  runs "a fn" "(fn result -> result * 2) 4" "8";
+  runs "a local binding"
+    "let f x =\n  let result = x + 1;\n  result * 2\nf 3" "8";
+  runs "in a pattern"
+    "match Some 5 with\n| Some result -> result\n| None -> 0" "5";
+  runs "a field and its pun"
+    "type T(result: Int, n: Int)\nlet result = 4\nlet n = 1\n\
+     let t = T(result, n)\nmatch t with\n| T(result, n) -> result + n + t.result" "9";
+  runs "a map pun" "let {result} = {result = 7}\nresult" "7";
+  (* Inside `ensures`, the contract's meaning wins over a binding further
+     out: the clause reads the return value, not the outer `result`. *)
+  runs "an outer binding does not reach the clause"
+    "let result = 5\nlet h x =\n  ensures result == x\n  x\nh 3" "3";
+  (* A parameter of the same definition is the one place the two meet, and
+     the clause could not reach it, so it is refused. *)
+  refuses "a parameter beside an ensures"
+    "let h result =\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "one equation of several"
+    "let h 0 = 0\nlet h result =\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "a fn"
+    "let h = fn result ->\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "a local binding"
+    "let g x =\n  let h result =\n    ensures result > 0\n    result;\n  h x"
+    "rename the parameter";
+  (* A `requires` clause alone is no conflict: nothing there means the
+     return value. *)
+  runs "a parameter beside a requires"
+    "let h result =\n  requires result > 0\n  result\nh 3" "3"
+
+(* A word the language keeps, where a name goes, says that it is one and
+   what to write instead -- the same words wherever the name stands. *)
+let test_a_reserved_word_is_named () =
+  let says label src =
+    refuses label src "'type' is a reserved word; use another name, such as `type_`"
+  in
+  says "a binding" "let type = 1";
+  says "a parameter" "let f type = 1";
+  says "a later parameter" "let f x type = 1";
+  says "a parameter of a local function" "let g x =\n  let f type = 1;\n  f x";
+  says "a fn" "let f = fn type -> 1";
+  says "inside a tuple" "let f (a, type) = a";
+  says "a match arm" "match 1 with\n| type -> 1";
+  refuses "another word" "let in = 1" "'in' is a reserved word";
+  refuses "a contract word" "let requires = 1" "'requires' is a reserved word";
+  refuses "the other one" "let f ensures = 1" "'ensures' is a reserved word"
+
 let test_paren_seq () =
   e "two statements"
     "(1; 2)"
@@ -1099,16 +1155,33 @@ let test_handler_continuation_binder () =
    inside brackets, which is two rules for one piece of punctuation and the
    reason a binding inside a block needed a `;` or an `in` that the same
    binding at the top level did not. *)
-(* A `;` inside an unbracketed body ends the definition, and the indented
-   lines below it become top-level statements. That parsed silently and ran
+(* A `;` inside an unbracketed body ended the definition, and the indented
+   lines below it became top-level statements. That parsed silently and ran
    in a surprising order -- `let go () = a; b; c` printed b, c, a -- and the
    only diagnostic was the `!`-naming lint reporting the opposite of the
-   truth. It is a parse error now, and the message names the fix. *)
+   truth. It became a parse error that named the fix.
+
+   Since #43 a newline there sequences the body, and the `;` now does too
+   (#131): an author from OCaml ends each line with one, and that was the
+   error an agent met most often in the authoring benchmark. What stays an
+   error is a line that falls back inside the body's column. *)
 let test_semicolon_body_without_parens () =
-  parse_error "an unbracketed ; body is refused"
-    "import IO\nlet go () =\n  IO.println \"one\";\n  IO.println \"two\"\ngo ()\n"
-    "put the body in parentheses";
   let parse src = Lexer.tokenize src |> Parser.parse_program in
+  let one_item label src name =
+    match (parse src).Ast.items with
+    | [TLImport _; TLLet (n, _, _); _] when n = name -> ()
+    | items -> Alcotest.failf "%s: expected the import, %s and one statement, got %d items"
+                 label name (List.length items)
+    | exception Parser.ParseError (_, m) -> Alcotest.failf "%s: %s" label m
+  in
+  one_item "a ; between a body's statements sequences them"
+    "import IO\nlet go () =\n  IO.println \"one\";\n  IO.println \"two\"\ngo ()\n" "go";
+  one_item "after a binding's ; too (#131)"
+    "import IO\nlet f x =\n  let a = x + 1;\n  IO.println \"a\";\n  a\nf 1\n" "f";
+  one_item "a match arm's body"
+    "import IO\nlet g o =\n  match o with\n  | Some n ->\n    IO.println \"arm\";\n    n + 1\n  | None -> 0\ng None\n" "g";
+  one_item "a fn's body"
+    "import IO\nlet h = fn x ->\n  IO.println \"fn\";\n  x * 2\nh 1\n" "h";
   let ok label src =
     match parse src with
     | _ -> ()
@@ -1327,5 +1400,8 @@ let () =
       Alcotest.test_case "paren seq"    `Quick test_paren_seq;
       Alcotest.test_case "a contract clause takes a call" `Quick
         test_a_contract_clause_takes_a_call;
+      Alcotest.test_case "result is a name" `Quick test_result_is_a_name;
+      Alcotest.test_case "a reserved word is named" `Quick
+        test_a_reserved_word_is_named;
     ];
   ]

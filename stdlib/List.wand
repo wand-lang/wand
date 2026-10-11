@@ -36,6 +36,15 @@ let filter_map f xs =
   in
   go xs []
 
+-- Apply a function that gives a list to every element, and join the lists in order.
+--
+-- >> List.flat_map (fn x -> [x, x * 10]) [1, 2]
+-- [1, 10, 2, 20] : List Int
+let flat_map f xs =
+  let go [] acc = _onto acc []
+  let go [h :: t] acc = go t (_onto (f h) acc);
+  go xs []
+
 -- Reduce a list left to right with an accumulator.
 --
 -- >> List.fold_left (fn x y -> x + y) 0 [1, 2, 3]

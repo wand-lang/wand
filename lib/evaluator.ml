@@ -4670,24 +4670,52 @@ let json_read s : (Yojson.Safe.t, string) result =
   | j -> (match check j with None -> Ok j | Some why -> Error why)
   | exception Yojson.Json_error msg -> Error msg
 
+
+(* A decoder reads a value out of text only where the text is all there is.
+   Backends that carry types -- JSON, TOML, YAML -- hand over an Int as an
+   Int, and a string where a number belongs is wrong input: `{"ms": "12"}`
+   is refused, because the document says the value is text. Backends that do
+   not carry types -- a CSV cell, a line of output, a command-line flag --
+   hand over the text, and `Decode.int` reads it exactly as `Int.of_string`
+   would. So one decoder serves a document and a command's output both, and
+   is as strict as its source allows.
+
+   Reading leniently from a typed document let wrong input through with no
+   error: a type with `ms: Int` accepted `"12"`, and a script that validated
+   its input with a type validated nothing (#125).
+
+   The reverse is never allowed: `Decode.string` does not accept a number
+   and stringify it. That direction would make `string` accept anything,
+   which is the scrape it exists to replace.
+
+   Which kind of source a decoder runs over is said by the backend that
+   started it, and kept per domain, since `Par.map` decodes on several at
+   once. A backend restores what it found, so a JSON document decoded inside
+   a CSV row's `and_then` leaves the row as text. *)
+let decoding_text : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> true)
+
+let decoding_from ~text f =
+  let before = Domain.DLS.get decoding_text in
+  Domain.DLS.set decoding_text text;
+  Fun.protect ~finally:(fun () -> Domain.DLS.set decoding_text before) f
+
+(* A string that failed is worth quoting: the reader wants to see what was
+   there. From a source that has only text, that is all the message says.
+   From a typed document it also says that the value was a string, since
+   `expected Int, got "12"` reads as though the decoder had not seen the
+   12, and the fault is the quotes around it (#125). *)
 let expected what path j =
   match j with
-  (* A string that failed is worth quoting: the reader wants to see what was
-     there, not to be told a second time that it was text. *)
-  | `String s -> decode_error path (Printf.sprintf "expected %s, got %S" what s)
+  | `String s when Domain.DLS.get decoding_text ->
+    decode_error path (Printf.sprintf "expected %s, got %S" what s)
+  | `String s ->
+    decode_error path (Printf.sprintf "expected %s, got String %S" what s)
   | _ -> decode_error path (Printf.sprintf "expected %s, got %s" what (json_kind j))
 
-(* A decoder reads a value out of text, and never the other way round.
-   Backends that carry types -- JSON, TOML -- hand over an Int as an Int;
-   backends that do not -- a CSV cell, a line of output -- hand over the
-   text, and `Decode.int` reads it exactly as `Int.of_string` would. So one
-   decoder serves a document and a command's output both.
-
-   The reverse is not allowed: `Decode.string` does not accept a number and
-   stringify it. That direction would make `string` accept anything, which
-   is the scrape it exists to replace. *)
 let from_text parse (j : Yojson.Basic.t) =
-  match j with `String s -> parse (String.trim s) | _ -> None
+  match j with
+  | `String s when Domain.DLS.get decoding_text -> parse (String.trim s)
+  | _ -> None
 
 (* Every backend presents what it read in this shape. TOML carries its own
    types across; a date has no JSON of its own and comes over as the text it
@@ -8468,15 +8496,26 @@ let decode_builtins : env = [
       | VJson j ->
         (* Decoded in `Basic`, where an integer past an Int's range is its
            digits in a string: `Decode.string` reads such an id exactly. *)
-        (match inner (Yojson.Safe.to_basic j) [] with
+        (match decoding_from ~text:false (fun () -> inner (Yojson.Safe.to_basic j) []) with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
          | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
       | _ -> raise (EvalError "json_decode: expected JSON"))));
+  (* `JSON.decode` over a document built from text. `Args` turns argv into
+     an object whose values are the words as written, so `--port 80` holds
+     "80", and that is a flag to read as a number rather than wrong input. *)
+  ("json_decode_text", VBuiltin (fun d ->
+    let inner = as_decoder "json_decode_text" d in
+    VBuiltin (function
+      | VJson j ->
+        (match decoding_from ~text:true (fun () -> inner (Yojson.Safe.to_basic j) []) with
+         | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
+         | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
+      | _ -> raise (EvalError "json_decode_text: expected JSON"))));
   ("toml_decode", VBuiltin (fun d ->
     let inner = as_decoder "toml_decode" d in
     VBuiltin (function
       | VToml t ->
-        (match inner (json_of_toml t) [] with
+        (match decoding_from ~text:false (fun () -> inner (json_of_toml t) []) with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
          | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
       | _ -> raise (EvalError "toml_decode: expected TOML"))));
@@ -8486,7 +8525,7 @@ let decode_builtins : env = [
     let inner = as_decoder "yaml_decode" d in
     VBuiltin (function
       | VYaml y ->
-        (match inner y [] with
+        (match decoding_from ~text:false (fun () -> inner y []) with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
          | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
       | _ -> raise (EvalError "yaml_decode: expected YAML"))));
@@ -8500,13 +8539,14 @@ let decode_builtins : env = [
            line per record and an empty capture has none -- not one empty
            line, which is the mistake every hand-written count makes. *)
         let lines = if String.trim s = "" then [] else String.split_on_char '\n' s in
-        decode_each inner (List.map (fun l -> `String l) lines)
+        decoding_from ~text:true (fun () ->
+          decode_each inner (List.map (fun l -> `String l) lines))
       | _ -> raise (EvalError "shell_lines: expected String"))));
   ("shell_decode", VBuiltin (fun d ->
     let inner = as_decoder "shell_decode" d in
     VBuiltin (function
       | VString s ->
-        (match inner (`String (String.trim s)) [] with
+        (match decoding_from ~text:true (fun () -> inner (`String (String.trim s)) []) with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
          | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
       | _ -> raise (EvalError "shell_decode: expected String"))));
@@ -8528,7 +8568,7 @@ let decode_builtins : env = [
              in
              `Assoc (pair header row)
            in
-           decode_each inner (List.map as_object rows))
+           decoding_from ~text:true (fun () -> decode_each inner (List.map as_object rows)))
       | _ -> raise (EvalError "csv_rows: expected String"))));
 ]
 

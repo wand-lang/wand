@@ -85,6 +85,22 @@ test "filter_map that keeps nothing" (fn t ->
 test "filter_map changes the element type" (fn t ->
   t.eq ["2"] (List.filter_map (fn x -> if x > 1 then Some "%{x}" else None) [1, 2]))
 
+-- ── flat_map ────────────────────────────────────────────────────────────
+
+test "flat_map joins the lists in order" (fn t ->
+  t.eq [1, 1, 2, 2, 3, 3] (List.flat_map (fn x -> [x, x]) [1, 2, 3]))
+test "flat_map on an empty list" (fn t ->
+  let empty : List Int = [];
+  t.eq [] (List.flat_map (fn x -> [x]) empty))
+test "flat_map that gives empty lists" (fn t ->
+  t.eq [2] (List.flat_map (fn x -> if x == 2 then [x] else []) [1, 2, 3]))
+test "flat_map changes the element type" (fn t ->
+  t.eq ["a", "b", "c"] (List.flat_map String.words ["a b", "", "c"]))
+test "flat_map equals map then flatten" (fn t ->
+  let f x = List.range 1 x;
+  let xs = [3, 0, 2];
+  t.eq (List.map f xs |> List.flatten) (List.flat_map f xs))
+
 -- ── pipeline ────────────────────────────────────────────────────────────
 
 test "range |> filter |> sort_by" (fn t ->

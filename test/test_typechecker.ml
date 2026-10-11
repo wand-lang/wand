@@ -728,6 +728,13 @@ let test_lines_read_as_one_expression () =
   ok "two statements in a match arm run one after the other"
     "match Some 1 with\n| Some n ->\n  n + 1\n  n * 10\n| None -> 0"
     "10";
+  (* A `;` at the end of each line says the same as the newline (#131). *)
+  ok "a ; after a statement continues the body"
+    "let f x =\n  let a = x + 1;\n  a * 10;\n  a\nf 1"
+    "2";
+  ok "and an arm's"
+    "match Some 1 with\n| Some n ->\n  n + 1;\n  n * 10\n| None -> 0"
+    "10";
   (* Inside brackets a newline means nothing, so two lines there are still
      one call. The excerpt and the fix hold the lines' own text, not the
      `let f x = (` beside them. *)
@@ -1108,6 +1115,17 @@ let rejects_program label src =
 let test_contract_clauses_must_be_bool () =
   rejects_program "requires must be Bool" "let f x =\n  requires x + 1\n  x\nf 1";
   rejects_program "ensures must be Bool" "let f x =\n  ensures result + 1\n  x\nf 1"
+
+(* Outside an `ensures` clause `result` is an ordinary name, so reaching for
+   the return value anywhere else finds nothing -- and the message says
+   where the name does mean that. *)
+let test_result_outside_ensures () =
+  err_contains "in a requires"
+    "let f n =\n  requires result > 0\n  n\nf 1"
+    "'result' names the return value only inside an `ensures` clause";
+  err_contains "in a body"
+    "let f n = result + n\nf 1"
+    "'result' names the return value only inside an `ensures` clause"
 
 (* A name declares one thing. Both of these used to be taken silently, and
    which declaration won differed between a file and the REPL -- so one text
@@ -2558,6 +2576,7 @@ let () =
     ];
     "rejections", [
       Alcotest.test_case "contract clauses"    `Quick test_contract_clauses_must_be_bool;
+      Alcotest.test_case "result outside ensures" `Quick test_result_outside_ensures;
       Alcotest.test_case "a name is declared once" `Quick test_a_name_is_declared_once;
       Alcotest.test_case "field access needs a type" `Quick test_field_access_needs_a_type;
       Alcotest.test_case "type aliases"        `Quick test_type_aliases;

@@ -432,8 +432,7 @@ let peek_named_args s =
 (* `T(type, status = s)` -- a keyword standing where a field's short form
    would go. Reading it as a field list is what lets the message name the
    fix, and costs nothing: a keyword alone in brackets is a parse error
-   either way. `result` is the exception, being an expression of its own
-   inside a contract, so it stays a payload. *)
+   either way. *)
 let peek_keyword_pun s =
   let arr = s.tokens in
   let n = Array.length arr in
@@ -445,7 +444,6 @@ let peek_keyword_pun s =
     incr i; skip ();
     if !i >= n then false
     else match fst arr.(!i) with
-    | Token.Result -> false
     | t when Token.keyword_text t <> None ->
       let j = ref (!i + 1) in
       while !j < n && is_skippable (fst arr.(!j)) do incr j done;
@@ -587,17 +585,24 @@ let expect_field_name ?(puns = false) s =
      | None ->
        fail_at loc (Format.asprintf "expected a field name, got %a" Token.pp t))
 
+(* A word the language has taken, standing where a name goes. Saying only
+   "expected identifier" or "unexpected token" leaves the reader looking at
+   a word that plainly is one, and searching the line for a syntax mistake
+   that is not there. The suggestion is the spelling a field takes when it
+   cannot pun, so the two messages agree. *)
+let reserved_word_message t =
+  Format.asprintf "'%a' is a reserved word; use another name, such as `%a_`"
+    Token.pp t Token.pp t
+
+let refuse_reserved_word s =
+  let t = peek s in
+  if Token.is_keyword t then fail_at (peek_loc s) (reserved_word_message t)
+
 let expect_ident s =
   let loc = peek_loc s in
   match advance s with
   | Token.Ident name -> name
-  (* A word the language has taken cannot be a name here, and saying only
-     "expected identifier" leaves the reader looking at a word that plainly
-     is one. `result` is the one this is written for: it names a contract's
-     return value, so `type Run(result : T)` is refused. *)
-  | t when Token.is_keyword t ->
-    fail_at loc (Format.asprintf
-      "'%a' is a keyword, so it cannot be a name here" Token.pp t)
+  | t when Token.is_keyword t -> fail_at loc (reserved_word_message t)
   | t -> fail_at loc (Format.asprintf "expected identifier, got %a" Token.pp t)
 
 (* A handler case's continuation binder. `_` is allowed and means the case
@@ -642,7 +647,6 @@ let is_atom_start = function
   | Token.CommandRaw _
   | Token.RawStr _ | Token.RawInterpStr _
   | Token.Regex _ | Token.EnvVar _ | Token.Import
-  | Token.Result
   | Token.Handle | Token.Try -> true
   | _ -> false
 
@@ -672,11 +676,56 @@ let semicolon_joins_the_body s anchor =
   && is_expr_start (fst s.tokens.(!i))
   && (snd s.tokens.(!i)).Token.col >= anchor
 
+(* Whether the `;` just ahead joins the statement before it to the next line
+   of the same body, as a newline there does. A body of statements sequences
+   its lines, and an author from OCaml ends each one with `;` -- which ended
+   the definition, so the next line was reported as a statement of its own.
+
+   Only outside every bracket, and only for a line below the `;`, at or past
+   the body's column. That is exactly the case the file's loop rejects with
+   "the ';' above ended the definition": nothing that parses changes. Inside
+   a bracket a `;` is the block's own separator and already means
+   something, and `a; b` on one line ends the item as it always did. *)
+let semicolon_continues_the_body s =
+  let n = Array.length s.tokens in
+  s.pos < n
+  && fst s.tokens.(s.pos) = Token.Semicolon
+  && s.paren_depth = 0
+  && s.stmt_depth = 0
+  && begin
+    let semi_line = (snd s.tokens.(s.pos)).Token.line in
+    let i = ref (s.pos + 1) in
+    while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
+    !i < n
+    && is_expr_start (fst s.tokens.(!i))
+    && (snd s.tokens.(!i)).Token.col >= s.stmt_col
+    && (snd s.tokens.(!i)).Token.line > semi_line
+  end
+
 let is_pat_atom_start = function
   | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _ | Token.Bool _
   | Token.Ident _ | Token.Underscore | Token.Upper _
   | Token.LParen | Token.LBracket | Token.LBrace -> true
   | _ -> false
+
+(* Inside an `ensures` clause `result` is the value the body returned, and
+   everywhere else it is a name like any other. A parameter of the same
+   definition called `result` is the one place the two meet: the clause
+   could not reach the parameter, and a reader of the clause could not tell
+   which of the two it meant. Refused rather than resolved either way. An
+   outer binding is not refused: the clause is where the contract's meaning
+   is the one the reader expects. *)
+let refuse_result_parameter loc params body =
+  let rec ensures = function
+    | Ast.Located (_, e) | Ast.Annot (_, e) -> ensures e
+    | Ast.Contract (_, ens, _) -> ens
+    | _ -> []
+  in
+  if ensures body <> []
+     && List.exists (fun p -> List.mem "result" (Ast.pat_names p)) params then
+    fail_at loc
+      "a parameter is called 'result', and in an `ensures` clause 'result' \
+       is the value the body returns; rename the parameter"
 
 (* A multi-equation definition folded into one binding: synthetic `_p0.._pN`
    parameters and a `Match` over them, one case per equation. Shared by the
@@ -688,6 +737,7 @@ let is_pat_atom_start = function
    when it finds an equation no value can reach. An error raised inside the
    body carries a Located of its own, further in, and innermost wins. *)
 let collapse_multi_equation arity eqs : Ast.pat list * Ast.expr =
+  List.iter (fun (loc, pats, body) -> refuse_result_parameter loc pats body) eqs;
   match eqs with
   | [(_, p, b)] -> (p, b)
   | eqs ->
@@ -780,13 +830,11 @@ let rec parse_type_atom s =
   | Token.Ident name ->
     fail_at loc (Printf.sprintf "expected type name, got '%s'%s"
       name (Util.hint name builtin_types))
-  (* A field's name is read as a name only when it is one. `result` names a
-     contract's return value, so `type Run(result : T)` arrives here as a
-     keyword where a type should be, and the message has to say which of the
-     two words is the problem. *)
+  (* A keyword where a type should be. Named as one, so the reader does not
+     look for a type of that name. *)
   | t when Token.is_keyword t ->
     fail_at loc (Format.asprintf
-      "'%a' is a keyword, so it cannot be a field name" Token.pp t)
+      "expected type name, got the reserved word '%a'" Token.pp t)
   | t -> fail_at loc (Format.asprintf "expected type name, got %a" Token.pp t)
 
 and parse_type_app s =
@@ -945,6 +993,7 @@ and pat_base_ s =
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
   | Token.Upper name -> ignore (advance s); pconstr_body_ s name
+  | t when Token.is_keyword t -> fail_at (peek_loc s) (reserved_word_message t)
   | t ->
     fail_at (peek_loc s) (Format.asprintf "unexpected token in pattern: %a%s"
       Token.pp t (keyword_hint t))
@@ -1078,6 +1127,7 @@ and pat_atom_ s =
     ignore (advance s); list_pat_ s
   | Token.LBrace ->
     ignore (advance s); brace_map_pat_ s
+  | t when Token.is_keyword t -> fail_at (peek_loc s) (reserved_word_message t)
   | t ->
     fail_at (peek_loc s) (Format.asprintf "unexpected token in pattern: %a%s"
       Token.pp t (keyword_hint t))
@@ -1366,7 +1416,6 @@ and atom_base_ s =
      | Token.Ident n -> ImportExpr (Ast.ModuleAlias n)
      | t -> fail_at loc (Format.asprintf "expected module name or path after import, got %a"
                 Token.pp t))
-  | Token.Result   -> Var "result"
   | Token.Dollar   ->
     expect s Token.LParen;
     let e = expr_ 0 s in
@@ -1676,7 +1725,11 @@ and brace_map_ s =
    0. *)
 and parse_body s =
   let e = ref (locate s (fun () -> expr_ 0 s)) in
-  while is_expr_start (peek s) && peek_col s >= s.stmt_col do
+  let continues () =
+    if semicolon_continues_the_body s then (ignore (advance s); true)
+    else is_expr_start (peek s) && peek_col s >= s.stmt_col
+  in
+  while continues () do
     e := Seq (!e, locate s (fun () -> expr_ 0 s))
   done;
   !e
@@ -1704,6 +1757,9 @@ and parse_fn_binding s name =
     fail_at loc (Printf.sprintf
       "'%s' in a mutually-recursive 'and' group must take at least one \
        parameter — plain recursive values aren't supported" name);
+  (* `let f type = ...`: the word ended the parameters, and "expected =" is
+     all the reader would hear otherwise. *)
+  refuse_reserved_word s;
   let annot = if peek s = Token.Colon then
     (ignore (advance s); Some (parse_type_expr s))
   else None in
@@ -1849,9 +1905,9 @@ and let_ ?(block = false) s =
        `let a = 1; let b = 2` is untouched -- a top-level binding is read by
        the loop below rather than here, so its `;` never reaches this.
 
-       Sequencing two bare statements is unaffected and still wants
-       parentheses: a newline does not join those either, and this is the
-       newline's rule, not a new one. *)
+       Two bare statements sequence the same way, by the newline's rule
+       since #43 and by the `;`'s since #131 -- see
+       `semicolon_continues_the_body`. *)
     else if (not block) && peek s = Token.Semicolon
             && s.paren_depth = s.stmt_depth
             && semicolon_joins_the_body s s.stmt_col then begin
@@ -1908,6 +1964,7 @@ and let_ ?(block = false) s =
     end
   | PVar name when peek s <> Token.Eq ->
     (* annotated value binding: let x : T = e *)
+    refuse_reserved_word s;
     let annot = if peek s = Token.Colon then
       (ignore (advance s); Some (parse_type_expr s))
     else None in
@@ -2060,7 +2117,12 @@ and statements_ s =
       if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
     (fun () ->
        let e = ref (locate s (fun () -> expr_ 0 s)) in
-       while anchored && is_expr_start (peek s) && peek_col s >= s.stmt_col do
+       let continues () =
+         anchored
+         && (if semicolon_continues_the_body s then (ignore (advance s); true)
+             else is_expr_start (peek s) && peek_col s >= s.stmt_col)
+       in
+       while continues () do
          e := Ast.Seq (!e, locate s (fun () -> expr_ 0 s))
        done;
        !e)
@@ -2071,8 +2133,12 @@ and fn_ s =
   while is_pat_atom_start (peek s) do
     params := !params @ [pat_atom_ s]
   done;
+  refuse_reserved_word s;
   expect s Token.Arrow;
-  Fn (!params, locate s (fun () -> parse_contract_body s))
+  let loc = peek_loc s in
+  let body = locate s (fun () -> parse_contract_body s) in
+  refuse_result_parameter loc !params body;
+  Fn (!params, body)
 
 (* ── Resource bracket ─────────────────────────────────────────────────────── *)
 
@@ -2178,6 +2244,9 @@ let parse_top_fn_binding s name =
     fail_at loc (Printf.sprintf
       "'%s' in a mutually-recursive 'and' group must take at least one \
        parameter — plain recursive values aren't supported" name);
+  (* `let f type = ...`: the word ended the parameters, and "expected =" is
+     all the reader would hear otherwise. *)
+  refuse_reserved_word s;
   let annot = if peek s = Token.Colon then
     (ignore (advance s); Some (parse_type_expr s))
   else None in
@@ -2337,8 +2406,10 @@ let parse_implement s =
     in
     let params = ref [] in
     while is_pat_atom_start (peek s) do params := !params @ [pat_atom_ s] done;
+    refuse_reserved_word s;
     expect s Token.Eq;
     let body = locate s (fun () -> parse_contract_body s) in
+    refuse_result_parameter nloc !params body;
     ((name, !params, body, loc), Option.map (fun d -> (name, d)) doc)
   in
   let binds = ref [parse_binding ()] in
@@ -2713,9 +2784,12 @@ let parse_program_generic ~on_item tokens =
     s.stmt_depth <- 0;
     (* A line indented past the definition above it is read as the
        continuation it looks like -- see `newline_breaks_expr` -- so it
-       normally never reaches this loop at all. A `;` is the one thing that
-       ends the definition first, and then the indented lines below it do
-       arrive here, as statements of their own. That parses, and it runs:
+       normally never reaches this loop at all. A `;` at the end of a body's
+       line now continues the body too (#131), so what still arrives here is
+       a line that falls back inside the body's column, or a `;` inside a
+       bracket that the body was read in. Before #131 any `;` did this, and
+       the indented lines below it arrived as statements of their own. That
+       parsed, and it ran:
 
          let go () =
            IO.println "one";
@@ -2796,6 +2870,7 @@ let parse_program_generic ~on_item tokens =
          while is_pat_atom_start (peek s) do
            params := !params @ [pat_atom_ s]
          done;
+         refuse_reserved_word s;
          let annot = if peek s = Token.Colon then
            (ignore (advance s); Some (parse_type_expr s))
          else None in
