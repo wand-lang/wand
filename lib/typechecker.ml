@@ -1358,6 +1358,11 @@ let unbound_message name (env : env) =
   | None ->
   let hint = match foreign_name_hint name with
     | Some h -> " -- " ^ h
+    (* `result` is a name like any other, and only an `ensures` clause binds
+       it on its own. Reached anywhere else unbound, it is most likely a
+       `requires` clause or a body reaching for the return value. *)
+    | None when name = "result" ->
+      " -- 'result' names the return value only inside an `ensures` clause"
     | None ->
       (match Util.hint name (List.map fst env) with
        | "" -> discovery_hint

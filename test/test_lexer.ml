@@ -88,7 +88,6 @@ let test_keywords () =
     "import",   Import;
     "requires", Requires;
     "ensures",  Ensures;
-    "result",   Result;
     "fn",       Fn;
     "for",      For;
     "do",       Do;

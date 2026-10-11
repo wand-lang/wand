@@ -116,7 +116,7 @@ let keyword_or_ident word = match word with
   | "interface" -> Interface
   | "implement" -> Implement
   | "requires" -> Requires
-  | "ensures"  -> Ensures  | "result"   -> Result
+  | "ensures"  -> Ensures
   | "fn"       -> Fn       | "fun"      -> Fn
   | "for"      -> For      | "do"       -> Do
   | "end"      -> End
