@@ -45,6 +45,9 @@
 - A value of type `T` where a `String` is expected gives the hint `T.to_string` when that function exists: `expected String, got Path; Path.to_string gives its text` (#143).
 - `wand t --fix` puts `T.to_string` around a value of type `T` where a `String` is expected (#143).
 - `wand t --fix` changes `String.of_int` to `Int.to_string` (#143).
+- A call to `List.sum` where its element type is expected gives the hint `List.sum gives None for an empty list: add |> Option.default 0` (#127).
+- A call to `List.max` or `List.min` where its element type is expected gives the hint `use Option.default or match on it` (#127).
+- `wand t --fix` adds `|> Option.default 0` after a call to `List.sum` where an Int is expected, and `0.0`, `0B` or `0s` for a Float, Size or Duration (#127).
 
 ### Removed
 

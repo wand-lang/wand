@@ -480,6 +480,85 @@ let test_to_string_not_offered () =
     (Lint.contains d.Diag.message "to_string");
   Alcotest.(check bool) "and no fix" true (d.Diag.fix = None)
 
+(* `List.sum`, `List.max` and `List.min` give an Option (#127). When the
+   value at fault is a call to one of them, the error says why. *)
+let test_empty_list_hint () =
+  let d = type_error "import Int\nimport List\nlet n = Int.abs (List.sum [1, 2])\n" in
+  Alcotest.(check bool) "List.sum names its zero" true
+    (Lint.contains d.Diag.message
+       "expected Int, got Option Int; List.sum gives None for an empty \
+        list: add |> Option.default 0");
+  let d = type_error "import Float\nimport List\nlet n = Float.abs (List.sum [1.5])\n" in
+  Alcotest.(check bool) "the zero of a Float" true
+    (Lint.contains d.Diag.message "add |> Option.default 0.0");
+  let d = type_error "import List\nimport Size\nlet n = Size.to_string (List.sum [1KB])\n" in
+  Alcotest.(check bool) "the zero of a Size" true
+    (Lint.contains d.Diag.message "add |> Option.default 0B");
+  let d = type_error "import Duration\nimport List\nlet n = Duration.to_string (List.sum [1s])\n" in
+  Alcotest.(check bool) "the zero of a Duration" true
+    (Lint.contains d.Diag.message "add |> Option.default 0s");
+  let d = type_error "import List\nlet b = List.sum [1, 2] > 3\n" in
+  Alcotest.(check bool) "an Option is not ordered" true
+    (Lint.contains d.Diag.message
+       "Option Int is not ordered, so it cannot be compared with < > <= >=; \
+        List.sum gives None");
+  let d = type_error "import Int\nimport List\nlet n = Int.abs (List.max [1, 2])\n" in
+  Alcotest.(check bool) "List.max" true
+    (Lint.contains d.Diag.message
+       "expected Int, got Option Int; List.max gives None for an empty \
+        list: use Option.default or match on it");
+  let d = type_error "import Int\nimport List\nlet n = Int.abs (List.min [1, 2])\n" in
+  Alcotest.(check bool) "List.min" true
+    (Lint.contains d.Diag.message
+       "List.min gives None for an empty list: use Option.default or match \
+        on it")
+
+(* The fix for `List.sum` adds `|> Option.default <zero>` after the call,
+   and then `import Option`. *)
+let test_empty_list_sum_fix () =
+  let (fixed, applied) =
+    fix_clean "import Int\nimport List\nlet n = Int.abs (List.sum [1, 2])\n" in
+  Alcotest.(check string) "an argument, inside the brackets that are there"
+    "import Int\nimport List\nimport Option\n\nlet n = Int.abs (List.sum [1, 2] |> Option.default 0)\n"
+    fixed;
+  Alcotest.(check bool) "by the E-TYPE fix" true
+    (List.mem "E-TYPE" (codes applied));
+  let (fixed, _) =
+    fix_clean "import List\ntype Pod(key: String, restarts: Int)\nlet cs = [1, 2]\nlet p = Pod(key = \"a\", restarts = List.sum cs)\n" in
+  Alcotest.(check string) "a field of a record gets brackets"
+    "import List\nimport Option\n\ntype Pod(key: String, restarts: Int)\nlet cs = [1, 2]\nlet p = Pod(key = \"a\", restarts = (List.sum cs |> Option.default 0))\n"
+    fixed;
+  let (fixed, _) =
+    fix_clean "import List\nlet cs = [1, 2]\nlet b = (cs |> List.sum) > 3\n" in
+  Alcotest.(check string) "a pipe into the call"
+    "import List\nimport Option\n\nlet cs = [1, 2]\nlet b = (cs |> List.sum |> Option.default 0) > 3\n"
+    fixed;
+  let (fixed, _) = fix_clean "import List\nlet n = List.sum [1.5] + 1.0\n" in
+  Alcotest.(check string) "an operand of +, with the zero of a Float"
+    "import List\nimport Option\n\nlet n = (List.sum [1.5] |> Option.default 0.0) + 1.0\n"
+    fixed
+
+(* No fix for `List.max` and `List.min`, no fix where the call stands twice,
+   and no hint for an Option that comes from somewhere else. *)
+let test_empty_list_not_offered () =
+  let d = refuse "import Int\nimport List\nlet n = Int.abs (List.max [1, 2])\n" in
+  Alcotest.(check bool) "List.max: no fix" true (d.Diag.fix = None);
+  let d = refuse "import Int\nimport List\nlet n = Int.abs (List.min [1, 2])\n" in
+  Alcotest.(check bool) "List.min: no fix" true (d.Diag.fix = None);
+  let d =
+    refuse "import Int\nimport List\nlet xs = [1]\nlet n = Int.max (List.sum xs) (List.sum xs)\n" in
+  Alcotest.(check bool) "the call stands twice: the hint" true
+    (Lint.contains d.Diag.message "List.sum gives None");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None);
+  let d = refuse "import Int\nimport List\nlet r = List.sum [1]\nlet n = Int.abs r\n" in
+  Alcotest.(check bool) "through a name: no hint" false
+    (Lint.contains d.Diag.message "gives None");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None);
+  let d = refuse "import Int\nlet n = Int.abs (Some 3)\n" in
+  Alcotest.(check bool) "an Option of another source: no hint" false
+    (Lint.contains d.Diag.message "gives None");
+  Alcotest.(check bool) "and no fix" true (d.Diag.fix = None)
+
 (* The engine's test for a substitution at an extent the fix carries: the
    text there must be what the fix says, and the result must parse. *)
 let test_replace_at_is_checked () =
@@ -548,6 +627,11 @@ let () =
         test_to_string_around_a_value;
       Alcotest.test_case "to_string, not offered" `Quick
         test_to_string_not_offered;
+      Alcotest.test_case "List.sum, max, min: the hint" `Quick
+        test_empty_list_hint;
+      Alcotest.test_case "List.sum: the fix" `Quick test_empty_list_sum_fix;
+      Alcotest.test_case "List.sum, max, min: not offered" `Quick
+        test_empty_list_not_offered;
       Alcotest.test_case "a replacement is checked" `Quick
         test_replace_at_is_checked;
     ];

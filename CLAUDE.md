@@ -404,6 +404,7 @@ today at midnight is `Clock.now () |> DateTime.day_start`.
 
 - Fallible operations return `Result`/`Option`; every one has a raising sibling named with `!` (`FS.copy` returns a `Result`, `FS.copy!` raises). A function you write that can raise gets a `!` name too; predicates end in `?` (`failed?`).
 - Handle a `Result` by matching it, or `try f x` to capture a raise as a `Result`. Discarding a `Result` silently is a `V-DROP1` warning; bind it to `_` only when the failure genuinely does not matter.
+- `List.sum`, `List.max` and `List.min` return an `Option`, because an empty list has no answer.
 - A type converts in its own module: `T.of_string` reads one from text
   and `T.to_string` writes it as text (`Int.to_string`, `Path.to_string`,
   `Duration.to_string`). `to_string` gives what `"%{x}"` gives.

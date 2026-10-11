@@ -1613,6 +1613,78 @@ let offer_to_string ~arg x ~expected ~got =
         | None -> None)
   | _ -> ()
 
+(* `List.sum`, `List.max` and `List.min` give an Option, because an empty
+   list has no answer (#127). When the expression at fault is a call to one
+   of them, `List.sum xs` or `xs |> List.sum`, the error says so. The offer
+   is the text to add to the message, the type of the element, and the
+   change for `List.sum`. *)
+let empty_offer : (string * typ * Diag.fix option) option ref = ref None
+
+(* The function of `List` that `x` calls, when it is one of the three. *)
+let empty_list_call (x : expr) =
+  let is_one f =
+    match module_member f with
+    | Some ("List", ("sum" | "max" | "min" as n)) -> Some n
+    | _ -> None
+  in
+  match strip_located x with
+  | App (f, _) -> is_one f
+  | BinOp ("|>", _, f) -> is_one f
+  | _ -> None
+
+(* The zero of a type that `List.sum` adds, as it is written in source. *)
+let zero_of t =
+  match repr t with
+  | TInt -> Some "0"
+  | TFloat -> Some "0.0"
+  | TSize -> Some "0B"
+  | TDuration -> Some "0s"
+  | _ -> None
+
+(* Record the offer for `x` when it is a call to `List.sum`, `List.max` or
+   `List.min` and its type `got` is `Option T`. The change for `List.sum`
+   puts `|> Option.default <zero>` after the call, in brackets, and only
+   when the extent of the call is certain. *)
+let offer_empty_default x got =
+  match empty_list_call x, repr got with
+  | Some n, TApp (TName "Option", elt) ->
+    let zero = if n = "sum" then zero_of elt else None in
+    let hint =
+      match zero with
+      | Some z ->
+        Printf.sprintf "List.%s gives None for an empty list: add \
+                        |> Option.default %s" n z
+      | None ->
+        Printf.sprintf "List.%s gives None for an empty list: use \
+                        Option.default or match on it" n
+    in
+    let fix =
+      match zero, !cur_loc with
+      | Some z, Some l ->
+        (match expr_extent l x with
+         | Some (at, _, bracketed, src)
+           when at.Token.offset >= 0
+             && at.Token.end_offset <= String.length src ->
+           let from_ =
+             String.sub src at.Token.offset
+               (at.Token.end_offset - at.Token.offset)
+           in
+           let body = Printf.sprintf "%s |> Option.default %s" from_ z in
+           let to_ = if bracketed then body else "(" ^ body ^ ")" in
+           Some (Diag.ReplaceAt { at; from_; to_ })
+         | _ -> None)
+      | _ -> None
+    in
+    empty_offer := Some (hint, elt, fix)
+  | _ -> ()
+
+(* Run `f`, and record the offer for `x` of type `got` if it fails. *)
+let check_empty_default x got f =
+  try f ()
+  with (TypeError _ | TypeErrorAt _) as ex ->
+    offer_empty_default x got;
+    raise ex
+
 (* The same idea for a constructor: one spelled as another language spells
    it. `Err` is Rust's and Elm's, and was the error an agent met most often
    in the authoring benchmark; the spelling guess offers nothing for it.
@@ -4410,6 +4482,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
           (match repr tf with
            | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
            | _ -> ());
+          offer_empty_default x tx;
           raise ex);
        performs_call env f latent;
        tr))
@@ -5394,7 +5467,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
        (* The annotation is what the reader expects; the body is what they
           wrote. Naming both is what makes `expected 'a -> 'a, got Int ->
           Int` readable at all. *)
-       unify_expected ~expected:t ~got:(infer tenv env e);
+       let got = infer tenv env e in
+       check_empty_default e got (fun () -> unify_expected ~expected:t ~got);
        check_written_vars written;
        t))
   | Located (loc, e) ->
@@ -5551,7 +5625,9 @@ and infer_against tenv (env : env) e expected =
     let (t, check) = lambda_waiting tenv env params body in
     unify t expected;
     check ()
-  | _ -> unify (infer tenv env e) expected
+  | _ ->
+    let t = infer tenv env e in
+    check_empty_default e t (fun () -> unify t expected)
 
 (* A lambda whose parameter types are to come from where it is given: its
    type, built from what it declares, and the check of its body, to run once
@@ -5648,6 +5724,7 @@ and infer_app_spine ?extra tenv (env : env) head args =
           (match repr !cur with
            | TFun (p, _, _) -> offer_to_string ~arg:true x ~expected:p ~got:tx
            | _ -> ());
+          offer_empty_default x tx;
           raise ex);
       performs_call env head latent;
       cur := tr) args;
@@ -5719,21 +5796,25 @@ and infer_binop tenv (env : env) op a b : typ =
           instant first: `deadline - 30s`")
      | _ ->
        let n = fresh_add () in
-       unify ta n;
-       unify tb n;
+       check_empty_default a ta (fun () -> unify ta n);
+       check_empty_default b tb (fun () -> unify tb n);
        n)
   | "*" | "/" ->
     (* One numeric type throughout: Int -> Int -> Int or the same at
        Float. A `Size` times a `Size` is not a `Size`, so the quantities
        that add do not multiply. *)
     let n = fresh_num () in
-    unify (infer tenv env a) n;
-    unify (infer tenv env b) n;
+    let ta = infer tenv env a in
+    check_empty_default a ta (fun () -> unify ta n);
+    let tb = infer tenv env b in
+    check_empty_default b tb (fun () -> unify tb n);
     n
   | "%" ->
     (* Int only: float modulo is a niche with sharp edges. *)
-    unify_expected ~expected:TInt ~got:(infer tenv env a);
-    unify_expected ~expected:TInt ~got:(infer tenv env b);
+    let ta = infer tenv env a in
+    check_empty_default a ta (fun () -> unify_expected ~expected:TInt ~got:ta);
+    let tb = infer tenv env b in
+    check_empty_default b tb (fun () -> unify_expected ~expected:TInt ~got:tb);
     TInt
   | "++" ->
     (* `++` joins strings only. Given a list it said "expected String, got
@@ -5760,14 +5841,26 @@ and infer_binop tenv (env : env) op a b : typ =
     unify_expected ~expected:(TList elem_t) ~got:(infer tenv env b);
     TList elem_t
   | "==" | "!=" ->
-    unify (infer tenv env a) (infer tenv env b); TBool
+    (* `b` first, as before: an error in both sides names the one in `b`. *)
+    let tb = infer tenv env b in
+    let ta = infer tenv env a in
+    (* Only one side can be the call at fault: an Option on both sides is
+       not an error. *)
+    (try unify ta tb
+     with (TypeError _ | TypeErrorAt _) as ex ->
+       offer_empty_default a ta;
+       offer_empty_default b tb;
+       raise ex);
+    TBool
   (* Both operands are one ordered type. The constraint is what makes
      `r/a/ < r/b/` a type error rather than a run-time one, and what keeps
      two functions from being compared at all. *)
   | "<" | ">" | "<=" | ">=" ->
     let o = fresh_ord () in
-    unify_expected ~expected:o ~got:(infer tenv env a);
-    unify_expected ~expected:o ~got:(infer tenv env b);
+    let ta = infer tenv env a in
+    check_empty_default a ta (fun () -> unify_expected ~expected:o ~got:ta);
+    let tb = infer tenv env b in
+    check_empty_default b tb (fun () -> unify_expected ~expected:o ~got:tb);
     TBool
   | "&&" | "||" ->
     unify (infer tenv env a) TBool;
@@ -5863,7 +5956,7 @@ and infer_binop tenv (env : env) op a b : typ =
        let tb = infer tenv env b in
        let tr = fresh () in
        let latent = Effect_set.unknown () in
-       unify tb (TFun (ta, tr, latent));
+       check_empty_default a ta (fun () -> unify tb (TFun (ta, tr, latent)));
        performs latent;
        tr)
   | op -> raise (TypeError (Printf.sprintf "unknown operator '%s'" op))
@@ -7296,6 +7389,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   last_shell_allow := None;
   pending_fix := None;
   string_offer := None;
+  empty_offer := None;
   param_sites := [];
   current_eff := Effect_set.absorb ~ambient:(Effect_set.unknown ())
       (Effect_set.of_list (Effect_set.EffSet.elements init_effects));
@@ -7930,6 +8024,21 @@ let with_to_string msg fix =
     else (msg, fix)
   | _ -> (msg, fix)
 
+(* `expected Int, got Option Int` says why when the Option comes from a call
+   to `List.sum`, `List.max` or `List.min` (#127): the hint, and for
+   `List.sum` the change that the error site found. Only when the message
+   is about that Option, so an offer left by an error that was caught and
+   checked again does not attach to a different error. *)
+let with_empty_default msg fix =
+  let offer = !empty_offer in
+  empty_offer := None;
+  match offer with
+  | Some (hint, elt, offer_fix)
+    when Diag.contains msg (string_of_typ (TApp (TName "Option", elt))) ->
+    (msg ^ "; " ^ hint,
+     (match offer_fix with Some _ -> offer_fix | None -> fix))
+  | _ -> (msg, fix)
+
 (* The Error side is (position, message, correction): everything the raise
    site knew, as data. *)
 let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
@@ -7962,10 +8071,12 @@ let infer_program_full_with_own ?(base_env=builtin_type_env) ?(init_tenv=[])
      | Some (loc, m) -> Error (loc, m, None)
      | None ->
        let (msg, fix) = with_to_string msg (take_pending_fix ()) in
+       let (msg, fix) = with_empty_default msg fix in
        Error (None, msg, fix))
   | TypeErrorAt (loc, msg) ->
     (match answer_with_unbound () with
      | Some (l, m) -> Error (l, m, None)
      | None ->
        let (msg, fix) = with_to_string msg (take_pending_fix ()) in
+       let (msg, fix) = with_empty_default msg fix in
        Error (Some loc, msg, fix))
