@@ -13,6 +13,8 @@
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).
 - `result` is an ordinary name outside an `ensures` clause (#128).
+- An arm that starts a line to the left of a nested `match`'s first arm belongs to the outer `match` (#135).
+- The same column rule applies to the arms of a nested `handle` (#135).
 - A reserved word where a name goes gives an error that says it is reserved: `'type' is a reserved word; use another name, such as type_` (#128).
 - A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
 - A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).

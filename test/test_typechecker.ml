@@ -861,7 +861,14 @@ let test_equation_messages_speak_in_equations () =
   (* A match the author wrote keeps the match phrasing. *)
   err_contains "hand-written match keeps its own wording"
     "match 3 with\n| 0 -> \"z\""
-    "non-exhaustive match"
+    "non-exhaustive match";
+  (* An outer arm under a nested match is the outer one's (#135), so the
+     outer match is complete and the gap reported is the inner one's, at
+     the inner `match`. It was the other way round: the inner match took
+     `| _ -> 1`, and the outer was reported as missing that very arm. *)
+  err_contains "a nested match reports its own gap"
+    "let f args =\n  match args with\n  | [n] ->\n    match n with\n    | 0 -> 0\n  | _ -> 1\nf []"
+    "4:5: non-exhaustive match"
 
 let test_valid_equation_groups_accepted () =
   ok "ordered equations dispatch in source order"

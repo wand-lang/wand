@@ -995,6 +995,53 @@ match n with
 | _             -> "positive"
 ```
 
+### A match inside an arm
+
+A `match` in an arm needs no parentheses. Its arms are the lines level with
+its first arm. An arm that starts a line to the left of the first arm ends
+the inner match, and belongs to the match outside it:
+
+```ocaml
+match args with
+| [n] ->
+  match Int.of_string n with
+  | Ok x -> x
+  | Error _ -> 0
+| _ -> 1
+```
+
+Here `| _ -> 1` is an arm of `match args`, so `[]` gives `1`. The first arm
+sets the column, not the `match` keyword, so a `match` at the end of a line
+reads the same way:
+
+```ocaml
+match args with
+| [n] -> match Int.of_string n with
+  | Ok x -> x
+  | Error _ -> 0
+| _ -> 1
+```
+
+If the inner match has its first arm on the `with` line, an arm on a line
+below that is level with the outer arms belongs to the outer match. The
+same rule applies to the arms of a `handle`.
+
+Columns cannot separate arms that are on one line. In
+`match p with | (a, b) -> match a with | true -> 1 | _ -> 2`, all arms
+after the inner `with` are arms of the inner match. Put the inner match in
+parentheses to stop it before the end of the line. `wand f` writes each
+nested match in parentheses, on its own lines:
+
+```ocaml
+match args with
+| [n] -> (
+  match Int.of_string n with
+  | Ok x -> x
+  | Error _ -> 0
+)
+| _ -> 1
+```
+
 ### Exhaustiveness checking
 
 `wand t` checks that each `match` covers every case. A case that is missing

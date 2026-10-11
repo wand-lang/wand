@@ -1225,6 +1225,83 @@ let test_semicolon_body_without_parens () =
     "import IO\nlet go () =\n  let a = IO.println \"one\";\n IO.println \"two\"\ngo ()\n"
     "put the body in parentheses"
 
+(* A nested `match` with no brackets took every arm below it, the outer
+   one's included, whatever their column (#135). An arm that begins a line
+   left of the inner match's first arm now goes to the outer one. *)
+let test_a_nested_match_ends_at_an_arm_to_its_left () =
+  runs "the issue's example takes the outer arm"
+    "import Int\n\
+     let f args =\n\
+    \  match args with\n\
+    \  | [n] ->\n\
+    \    match Int.of_string n with\n\
+    \    | Ok x -> x\n\
+    \    | Error _ -> 0\n\
+    \  | _ -> 1\n\
+     (f [], f [\"5\"], f [\"x\"])"
+    "(1, 5, 0)";
+  let two_outer = Match (Var "p", [
+      (PTuple [PVar "a"; PVar "b"], None,
+       Match (Var "a", [(Bool true, None, Int 1)]));
+      (Wild, None, Int 2);
+    ])
+  in
+  (* Before, this one typechecked: the outer match had its one arm, and the
+     inner one took `| _ -> 2` as its second. The indentation says the
+     opposite, and the parse now agrees with it. *)
+  e "an arm level with the outer arms is the outer one's"
+    "match p with\n| (a, b) ->\n  match a with\n  | true -> 1\n| _ -> 2"
+    two_outer;
+  e "inner arms indented past the outer ones stay inner"
+    "match p with\n| (a, b) ->\n  match a with\n    | true -> 1\n    | _ -> 2"
+    (Match (Var "p", [
+       (PTuple [PVar "a"; PVar "b"], None,
+        Match (Var "a", [(Bool true, None, Int 1); (Wild, None, Int 2)]))]));
+  (* A `match` that ends the arm's line: its arms sit left of the keyword,
+     so the keyword is not the anchor -- the first arm is. *)
+  e "a match on the arm's line, arms below"
+    "match p with\n| (a, b) -> match a with\n  | true -> 1\n| _ -> 2"
+    two_outer;
+  e "a one-line nested match"
+    "match p with\n| (a, b) -> match a with | true -> 1\n| _ -> 2"
+    two_outer;
+  e "all on one line, the inner match takes the rest as before"
+    "match p with | (a, b) -> match a with | true -> 1 | _ -> 2"
+    (Match (Var "p", [
+       (PTuple [PVar "a"; PVar "b"], None,
+        Match (Var "a", [(Bool true, None, Int 1); (Wild, None, Int 2)]))]));
+  e "a binding's match under an arm"
+    "match p with\n| (a, b) ->\n  let y = match a with\n    | true -> 1\n    | _ -> 2\n  y\n| _ -> 3"
+    (Match (Var "p", [
+       (PTuple [PVar "a"; PVar "b"], None,
+        Let (PVar "y",
+             Match (Var "a", [(Bool true, None, Int 1); (Wild, None, Int 2)]),
+             Var "y", LetBlock));
+       (Wild, None, Int 3)]));
+  (* Where nothing outside can take the arm, a ragged one reads as it did;
+     inside a bracket the inner match runs to the bracket. *)
+  e "a lone match with a ragged arm"
+    "match a with\n  | true -> 1\n| _ -> 2"
+    (Match (Var "a", [(Bool true, None, Int 1); (Wild, None, Int 2)]));
+  e "a bracket holds the inner match"
+    "match p with\n| (a, b) -> (match a with\n    | true -> 1\n  | _ -> 2)"
+    (Match (Var "p", [
+       (PTuple [PVar "a"; PVar "b"], None,
+        Match (Var "a", [(Bool true, None, Int 1); (Wild, None, Int 2)]))]));
+  (* A `handle` reads its arms the same way, and an outer arm below one
+     was refused as an unknown handler case. *)
+  runs "a handle under an arm gives back the outer arm"
+    "import IO\n\
+     let r opt =\n\
+    \  match opt with\n\
+    \  | Some n ->\n\
+    \    handle IO.println \"x\" with\n\
+    \    | IO!println _ k -> k ()\n\
+    \    | return _ -> n\n\
+    \  | None -> 0\n\
+     (r (Some 4), r None)"
+    "(4, 0)"
+
 let test_indented_continuation () =
   let parse src = Lexer.tokenize src |> Parser.parse_program in
   let ok label src =
@@ -1326,6 +1403,8 @@ let () =
     "layout", [
       Alcotest.test_case "indented continuation" `Quick test_indented_continuation;
       Alcotest.test_case "; body without parens" `Quick test_semicolon_body_without_parens;
+      Alcotest.test_case "a nested match ends at an arm to its left" `Quick
+        test_a_nested_match_ends_at_an_arm_to_its_left;
     ];
     "handler cases", [
       Alcotest.test_case "continuation binder" `Quick test_handler_continuation_binder;
