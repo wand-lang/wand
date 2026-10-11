@@ -123,6 +123,18 @@ let any? p [h :: t] = if p h then true else any? p t
 let all? _ [] = true
 let all? p [h :: t] = if p h then all? p t else false
 
+-- Return true if the list holds an element equal to the value.
+--
+-- >> List.contains? 2 [1, 2, 3]
+-- true : Bool
+--
+-- >> [1, 2, 3] |> List.contains? 5
+-- false : Bool
+let contains? x xs =
+  let go [] = false
+  let go [h :: t] = h == x || go t;
+  go xs
+
 -- Return the first element satisfying the predicate, or None.
 --
 -- >> List.find (fn x -> x > 1) [1, 2, 3]

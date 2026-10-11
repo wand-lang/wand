@@ -101,6 +101,21 @@ test "flat_map equals map then flatten" (fn t ->
   let xs = [3, 0, 2];
   t.eq (List.map f xs |> List.flatten) (List.flat_map f xs))
 
+-- ── contains? ───────────────────────────────────────────────────────────
+
+test "contains? finds an element" (fn t -> t.eq true (List.contains? 2 [1, 2, 3]))
+test "contains? is false for a missing element" (fn t ->
+  t.eq false (List.contains? 5 [1, 2, 3]))
+test "contains? on an empty list" (fn t ->
+  let empty : List String = [];
+  t.eq false (List.contains? "a" empty))
+test "contains? compares whole values" (fn t ->
+  let pairs = [(1, "a"), (2, "b")];
+  t.eq (true, false) (List.contains? (2, "b") pairs, List.contains? (2, "a") pairs))
+test "contains? equals any? with ==" (fn t ->
+  let xs = ["a", "b"];
+  t.eq (List.any? (fn y -> y == "b") xs) (List.contains? "b" xs))
+
 -- ── pipeline ────────────────────────────────────────────────────────────
 
 test "range |> filter |> sort_by" (fn t ->

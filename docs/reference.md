@@ -4597,6 +4597,7 @@ empty      : List 'a
 empty?     : List 'a -> Bool
 any?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
 all?       : ('a -> Bool ! 'e) -> List 'a -> Bool ! 'e
+contains?  : 'a -> List 'a -> Bool
 find       : ('a -> Bool ! 'e) -> List 'a -> Option 'a ! 'e
 zip        : List 'a -> List 'b -> List ('a, 'b)
 take       : Int -> List 'a -> List 'a

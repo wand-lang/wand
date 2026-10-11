@@ -5,6 +5,7 @@
 ### Added
 
 - `List.flat_map` (#132).
+- `List.contains?` tells if a list holds a value: `List.contains? 2 [1, 2, 3]` is `true` (#136).
 - `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
 
 ### Changed
@@ -18,6 +19,7 @@
 - A reserved word where a name goes gives an error that says it is reserved: `'type' is a reserved word; use another name, such as type_` (#128).
 - A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
 - A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).
+- `List.mapi`, `List.mem`, `Option.unwrap_or`, `String.drop` and similar names from other languages give a hint that names the wand function (#136).
 
 ### Fixed
 

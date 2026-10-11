@@ -180,6 +180,15 @@ let test_foreign_members () =
         ("import List\nList." ^ name ^ " (fn x -> [x]) [1]")
         "use List.flat_map")
     ["concat_map"; "bind"; "collect"];
+  List.iter (fun (ns, names, hint) ->
+      List.iter (fun name ->
+          expect_error (ns ^ "." ^ name)
+            (Printf.sprintf "import %s\n%s.%s 1" ns ns name) hint)
+        names)
+    [ "List", ["enumerate"; "mapi"; "with_index"], "use List.indexed";
+      "List", ["mem"; "elem"; "includes?"; "includes"], "use List.contains?";
+      "Option", ["unwrap_or"; "get_or"; "with_default"], "use Option.default";
+      "String", ["drop"; "substring"; "sub"], "use String.slice" ];
   expect_error "FS.read_lines" "import FS\nFS.read_lines /tmp/x"
     "FS.read_file! reads the whole file";
   expect_error "int_of_string" "int_of_string \"4\""

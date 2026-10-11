@@ -1268,7 +1268,14 @@ let foreign_member_hint ns member =
     Some "pair the lists first: \
           'List.zip xs ys |> List.map (fn (x, y) -> ...)'"
   | "String", "split_on_char" -> Some "use String.split -- the separator is a String"
-  | "String", "sub" -> Some "use String.slice"
+  | "String", ("sub" | "drop" | "substring") -> Some "use String.slice"
+  (* The names the authoring benchmark tried for these (#136). 'mapi' had
+     'map' for its spelling guess, and 'mem' had 'min'. *)
+  | "List", ("enumerate" | "mapi" | "with_index") -> Some "use List.indexed"
+  | "List", ("mem" | "elem" | "includes?" | "includes") ->
+    Some "use List.contains?"
+  | "Option", ("unwrap_or" | "get_or" | "with_default") ->
+    Some "use Option.default"
   | "FS", "read_lines" -> Some "FS.read_file! reads the whole file; \
                                 String.lines splits it"
   (* `Ord` was a module of four functions until 0.79.0, and is a module
