@@ -3888,7 +3888,9 @@ let describe p = p.name
 
 The message names the annotation to write. Where more than one declared
 type has the field it names them all and asks which, and where the value is
-not a plain name it says to bind it to one that carries its type.
+not a plain name it says to bind it to one that carries its type. When one
+type has the field and the value is a parameter written as a plain name,
+`wand t --fix` writes the annotation on the parameter.
 
 A lambda written as an argument is the other case, and it needs no
 annotation: the call itself says what the parameter is.
@@ -8373,7 +8375,15 @@ binary that no command runs. The fixes are the `fix` payloads that `--json`
 reports: it creates a manifest, replaces one (which includes the line that the
 manifest type error suggests), deletes a dead import, and inserts a missing
 one. `IO.println` in a file without `import IO` names the module. The missing
-line is therefore a correction, not a hint. An inserted import goes under the
+line is therefore a correction, not a hint. An error that names one certain
+change carries it too. `List.iter` becomes `List.each`, `List.contains`
+becomes `List.contains?`, `Err` becomes `Error`, a parameter read only
+through a field gets the type that has the field, and lines read as one
+expression get the brackets and the `;` that the message shows. An error
+whose change is a choice, such as a guess by spelling or two types that have
+the field, keeps only its text. A fix applies only where the text at its
+extent is the text it replaces, and only when the file still parses after
+it. An inserted import goes under the
 manifest. It joins the run of plain imports, in the order that run is kept,
 above any destructured `let {a} = import X`. wand prints one line
 for each applied fix: `rule: line — what changed`. With `--json` it prints the
@@ -8408,6 +8418,10 @@ object. A manifest suggestion carries the exact line:
 `A-USES1` and the manifest type error carry `fix.replace_line` instead.
 `V-IMP2` carries `"fix":{"delete_line":true}`. A drift error whose correction
 is one substitution carries `"fix":{"replace":{"from":"and","to":"&&"}}`. A
+fix whose change is at an extent of its own carries that extent:
+`"fix":{"replace_at":{"line":2,"col":13,"end_line":2,"end_col":14,"from":"r","to":"(r: ShellResult)"}}`.
+The extent can be away from the diagnostic's own, as an annotation on a
+parameter is away from the field access that needs it. A
 typed hole has a shape of its own:
 
 ```json

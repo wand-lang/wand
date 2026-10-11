@@ -15,6 +15,7 @@ type fix = Diag.fix =
   | DeleteLine              (* the flagged line should not exist *)
   | Replace     of { from_ : string; to_ : string }
   | AppendToLine of string  (* put this at the end of the flagged line *)  (* drift errors only *)
+  | ReplaceAt   of { at : Token.loc; from_ : string; to_ : string }
 
 type finding = {
   rule : Lint_rules.id;

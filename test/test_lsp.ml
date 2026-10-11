@@ -451,6 +451,25 @@ let test_code_action_removes_dead_import () =
      | _ -> Alcotest.fail "expected one text edit")
   | l -> Alcotest.failf "expected one action, got %d" (List.length l)
 
+(* A fix whose extent is away from the error: the annotation goes on the
+   parameter, and the error is on the field access (#139). The action
+   edits the parameter, as `wand t --fix` does. *)
+let test_code_action_annotates_parameter () =
+  let text = "import IO\nlet succeed r = IO.print r.stdout\n" in
+  let (_, outs) = session [did_open uri text; code_action_at 20 uri 1 1] in
+  match items_of (response_for 20 outs) with
+  | [action] ->
+    Alcotest.(check string) "titled" "Replace `r` with `(r: ShellResult)`"
+      (s (m "title" action));
+    (match m uri (m "changes" (m "edit" action)) with
+     | `List [edit] ->
+       Alcotest.(check string) "the annotation" "(r: ShellResult)"
+         (s (m "newText" edit));
+       Alcotest.(check int) "at the parameter" 12
+         (int_of (m "character" (m "start" (m "range" edit))))
+     | _ -> Alcotest.fail "expected one text edit")
+  | l -> Alcotest.failf "expected one action, got %d" (List.length l)
+
 let formatting_req id uri =
   request id "textDocument/formatting"
     (`Assoc [("textDocument", `Assoc [("uri", `String uri)]);
@@ -786,6 +805,7 @@ let () =
     "code actions", [
       Alcotest.test_case "manifest update" `Quick test_code_action_updates_manifest;
       Alcotest.test_case "dead import"     `Quick test_code_action_removes_dead_import;
+      Alcotest.test_case "parameter type"  `Quick test_code_action_annotates_parameter;
     ];
     "formatting", [
       Alcotest.test_case "whole document"  `Quick test_formatting;

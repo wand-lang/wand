@@ -17,6 +17,12 @@ type fix =
      without reading the line, which is what separates it from
      `ReplaceLine`: the rule that asks for it does not have the source. *)
   | AppendToLine of string
+  (* Replace the text at `at` with `to_`. `from_` is the text that is
+     there now. The fix is applied only when the extent holds exactly that
+     text. The extent is its own, not the flagged one: the change can be
+     away from the error, as an annotation on a parameter is away from the
+     field access that needs it. *)
+  | ReplaceAt of { at : Token.loc; from_ : string; to_ : string }
 
 type t = {
   severity : severity;
@@ -127,6 +133,12 @@ let fix_json = function
     Printf.sprintf "{\"append_to_line\":\"%s\"}" (escape_json l)
   | Replace { from_; to_ } ->
     Printf.sprintf "{\"replace\":{\"from\":\"%s\",\"to\":\"%s\"}}"
+      (escape_json from_) (escape_json to_)
+  | ReplaceAt { at; from_; to_ } ->
+    Printf.sprintf
+      "{\"replace_at\":{\"line\":%d,\"col\":%d,\"end_line\":%d,\"end_col\":%d,\
+       \"from\":\"%s\",\"to\":\"%s\"}}"
+      at.Token.line at.Token.col at.Token.end_line at.Token.end_col
       (escape_json from_) (escape_json to_)
 
 (* The object shape is part of the CLI's contract (reference.md, "REPL and

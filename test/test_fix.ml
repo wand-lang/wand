@@ -291,6 +291,142 @@ let test_called_words_fix () =
     (first_line (fix_at path (script "uses {Shell(git)}"
        "let D = import ./dyn.wand" "D.run! \"git\"")))
 
+(* ── Errors that name one certain change (#139, #140) ───────────────────── *)
+
+(* The fixed text, and that it now typechecks. *)
+let fix_clean src =
+  let (fixed, applied) = fix src in
+  (match Runner.typecheck_source ~path:"wand_fix_test.wand" fixed with
+   | Ok _ -> ()
+   | Error d ->
+     Alcotest.failf "the fixed text does not typecheck: %s\n%s"
+       (Diag.legacy d) fixed);
+  (fixed, applied)
+
+(* A name from another language's standard library, where the hint names
+   the one wand name with the same arguments. *)
+let test_foreign_member_renamed () =
+  let (fixed, applied) =
+    fix_clean "import List\nlet xs = [1, 2]\nlet () = List.iter (fn x -> ()) xs\n" in
+  Alcotest.(check string) "List.iter becomes List.each"
+    "import List\nlet xs = [1, 2]\nlet () = List.each (fn x -> ()) xs\n" fixed;
+  Alcotest.(check (list string)) "by the E-TYPE fix" ["E-TYPE"] (codes applied);
+  let (fixed, _) =
+    fix_clean "import List\nimport Option\nlet n = Option.unwrap_or 0 (List.head [1])\n" in
+  Alcotest.(check string) "Option.unwrap_or becomes Option.default"
+    "import List\nimport Option\nlet n = Option.default 0 (List.head [1])\n" fixed;
+  (* Into another module: its import is the next fix, and the import that
+     nothing uses now goes. *)
+  let (fixed, _) = fix_clean "import String\nlet n = String.to_int \"3\"\n" in
+  Alcotest.(check string) "String.to_int becomes Int.of_string"
+    "import Int\nlet n = Int.of_string \"3\"\n" fixed
+
+(* A hint that names two functions, or a form to write, is a choice for the
+   author, and the error keeps only its text. *)
+let test_foreign_member_with_a_choice () =
+  let d = refuse "import List\nlet x = List.nth [1] 0\n" in
+  Alcotest.(check bool) "List.nth names two" true
+    (Lint.contains d.Diag.message "List.get (an Option) or List.get!");
+  Alcotest.(check bool) "and carries no fix" true (d.Diag.fix = None);
+  let d = refuse "import List\nlet x = List.mapi (fn i x -> x) [1]\n" in
+  Alcotest.(check bool) "List.mapi takes a function List.indexed does not" true
+    (d.Diag.fix = None)
+
+(* A member that differs from the written name only by its last `?` or
+   `!` is certain; a guess by spelling is not. *)
+let test_suffix_member () =
+  let (fixed, _) = fix_clean "import List\nlet b = List.contains 1 [1]\n" in
+  Alcotest.(check string) "contains becomes contains?"
+    "import List\nlet b = List.contains? 1 [1]\n" fixed;
+  let d = refuse "import List\nlet n = List.lenght [1]\n" in
+  Alcotest.(check bool) "a guess by spelling is still said" true
+    (Lint.contains d.Diag.message "did you mean 'length'?");
+  Alcotest.(check bool) "and carries no fix" true (d.Diag.fix = None)
+
+(* A constructor spelled as another language spells it, where one
+   constructor is the answer: in an expression and in a pattern. *)
+let test_foreign_constructor_renamed () =
+  let (fixed, applied) =
+    fix_clean "let f x = match x with\n  | Err e -> 1\n  | Ok _ -> 2\nlet y = f (Err 3)\n" in
+  Alcotest.(check string) "Err becomes Error, each in its own pass"
+    "let f x = match x with\n  | Error e -> 1\n  | Ok _ -> 2\nlet y = f (Error 3)\n" fixed;
+  Alcotest.(check (list string)) "two fixes" ["E-TYPE"; "E-TYPE"] (codes applied);
+  let (fixed, _) =
+    fix_clean "let m = match Just 1 with\n  | Just x -> x\n  | Nothing -> 0\n" in
+  Alcotest.(check string) "Just and Nothing"
+    "let m = match Some 1 with\n  | Some x -> x\n  | None -> 0\n" fixed;
+  let (fixed, _) = fix_clean "let l = match [1] with\n  | Nil -> 0\n  | _ -> 1\n" in
+  Alcotest.(check string) "Nil becomes []"
+    "let l = match [1] with\n  | [] -> 0\n  | _ -> 1\n" fixed;
+  let d = refuse "let r = Left 1\n" in
+  Alcotest.(check bool) "Left has two answers, and no fix" true (d.Diag.fix = None)
+
+(* A parameter read only through a field gets its type written where it
+   is bound, when one type has the field (#139). *)
+let test_parameter_annotated () =
+  let (fixed, applied) =
+    fix_clean "import IO\nlet succeed r = IO.print r.stdout\nlet () = succeed $?(echo hi)\n" in
+  Alcotest.(check string) "on a function's parameter"
+    "uses {IO, Shell(echo)}\n\nimport IO\nlet succeed (r: ShellResult) = IO.print r.stdout\nlet () = succeed $?(echo hi)\n"
+    fixed;
+  Alcotest.(check (list string)) "then the manifest"
+    ["E-TYPE"; "V-USES2"] (codes applied);
+  let pod = "type Pod(name: String, restarts: Int)\n" in
+  let (fixed, _) =
+    fix_clean (pod ^ "let show =\n  fn p ->\n    p.restarts\nlet n = show (Pod(name = \"a\", restarts = 1))\n") in
+  Alcotest.(check string) "on a lambda's, for a type the file declares"
+    (pod ^ "let show =\n  fn (p: Pod) ->\n    p.restarts\nlet n = show (Pod(name = \"a\", restarts = 1))\n")
+    fixed;
+  let (fixed, _) =
+    fix_clean (pod ^ "let total a p b = p.restarts + a + b\nlet n = total 1 (Pod(name = \"a\", restarts = 1)) 2\n") in
+  Alcotest.(check string) "among other parameters"
+    (pod ^ "let total a (p: Pod) b = p.restarts + a + b\nlet n = total 1 (Pod(name = \"a\", restarts = 1)) 2\n")
+    fixed
+
+(* Two types with the field, or a subject that is not a parameter's name,
+   is not certain. *)
+let test_parameter_not_certain () =
+  let d =
+    refuse "type A(n: Int)\ntype B(n: Int)\nlet get x = x.n\nlet v = get (A(n = 1))\n" in
+  Alcotest.(check bool) "two types have the field" true (d.Diag.fix = None);
+  let d = refuse "let get (x, y) = x.stdout\n" in
+  Alcotest.(check bool) "a parameter that is a pattern" true (d.Diag.fix = None)
+
+(* Lines read as one expression get the brackets and the `;` that the
+   message shows. *)
+let test_lines_bracketed () =
+  let (fixed, _) =
+    fix_clean "uses {IO}\n\nimport IO\nlet f x = (\n  IO.println \"a\"\n  IO.println \"b\"\n)\nlet () = f 1\n" in
+  Alcotest.(check string) "inside brackets"
+    "uses {IO}\n\nimport IO\nlet f x = ( IO.println \"a\"; IO.println \"b\" )\nlet () = f 1\n"
+    fixed;
+  let (fixed, _) =
+    fix_clean "uses {IO}\n\nimport IO\nlet () = match Some 1 with\n  | Some n -> IO.println \"a\"\n      IO.println \"b\"\n  | None -> ()\n" in
+  Alcotest.(check string) "a body on the arrow's line"
+    "uses {IO}\n\nimport IO\nlet () = match Some 1 with\n  | Some n -> ( IO.println \"a\"; IO.println \"b\" )\n  | None -> ()\n"
+    fixed;
+  (* A comment on one of the lines would hide the rest of the line once the
+     lines are one. *)
+  let d =
+    refuse "uses {IO}\n\nimport IO\nlet () = match Some 1 with\n  | Some n -> IO.println \"a\" -- one\n      IO.println \"b\"\n  | None -> ()\n" in
+  Alcotest.(check bool) "a comment among the lines: no fix" true (d.Diag.fix = None)
+
+(* The engine's test for a substitution at an extent the fix carries: the
+   text there must be what the fix says, and the result must parse. *)
+let test_replace_at_is_checked () =
+  let loc = { Token.file = ""; line = 1; col = 5; offset = 4;
+              end_line = 1; end_col = 6; end_offset = 5 } in
+  let diag fix = Diag.error ~code:"E-TYPE" ~loc ~fix "x" in
+  let lines = ["let x = 1"] in
+  let apply from_ to_ =
+    Option.map (fun (l, _) -> String.concat "\n" l)
+      (Fix.apply_fix lines (diag (Diag.ReplaceAt { at = loc; from_; to_ })))
+  in
+  Alcotest.(check (option string)) "applied" (Some "let y = 1") (apply "x" "y");
+  Alcotest.(check (option string)) "other text there: declined" None (apply "z" "y");
+  Alcotest.(check (option string)) "a result that does not parse: declined"
+    None (apply "x" "(")
+
 let () =
   Alcotest.run "fix" [
     "manifest", [
@@ -328,6 +464,18 @@ let () =
       Alcotest.test_case "an empty default" `Quick
         test_empty_default_becomes_a_literal;
       Alcotest.test_case "a piped inspect!" `Quick test_piped_inspect_takes_input;
+      Alcotest.test_case "a foreign member" `Quick test_foreign_member_renamed;
+      Alcotest.test_case "a member with a choice" `Quick
+        test_foreign_member_with_a_choice;
+      Alcotest.test_case "a member's last ? or !" `Quick test_suffix_member;
+      Alcotest.test_case "a foreign constructor" `Quick
+        test_foreign_constructor_renamed;
+      Alcotest.test_case "a parameter's type" `Quick test_parameter_annotated;
+      Alcotest.test_case "a parameter, not certain" `Quick
+        test_parameter_not_certain;
+      Alcotest.test_case "lines read as one" `Quick test_lines_bracketed;
+      Alcotest.test_case "a replacement is checked" `Quick
+        test_replace_at_is_checked;
     ];
     "a function nothing calls", [
       Alcotest.test_case "a bare main! is called" `Quick test_bare_main_is_called;

@@ -775,18 +775,27 @@ let action_edit lines text (d : Diag.t) : (string * J.t list) option =
      | None -> None)
   | Some (Diag.Replace { from_; to_ }) ->
     (* Only when the flagged extent is exactly the text to replace --
-       anything less would be a guess about where in the line it meant. *)
+       anything less would be a guess about where in the line it meant.
+       `Fix.replace_extent` is the test, so `wand t --fix` and this action
+       agree. *)
     (match d.Diag.loc with
-     | Some l when l.Token.end_offset > l.Token.offset
-                && l.Token.end_offset <= String.length text
-                && String.sub text l.Token.offset
-                     (l.Token.end_offset - l.Token.offset) = from_ ->
+     | Some l when l.Token.line = l.Token.end_line
+                && Fix.replace_extent text l from_ to_ <> None ->
        Some (Printf.sprintf "Replace `%s` with `%s`" from_ to_,
              [text_edit
                 (range0 (l.Token.line - 1) (l.Token.col - 1)
                    (l.Token.end_line - 1) (l.Token.end_col - 1))
                 to_])
      | _ -> None)
+  (* The same over the extent the fix carries. *)
+  | Some (Diag.ReplaceAt { at = l; from_; to_ }) ->
+    if Fix.replace_extent text l from_ to_ <> None then
+      Some (Printf.sprintf "Replace `%s` with `%s`" from_ to_,
+            [text_edit
+               (range0 (l.Token.line - 1) (l.Token.col - 1)
+                  (l.Token.end_line - 1) (l.Token.end_col - 1))
+               to_])
+    else None
   | None -> None
 
 (* The diagnostics whose flagged lines touch the requested range. *)

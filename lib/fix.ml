@@ -90,6 +90,61 @@ let import_line_for lines text =
      | Some (n, _) -> n
      | None -> fst (List.nth plain (List.length plain - 1)) + 1)
 
+(* Whether `text` parses. A fix must not write a file that does not parse,
+   so a replacement that gives one is declined. The text is lexed under a
+   name of its own: the lexer keeps each whole source by its file name, and
+   the file being checked is kept under "". *)
+let parses text =
+  let file = "<wand fix check>" in
+  let ok =
+    match Parser.parse_program (Lexer.tokenize ~file text) with
+    | _ -> true
+    | exception _ -> false
+  in
+  Hashtbl.remove Lexer.sources file;
+  ok
+
+(* The byte offset of a 1-based line and column in `text`, when that
+   position is in the text. *)
+let offset_of text line col =
+  let n = String.length text in
+  let rec line_start i l =
+    if l = line then Some i
+    else match String.index_from_opt text i '\n' with
+      | Some j when j + 1 <= n -> line_start (j + 1) (l + 1)
+      | _ -> None
+  in
+  if line < 1 || col < 1 then None
+  else
+    match line_start 0 1 with
+    | None -> None
+    | Some s ->
+      let stop = match String.index_from_opt text s '\n' with
+        | Some j -> j | None -> n in
+      if s + col - 1 <= stop then Some (s + col - 1) else None
+
+(* `text` with the extent `l` replaced by `to_`, when the extent holds
+   exactly `from_` and the result parses. The extent is read by its lines
+   and columns in `text` as it is now, so a fix made after an earlier fix
+   in the same pass reads the text that fix left. Only an extent in the
+   file being checked counts: an extent from an imported file has a file
+   name, and its positions say nothing about this text. This is the one
+   test for a substitution. `wand t --fix` and the editor's code action
+   both make it. *)
+let replace_extent text (l : Token.loc) from_ to_ =
+  if l.Token.file <> "" then None
+  else
+    match offset_of text l.Token.line l.Token.col,
+          offset_of text l.Token.end_line l.Token.end_col with
+    | Some start, Some stop
+      when stop > start && String.sub text start (stop - start) = from_ ->
+      let replaced =
+        String.sub text 0 start ^ to_
+        ^ String.sub text stop (String.length text - stop)
+      in
+      if parses replaced then Some replaced else None
+    | _ -> None
+
 
 (* Apply one fix, answering the new lines and what happened -- or None when
    the fix is not one this engine applies. *)
@@ -155,23 +210,27 @@ let apply_fix lines (d : Diag.t) : (string list * applied) option =
   | Some (Diag.Replace { from_; to_ }) ->
     (match d.Diag.loc with
      | Some l when l.Token.line = l.Token.end_line ->
-       (match List.nth_opt lines (l.Token.line - 1) with
-        | Some old ->
-          let start = l.Token.col - 1 in
-          let stop  = l.Token.end_col - 1 in
-          if start >= 0 && stop > start && stop <= String.length old
-             && String.sub old start (stop - start) = from_
-          then
-            let replaced =
-              String.sub old 0 start ^ to_
-              ^ String.sub old stop (String.length old - stop)
-            in
-            at l.Token.line
-              (Printf.sprintf "replaced %s with %s" (quote from_) (quote to_))
-              (replace_line lines l.Token.line replaced)
-          else None
+       (match replace_extent (join_lines lines) l from_ to_ with
+        | Some text ->
+          at l.Token.line
+            (Printf.sprintf "replaced %s with %s" (quote from_) (quote to_))
+            (split_lines text)
         | None -> None)
      | _ -> None)
+  (* The same test over an extent the fix carries. It can run over more
+     than one line, as the brackets put around two statements do. *)
+  | Some (Diag.ReplaceAt { at = l; from_; to_ }) ->
+    (match replace_extent (join_lines lines) l from_ to_ with
+     | Some text ->
+       let what =
+         if l.Token.end_line > l.Token.line
+         then Printf.sprintf "lines %d to %d" l.Token.line l.Token.end_line
+         else quote from_
+       in
+       at l.Token.line
+         (Printf.sprintf "replaced %s with %s" what (quote to_))
+         (split_lines text)
+     | None -> None)
   | None -> None
 
 (* One pass over a clean check's findings, bottom-up so earlier line
@@ -195,8 +254,10 @@ let apply_findings lines (diags : Diag.t list) =
 
 (* A fix can unlock a further finding, so the loop re-checks after every
    pass; the cap only guards against a fix that fails to converge, which
-   would be a bug in the fix itself. *)
-let max_passes = 5
+   would be a bug in the fix itself. A check stops at its first error, so
+   each error takes a pass of its own, and a file can have more errors with
+   a fix than five. *)
+let max_passes = 50
 
 let fix_source ~path (src : string) : (string * applied list, Diag.t) result =
   let rec go lines applied passes =

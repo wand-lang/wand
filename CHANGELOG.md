@@ -23,6 +23,14 @@
 - A non-exhaustive match says what arm to add: `add an arm for it: | [] -> ...` (#134).
 - A missing list case is written as a person writes it: `[_ :: _ :: _]`, not `[_ :: [_ :: _]]` (#134).
 - `List.mapi`, `List.mem`, `Option.unwrap_or`, `String.drop` and similar names from other languages give a hint that names the wand function (#136).
+- `wand t --fix` changes a name from another language to the one wand function that the hint names: `List.iter` becomes `List.each` (#140).
+- `wand t --fix` changes a member name that differs only by a last `?` or `!`: `List.contains` becomes `List.contains?` (#140).
+- `wand t --fix` changes a constructor from another language that has one answer: `Err` becomes `Error`, `Just` becomes `Some` (#140).
+- `wand t --fix` writes the type on a parameter that is read only through a field, when one type has the field: `let f (r: ShellResult) = r.stdout` (#139).
+- `wand t --fix` puts lines that are read as one expression in brackets with `;` between them, as the error shows (#140).
+- `wand t --fix` and the editor's quick fix do not apply a change that gives a file that does not parse (#140).
+- `wand t --json` gives a `replace_at` fix, which holds the extent to change (#140).
+- `wand t --fix` makes up to 50 passes, not 5, because each error with a fix takes one pass (#140).
 
 ### Fixed
 

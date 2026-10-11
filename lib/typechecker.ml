@@ -964,6 +964,147 @@ let take_pending_fix () =
   pending_fix := None;
   f
 
+(* ── Extents for fixes ───────────────────────────────────────────────────── *)
+
+(* A fix that changes one name needs the exact extent of that name, and the
+   tree does not keep it: `List.iter` is a field of a name, and neither part
+   has a position. So these read the file's tokens again from the source the
+   lexer kept. They are read only on the way to an error. A source that is
+   not at hand gives no tokens, and then no fix. *)
+let skippable_token = function
+  | Token.Newline | Token.LineComment _ -> true
+  | _ -> false
+
+let tokens_of_file file =
+  match Hashtbl.find_opt Lexer.sources file with
+  | None -> [||]
+  | Some src ->
+    (match Lexer.tokenize ~file src with
+     | toks ->
+       Array.of_list (List.filter (fun (t, _) -> not (skippable_token t)) toks)
+     | exception _ -> [||])
+
+let inside (l : Token.loc) (t : Token.loc) =
+  t.Token.offset >= l.Token.offset && t.Token.end_offset <= l.Token.end_offset
+
+let join_locs (a : Token.loc) (b : Token.loc) =
+  { a with Token.end_line = b.Token.end_line; end_col = b.Token.end_col;
+           end_offset = b.Token.end_offset }
+
+(* `ns.member` as it is written inside `l`: the first place where the three
+   tokens stand together with no space between them. *)
+let qualified_extent (l : Token.loc) ns member =
+  let toks = tokens_of_file l.Token.file in
+  let n = Array.length toks in
+  let rec go i =
+    if i + 2 >= n then None
+    else
+      let (a, la) = toks.(i) and (d, ld) = toks.(i + 1)
+      and (b, lb) = toks.(i + 2) in
+      let is_ns = match a with
+        | Token.Upper s | Token.Ident s -> s = ns
+        | _ -> false
+      in
+      if is_ns && d = Token.Dot && b = Token.Ident member
+         && ld.Token.offset = la.Token.end_offset
+         && lb.Token.offset = ld.Token.end_offset
+         && inside l la && inside l lb
+      then Some (join_locs la lb)
+      else go (i + 1)
+  in
+  go 0
+
+(* The constructor `name` as it is written inside `l`: the first token that
+   spells it. *)
+let ctor_extent (l : Token.loc) name =
+  Array.to_list (tokens_of_file l.Token.file)
+  |> List.find_map (fun (t, lt) ->
+       if t = Token.Upper name && inside l lt then Some lt else None)
+
+let replace_fix at from_ to_ =
+  pending_fix := Some (Diag.ReplaceAt { at; from_; to_ })
+
+(* A parameter written as a plain name, and what is needed to find it in
+   the text again: the start of the body it is bound over, and the names of
+   the parameters from it to the last, which are plain names too. Read
+   backwards from the body, past its `->` or `=`, those names are the
+   tokens before it. A parameter that is a pattern, or that has a pattern
+   after it, is not noted, because the walk back cannot be certain where
+   it is. The type is the one the parameter was given, so the parameter
+   that an error is about is found by its type variable and not by its
+   name alone. *)
+type param_site = {
+  ps_name : string;
+  ps_type : typ;
+  ps_body : Token.loc;
+  ps_from : string list;   (* this parameter and those after it *)
+}
+
+let param_sites : param_site list ref = ref []
+
+let note_params (params : pat list) (param_ts : typ list) (body : expr) =
+  match body with
+  | Located (body_loc, _) when List.length params = List.length param_ts ->
+    let plain p = match Ast.strip_pat p with PVar n -> Some n | _ -> None in
+    let rec go ps ts =
+      match ps, ts with
+      | p :: prest, t :: trest ->
+        let rest_names = List.filter_map plain prest in
+        (match plain p with
+         | Some n when List.length rest_names = List.length prest ->
+           param_sites :=
+             { ps_name = n; ps_type = t; ps_body = body_loc;
+               ps_from = n :: rest_names } :: !param_sites
+         | _ -> ());
+        go prest trest
+      | _ -> ()
+    in
+    go params param_ts
+  | _ -> ()
+
+(* Where the parameter is written: the body's first token, then `->` or
+   `=` before it, then the parameter names before that, last first. *)
+let param_extent (s : param_site) =
+  let toks = tokens_of_file s.ps_body.Token.file in
+  let n = Array.length toks in
+  let rec body_index i =
+    if i >= n then None
+    else if (snd toks.(i)).Token.offset = s.ps_body.Token.offset then Some i
+    else body_index (i + 1)
+  in
+  match body_index 0 with
+  | Some i when i >= 1
+             && (fst toks.(i - 1) = Token.Arrow || fst toks.(i - 1) = Token.Eq) ->
+    let rec back j = function
+      | [] -> None
+      | [name] ->
+        if j >= 0 && fst toks.(j) = Token.Ident name then Some (snd toks.(j))
+        else None
+      | name :: rest ->
+        if j >= 0 && fst toks.(j) = Token.Ident name then back (j - 1) rest
+        else None
+    in
+    back (i - 2) (List.rev s.ps_from)
+  | _ -> None
+
+(* The fix for a parameter read only through a field: write its type on
+   it where it is bound. Only for a parameter noted above whose type is
+   the very variable the field access met, so the annotation gives that
+   type to the value the error is about. *)
+let param_annotation_fix name t type_name =
+  match repr t with
+  | TVar tv ->
+    let same s = s.ps_name = name
+                 && (match repr s.ps_type with TVar tv' -> tv' == tv | _ -> false) in
+    (match List.find_opt same !param_sites with
+     | Some s ->
+       (match param_extent s with
+        | Some at ->
+          replace_fix at name (Printf.sprintf "(%s: %s)" name type_name)
+        | None -> ())
+     | None -> ())
+  | _ -> ()
+
 exception TypeError of string
 
 (* The located form. `TypeError` is raised where only the fact is known;
@@ -1326,6 +1467,61 @@ let foreign_member_hint ns member =
   | "Int", "divmod" -> Some "write '(a / b, a % b)'"
   | _ -> None
 
+(* The members of the table above whose hint names one wand name, and
+   whose call takes the same arguments in the same order: the name is the
+   whole change, so `wand t --fix` writes it (#140). The others stay text
+   only. `List.mapi` and `List.iteri` take a function that `List.indexed`
+   and `List.each` do not; `String.sub` and `String.drop` count their
+   arguments differently from `String.slice`; `HTTP.header` gives an
+   Option where `header_list` gave a list; and a hint that names two
+   functions, or a form to write, is a choice for the author. *)
+let foreign_member_fix ns member =
+  match ns, member with
+  | "List", "iter" -> Some "List.each"
+  | "List", "enumerate" -> Some "List.indexed"
+  | "List", ("mem" | "elem" | "includes?" | "includes") ->
+    Some "List.contains?"
+  | "List", "append" -> Some "List.concat"
+  | "List", ("concat_map" | "bind" | "collect") -> Some "List.flat_map"
+  | "String", "split_on_char" -> Some "String.split"
+  | "Option", ("unwrap_or" | "get_or" | "with_default") ->
+    Some "Option.default"
+  | "IO", ("eprintln" | "prerr_endline") -> Some "IO.println_err"
+  | "IO", ("eprint" | "prerr_string") -> Some "IO.print_err"
+  | "Shell", "decode" -> Some "Decode.run"
+  | "Shell", "lines" -> Some "Decode.lines"
+  | "String", "to_path" -> Some "Path.of_string"
+  (* `String.to_int` and the others: the hint names the function, as
+     "use Int.of_string (import Int)". *)
+  | "String", m when String.starts_with ~prefix:"to_" m ->
+    (match foreign_member_hint ns member with
+     | Some h ->
+       (match String.split_on_char ' ' h with
+        | "use" :: name :: _ when String.contains name '.' -> Some name
+        | _ -> None)
+     | None -> None)
+  | "Path", "dirname" -> Some "Path.parent"
+  | _ -> None
+
+(* The one member that `name` differs from only by a last `?` or `!`:
+   `contains` for `contains?`, or `get?` for `get!`. None when there is no
+   such member, or more than one. A guess by spelling that is further off
+   than this is a guess, and stays text only. *)
+let suffix_member name members =
+  let base s =
+    let n = String.length s in
+    if n > 1 && (s.[n - 1] = '?' || s.[n - 1] = '!')
+    then String.sub s 0 (n - 1) else s
+  in
+  match List.filter (fun m -> m <> name && base m = base name) members with
+  | [m] -> Some m
+  | _ -> None
+
+(* Where the check is, for the errors it records rather than raises. A
+   raised one is located by the `Located` it passes on the way out; a
+   recorded one never leaves, so it reads the position here. *)
+let cur_loc : Token.loc option ref = ref None
+
 (* The same idea for a constructor: one spelled as another language spells
    it. `Err` is Rust's and Elm's, and was the error an agent met most often
    in the authoring benchmark; the spelling guess offers nothing for it.
@@ -1338,9 +1534,27 @@ let foreign_ctor_hint = function
   | "Nil" -> Some "the empty list is [], and 'h :: t' adds to a list"
   | _ -> None
 
+(* The constructors above that have one answer. `Left` and `Right` do not:
+   which of `Ok` and `Error` each one is meant to be is the author's
+   choice. *)
+let foreign_ctor_fix = function
+  | "Err" -> Some "Error"
+  | "Just" -> Some "Some"
+  | "Nothing" -> Some "None"
+  | "Nil" -> Some "[]"
+  | _ -> None
+
 (* What follows "unknown constructor 'X'": the foreign spelling's correction
-   when there is one, the spelling guess over `known` otherwise. *)
+   when there is one, the spelling guess over `known` otherwise. Every
+   caller raises the error at once, so the fix for a foreign spelling with
+   one answer is set here too (#140). *)
 let unknown_ctor_hint name known =
+  (match foreign_ctor_fix name, !cur_loc with
+   | Some to_, Some l ->
+     (match ctor_extent l name with
+      | Some at -> replace_fix at name to_
+      | None -> ())
+   | _ -> ());
   match foreign_ctor_hint name with
   | Some h -> " -- " ^ h
   | None -> Util.hint name known
@@ -1401,10 +1615,6 @@ let lookup name (env : env) =
 let unbound_names : (Token.loc option * string) list ref = ref []
 let unbound_seen : (string, unit) Hashtbl.t = Hashtbl.create 8
 
-(* Where the check is, for the errors it records rather than raises. A
-   raised one is located by the `Located` it passes on the way out; a
-   recorded one never leaves, so it reads the position here. *)
-let cur_loc : Token.loc option ref = ref None
 
 (* Every `Shared` type a use instantiated, and where, checked once the file
    is inferred and the types are known. *)
@@ -3054,6 +3264,56 @@ let rec unwrap_ctor_type t =
    next apply the first line's Unit to the second. The message was "expected
    Unit, got ('a -> Unit ! {IO}) -> 'b", which names two types and not the
    brackets that were missing. *)
+(* The fix for lines read as one expression: the brackets and the `;` that
+   the message shows, written in place of the expression (#140). It is set
+   only when it is certain. The text of the lines must hold every token of
+   the expression and no other, apart from one pair of brackets around all
+   of it that stood on lines of their own. And the text it writes must read
+   as one statement for each line. A comment in the lines, a line that
+   continues the one above it, or a `let` among them fails one of the two,
+   and the error then keeps only its text. *)
+let bracket_fix (l : Token.loc) texts =
+  let check_file = "<wand fix check>" in
+  let with_tokens s f =
+    let r = match Lexer.tokenize ~file:check_file s with
+      | toks -> f toks
+      | exception _ -> None
+    in
+    Hashtbl.remove Lexer.sources check_file;
+    r
+  in
+  (* The text of each token, in order. *)
+  let words s =
+    with_tokens s (fun toks ->
+      Some (List.filter_map (fun (t, (lt : Token.loc)) ->
+        if skippable_token t || t = Token.EOF then None
+        else Some (String.sub s lt.Token.offset
+                     (lt.Token.end_offset - lt.Token.offset))) toks))
+  in
+  let rec count e = match strip_located e with
+    | Seq (a, b) -> count a + count b
+    | _ -> 1
+  in
+  let statements s =
+    with_tokens s (fun toks ->
+      match Parser.parse_program toks with
+      | { items = [TLExpr e]; _ } -> Some (count e)
+      | _ -> None
+      | exception _ -> None)
+  in
+  match Hashtbl.find_opt Lexer.sources l.Token.file with
+  | Some src when l.Token.offset < l.Token.end_offset
+               && l.Token.end_offset <= String.length src ->
+    let original =
+      String.sub src l.Token.offset (l.Token.end_offset - l.Token.offset) in
+    let replacement = "( " ^ String.concat "; " texts ^ " )" in
+    (match words original, words (String.concat " " texts) with
+     | Some w, Some t when w = t || w = ("(" :: t) @ [")"] ->
+       if statements replacement = Some (List.length texts) then
+         replace_fix l original replacement
+     | _ -> ())
+  | _ -> ()
+
 let sequence_read_as_call tf (_f : expr) (_x : expr) =
   let not_a_function =
     match repr tf with
@@ -3098,6 +3358,7 @@ let sequence_read_as_call tf (_f : expr) (_x : expr) =
     let msg =
       if List.for_all Option.is_some texts then
         let texts = List.map Option.get texts in
+        bracket_fix l texts;
         let excerpt =
           List.map2 (fun n t -> Printf.sprintf "  %d | %s" n t) numbers texts in
         Printf.sprintf
@@ -3863,6 +4124,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
         (ts @ [t], infer_pat tenv p t env)
       ) ([], env) params
     in
+    note_params params param_ts body;
     incr lambda_depth;
     let (body_t, body_effects) =
       Fun.protect ~finally:(fun () -> decr lambda_depth)
@@ -3940,6 +4202,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        let latent = Effect_set.unknown () in
        unify_expected ~expected:tf ~got:(TFun (fn_arg_t, tr, latent));
        let env' = List.fold_left2 (fun env p t -> infer_pat tenv p t env) env params param_ts in
+       note_params params param_ts body;
        let (body_t, body_effects) = scoped_eff (fun () -> infer tenv env' body) in
     let body_effects =
       if List.exists (pat_is_refutable tenv) params
@@ -4370,6 +4633,26 @@ let rec infer tenv (env : env) (e : expr) : typ =
                      " -- 'wand d %s' lists its members" ns_name
                  | h -> h)
             in
+            (* Where the change is certain, it is also the fix (#140): the
+               name another language uses, or the member the name differs
+               from only by its last `?` or `!`. *)
+            let fix_to =
+              match foreign_member_fix ns_name label with
+              | Some _ as f -> f
+              | None when foreign_member_hint ns_name label = None ->
+                (match suffix_member label (List.map fst ns_env) with
+                 | Some m when Util.hint label (List.map fst ns_env)
+                               = Printf.sprintf " (did you mean '%s'?)" m ->
+                   Some (ns_name ^ "." ^ m)
+                 | _ -> None)
+              | None -> None
+            in
+            (match fix_to, !cur_loc with
+             | Some to_, Some l ->
+               (match qualified_extent l ns_name label with
+                | Some at -> replace_fix at (ns_name ^ "." ^ label) to_
+                | None -> ())
+             | _ -> ());
             raise (TypeError (Printf.sprintf
               "namespace '%s' has no member '%s'%s" ns_name label hint)))
       | _ -> None
@@ -4625,6 +4908,13 @@ let rec infer tenv (env : env) (e : expr) : typ =
                      'let (x: %s) = ...'" ty),
                  "bind it to a name that carries its type"
              in
+             (* One type has the field, and the subject is a parameter
+                written as a plain name: the annotation the message asks
+                for is the fix, and it goes where the parameter is bound
+                (#139). *)
+             (match owners, strip_located e with
+              | [one], Var n -> param_annotation_fix n t one
+              | _ -> ());
              let msg =
                match owners with
                | [one] ->
@@ -5048,6 +5338,7 @@ and lambda_waiting tenv (env : env) params body =
   let check () =
     let env' =
       List.fold_left2 (fun env p t -> infer_pat tenv p t env) env params param_ts in
+    note_params params param_ts body;
     incr lambda_depth;
     let (body_t, body_effects) =
       Fun.protect ~finally:(fun () -> decr lambda_depth)
@@ -5142,6 +5433,7 @@ and infer_app_spine ?extra tenv (env : env) head args =
         List.fold_left2 (fun env p t -> infer_pat tenv p t env)
           env params param_ts
       in
+      note_params params param_ts body;
       let (body_t, body_effects) = scoped_eff (fun () -> infer tenv env' body) in
       let body_effects =
         if List.exists (pat_is_refutable tenv) params
@@ -6759,6 +7051,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   last_shell_static := true;
   last_shell_allow := None;
   pending_fix := None;
+  param_sites := [];
   current_eff := Effect_set.absorb ~ambient:(Effect_set.unknown ())
       (Effect_set.of_list (Effect_set.EffSet.elements init_effects));
   (* Seeded, not emptied: loading this file loads what it imports, so what
