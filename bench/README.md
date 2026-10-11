@@ -69,7 +69,10 @@ case, the turns on passing runs and on all runs, the escapes (runs that the
 agent ended as done and that then failed a case), and the cost. It also
 records each tool call the agent made, and reports how many calls of each
 kind (look up a name, try an expression, typecheck, run the program, and so
-on) a run takes, so that the turns can be traced to a cause.
+on) a run takes, so that the turns can be traced to a cause. Each run's
+JSON line also keeps its `steps`: every command, write and edit in full, and
+the whole text of each error, so that an error can be read beside the code
+that caused it.
 
 ## Review: `bench/review/<NN-slug>/`
 

@@ -100,7 +100,13 @@ type Report(num_turns: Int, total_cost_usd: Float, is_error: Bool, duration_ms: 
 -- The parts of the agent's event stream that say which tools it called.
 -- Each line of `--output-format stream-json` is one event; a tool call is
 -- a `tool_use` block in an `assistant` event's message.
-type Input(command: Option String, file_path: Option String)
+type Input(
+  command: Option String,
+  file_path: Option String,
+  content: Option String,
+  old_string: Option String,
+  new_string: Option String
+)
 
 type Block(kind "type": String, name: Option String, input: Option Input)
 
@@ -121,7 +127,8 @@ type Run(
   cases: Int,
   failed: Int,
   failures: List String,
-  calls: List String
+  calls: List String,
+  steps: List String
 )
 
 let prompt lang =
@@ -217,6 +224,19 @@ let reports? (line: String) = Regex.match? r/^\s*(Error|error|warning)\b/ line
 
 let worth_keeping? (failed, text) = failed || List.any? reports? (String.lines text)
 
+-- One tool call in full: the whole command, or the file it wrote and
+-- what it wrote, or the text an edit replaced and what replaced it. The
+-- calls log keeps one line of each; this keeps the code, so that an error
+-- can be read beside the code that caused it.
+let in_full (Block(name, input)) = (
+  let tool = Option.default "?" name;
+  match input with
+  | Some (Input(command = Some c)) -> "%{tool}:\n%{c}"
+  | Some (Input(file_path = Some f, content = Some text)) -> "%{tool} %{f}:\n%{text}"
+  | Some (Input(file_path = Some f, old_string = Some old, new_string = Some new)) -> "%{tool} %{f}:\n--- old\n%{old}\n--- new\n%{new}"
+  | _ -> tool
+)
+
 -- A result as one line: its first three non-empty lines, joined.
 let summarize (_, text) =
   let first =
@@ -248,8 +268,30 @@ let calls_in (line: String) =
     | _ -> []
   )
 
--- Run the agent. It answers with its own report of the run, and with each
--- tool call it made, in order.
+-- What one line of the event stream adds to the steps: each tool call in
+-- full, and the whole text of each result worth keeping.
+let steps_in (line: String) =
+  match JSON.parse line with
+  | Error _ -> []
+  | Ok event -> (
+    match JSON.decode (Decode.field "type" Decode.string) event with
+    | Ok "assistant" -> (
+      match JSON.decode Event.decoder event with
+      | Ok (Event(message = Some (Message content))) ->
+        content |> List.filter (fn (b: Block) -> b.kind == "tool_use") |> List.map in_full
+      | _ -> []
+    )
+    | Ok "user" -> (
+      match JSON.decode results event with
+      | Ok rs ->
+        rs |> List.filter worth_keeping? |> List.map (fn (_, text) -> "result:\n%{text}")
+      | Error _ -> []
+    )
+    | _ -> []
+  )
+
+-- Run the agent. It answers with its own report of the run, with each
+-- tool call it made as one line, and with each in full, in order.
 let agent! (dir: Path) (bin: Path) lang = (
   let path = "%{bin}:%{setting "PATH" "/usr/bin:/bin"}";
   let r =
@@ -257,7 +299,11 @@ let agent! (dir: Path) (bin: Path) lang = (
   let lines = String.lines r.stdout;
   let last = List.reverse lines |> List.head |> Option.default "";
   match JSON.parse last |> Result.and_then (JSON.decode Report.decoder) with
-  | Ok report -> (report, List.flatten (List.map calls_in lines))
+  | Ok report -> (
+    report,
+    List.flatten (List.map calls_in lines),
+    List.flatten (List.map steps_in lines)
+  )
   | Error why ->
     Result.get!
       (Error
@@ -267,7 +313,7 @@ let agent! (dir: Path) (bin: Path) lang = (
 let one_run! (bin: Path) (task, lang, n) =
   with FS.temp_dir "bench_author_" as dir -> (
     stage! lang task dir;
-    let (took, (Report(num_turns, total_cost_usd, is_error), calls)) =
+    let (took, (Report(num_turns, total_cost_usd, is_error), calls, steps)) =
       Clock.timed (fn () -> agent! dir bin lang);
     let solution = Path.join dir (Path.of_string "solution.%{extension lang}");
     let written = FS.file? solution;
@@ -286,7 +332,8 @@ let one_run! (bin: Path) (task, lang, n) =
       cases = total,
       failed = if written then List.length failures else total,
       failures = failures,
-      calls = calls
+      calls = calls,
+      steps = steps
     )
   )
 
