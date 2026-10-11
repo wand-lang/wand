@@ -1,0 +1,47 @@
+import List
+import Map
+
+let {test, group} = import Test
+
+-- ── p.N reads the element of a tuple at position N (#144) ───────────────
+--
+-- `p.0` is the first element. The type of the tuple gives its size, so an
+-- index past the end is a type error and not a failure at run time. The
+-- digits after a `.` are one index, so `p.0.1` is `(p.0).1`.
+
+let pair = ("a", 1)
+
+let triple = (1, "two", 3.0)
+
+let nested = ((1, 2), (3, (4, 5)))
+
+let second (p: (String, Int)) = p.1
+
+test "the first element is .0" (fn t -> t.eq "a" pair.0)
+
+test "the second element is .1" (fn t -> t.eq 1 pair.1)
+
+group "each element of a triple has its own type" (fn () -> [
+  test ".0" (fn t -> t.eq 1 triple.0),
+  test ".1" (fn t -> t.eq "two" triple.1),
+  test ".2" (fn t -> t.eq 3.0 triple.2)
+])
+
+test "a tuple of five" (fn t -> t.eq 5 (1, 2, 3, 4, 5).4)
+
+group "a nested tuple" (fn () -> [
+  test "two indexes" (fn t -> t.eq 2 nested.0.1),
+  test "three indexes are not a version" (fn t -> t.eq 5 nested.1.1.1)
+])
+
+test "an annotated parameter" (fn t -> t.eq 1 (second pair))
+
+test "the list gives a lambda its type" (fn t ->
+  let pairs = [("a", 1), ("b", 0), ("c", 2)];
+  t.eq ["a", "c"] (pairs |> List.filter (fn p -> p.1 > 0) |> List.map (fn p -> p.0)))
+
+test "from Map.to_list" (fn t ->
+  let m = Map.from_list [("x", 1), ("y", 2)];
+  t.eq [1, 2] (Map.to_list m |> List.map (fn kv -> kv.1)))
+
+test "in an interpolation" (fn t -> t.eq "a=1" "%{pair.0}=%{pair.1}")

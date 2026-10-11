@@ -9,6 +9,12 @@
 - `Path.relative_to` and `Path.relative_to!` give a path relative to a directory: `./d/logs/b.txt` relative to `./d` is `logs/b.txt` (#133).
 - `.*.txt` is a glob literal, as `*.txt` is (#138).
 - A match guard can start with `if`: `| Ok n if n >= 1 -> n` (#142).
+- `p.0`, `p.1` and so on read the element of a tuple at that position: `("a", 1).1` is `1` (#144).
+- An index past the end of a tuple is a type error: `a tuple of 2 has elements .0 to .1` (#144).
+- A tuple index on a value of unknown type gives an error that says to write its type: `'p' needs its type before '.1' can be read` (#144).
+- The digits after a `.` are one tuple index: `p.0.1` is `(p.0).1`, not `p` and the Float `0.1` (#144).
+- A tuple index with a leading zero, such as `p.01`, is an error that says to write `p.1` (#144).
+- `wand f` keeps `p.1` as it is written (#144).
 
 ### Changed
 

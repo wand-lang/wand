@@ -390,7 +390,15 @@ let test_parameter_not_certain () =
     refuse "type A(n: Int)\ntype B(n: Int)\nlet get x = x.n\nlet v = get (A(n = 1))\n" in
   Alcotest.(check bool) "two types have the field" true (d.Diag.fix = None);
   let d = refuse "let get (x, y) = x.stdout\n" in
-  Alcotest.(check bool) "a parameter that is a pattern" true (d.Diag.fix = None)
+  Alcotest.(check bool) "a parameter that is a pattern" true (d.Diag.fix = None);
+  (* A tuple read by position does not say its size or the types of its
+     elements, so no annotation is certain (#144). *)
+  let d = refuse "let second p = p.1\n" in
+  Alcotest.(check bool) "a tuple index says what to write" true
+    (Lint.contains d.Diag.message
+       "'p' needs its type before '.1' can be read: write its tuple type, \
+        such as '(p: (A, B))'");
+  Alcotest.(check bool) "a tuple index carries no fix" true (d.Diag.fix = None)
 
 (* Lines read as one expression get the brackets and the `;` that the
    message shows. *)

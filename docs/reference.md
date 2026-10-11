@@ -1113,7 +1113,42 @@ let pair   = (1, 2)
 let triple = (true, "hello", 42)
 
 let (a, b) = pair      -- destructure
+
+pair.0                 -- 1: the element at position 0
+triple.2               -- 42
 ```
+
+`p.N` reads the element of a tuple at position `N`. `p.0` is the first
+element. A tuple of three has `.0`, `.1` and `.2`. The type of the tuple
+gives its size, so an index past the end is a type error:
+
+```ocaml
+(1, 2, 3).3
+-- type error: a tuple of 3 has elements .0 to .2
+```
+
+The digits after a `.` are one index. `p.0.1` reads `.1` of `p.0`, and is
+never `p` and the `Float` `0.1`:
+
+```ocaml
+let nested = ((1, 2), 3)
+nested.0.1             -- 2
+```
+
+As for a record field, the type of the tuple must be known where the
+element is read. An argument written after a lambda gives it its type, so
+`List.filter (fn p -> p.1 > 0) pairs` is accepted. A parameter with
+nothing else to go on needs its type written:
+
+```ocaml
+let second p = p.1
+-- type error: 'p' needs its type before '.1' can be read: write its tuple
+-- type, such as '(p: (A, B))'
+
+let second (p: (String, Int)) = p.1
+```
+
+`wand f` keeps `p.1` as it is written.
 
 ---
 

@@ -27,10 +27,14 @@ type state = {
      a wand.pkg, which holds no arithmetic for `a.b/c` to mean. *)
   bare_urls : bool;
   mutable after_import : bool;
+  (* The token before was a `.`, so digits here are the index of a tuple
+     element and not a number: `p.0.1` is `(p.0).1` (#144). *)
+  mutable after_dot : bool;
 }
 
 let make ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false) src =
   { src; pos = 0; base; line; col; file; bare_urls; after_import = false;
+    after_dot = false;
     tok_start = Token.point ~file line col base }
 
 let len s = String.length s.src
@@ -1100,6 +1104,29 @@ let read_port s =
        escape as an OCaml failure rather than a lex error. *)
     raise (Fail (Printf.sprintf "invalid port :%s: must be 0-65535" digits))
 
+(* The index of a tuple element, after a `.`: `p.1`. It is digits and
+   nothing more. A `.` after it is the next access and not a fraction, so
+   `p.0.1` is `(p.0).1` and `p.1.2.3` is not a version (#144). *)
+let read_index s first_char =
+  let buf = Buffer.create 2 in
+  Buffer.add_char buf first_char;
+  while not (is_at_end s) && is_digit (peek s) do
+    Buffer.add_char buf (advance s)
+  done;
+  let digits = Buffer.contents buf in
+  if String.length digits > 1 && digits.[0] = '0' then begin
+    let rec strip i =
+      if i < String.length digits - 1 && digits.[i] = '0' then strip (i + 1)
+      else String.sub digits i (String.length digits - i)
+    in
+    raise (Fail (Printf.sprintf
+      "a tuple index has no leading zero: write .%s, not .%s"
+      (strip 0) digits))
+  end;
+  match int_of_string_opt digits with
+  | Some n -> Int n
+  | None -> raise (Fail (Printf.sprintf "tuple index .%s is too large" digits))
+
 (* ── Main tokeniser ─────────────────────────────────────────────────────── *)
 
 let next_token s =
@@ -1267,6 +1294,7 @@ let next_token s =
         done;
         ret (TypeVar (Buffer.contents buf))
       end
+    | c when is_digit c && s.after_dot -> ret (read_index s c)
     | c when is_digit c -> ret (read_numeric s c)
     | c when is_alpha c || c = '_' -> ret (read_ident s c)
     | '\\' when is_alpha (peek s) || peek s = '_' || peek s = '(' ->
@@ -1308,6 +1336,7 @@ let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false
     in
     toks := (t, loc) :: !toks;
     s.after_import <- (t = Import);
+    s.after_dot <- (t = Dot);
     if t <> EOF then loop ()
   in
   loop ();

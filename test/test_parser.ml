@@ -517,7 +517,14 @@ let test_field () =
     (App (Var "f", Field (Var "x", "y")));
   e "chained field on argument"
     "f x.a.b"
-    (App (Var "f", Field (Field (Var "x", "a"), "b")))
+    (App (Var "f", Field (Field (Var "x", "a"), "b")));
+  (* `p.1` reads the element of a tuple at that position. The label keeps
+     its digits, and `p.0.1` is two accesses (#144). *)
+  e "tuple index"  "p.1"   (Field (Var "p", "1"));
+  e "nested index" "p.0.1" (Field (Field (Var "p", "0"), "1"));
+  e "index on argument" "f p.1" (App (Var "f", Field (Var "p", "1")));
+  e "index after a field" "r.pair.0" (Field (Field (Var "r", "pair"), "0"));
+  e "index on a tuple" "(a, b).1" (Field (Tuple [Var "a"; Var "b"], "1"))
 
 (* ── Let ─────────────────────────────────────────────────────────────────── *)
 

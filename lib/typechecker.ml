@@ -4705,6 +4705,52 @@ let rec infer tenv (env : env) (e : expr) : typ =
     let canon = canonical_type_name (m ^ "." ^ tname) in
     with_visible (List.map fst own)
       (fun () -> infer tenv' env (Field (Constr canon, label)))
+  (* `p.1`: the element of a tuple at that position (#144). The tuple's
+     type gives its size, so an index past the end is an error here and not
+     at run time. As for a field, the type must be known where it is read. *)
+  | Field (e, label) when Ast.tuple_index label <> None ->
+    let i = Option.get (Ast.tuple_index label) in
+    let is_module = match strip_located e with
+      | Var n | Constr n ->
+        (match List.assoc_opt n env with Some (Namespace _) -> true | _ -> false)
+      | _ -> false
+    in
+    if is_module then
+      raise (TypeError (Printf.sprintf
+        "'.%s' reads an element of a tuple, and a module is not a tuple"
+        label));
+    let t = infer tenv env e in
+    (match repr t with
+     | TTuple ts ->
+       let n = List.length ts in
+       (match List.nth_opt ts i with
+        | Some ti -> ti
+        | None ->
+          raise (TypeError (Printf.sprintf
+            "a tuple of %d has elements .0 to .%d" n (n - 1))))
+     | TVar _ ->
+       (* The size of the tuple is not known, nor the type of each element,
+          so no annotation is certain and none is offered as a fix. The
+          example has as many elements as the index needs. *)
+       let example =
+         "(" ^ String.concat ", "
+           (List.init (max 2 (i + 1)) (fun k ->
+              String.make 1 (Char.chr (Char.code 'A' + (k mod 26))))) ^ ")"
+       in
+       (match strip_located e with
+        | Var n ->
+          raise (TypeError (Printf.sprintf
+            "'%s' needs its type before '.%s' can be read: write its tuple \
+             type, such as '(%s: %s)'" n label n example))
+        | _ ->
+          raise (TypeError (Printf.sprintf
+            "this value needs its type before '.%s' can be read: bind it to \
+             a name that carries its type, such as 'let (x: %s) = ...'"
+            label example)))
+     | _ ->
+       raise (TypeError (Printf.sprintf
+         "'.%s' reads an element of a tuple, and this is %s"
+         label (string_of_typ t))))
   | Field (e, label) ->
     (* Namespace access: Ns.member — check before falling into regular field inference *)
     let lookup_ns ns_name =
