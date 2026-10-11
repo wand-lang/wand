@@ -12,6 +12,7 @@
 
 ### Changed
 
+- `xs[1]` on a list gives an error that says what to write: `use List.get 1 xs (as an Option) or List.get! 1 xs` (#145).
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).

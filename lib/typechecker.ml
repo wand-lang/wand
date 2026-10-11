@@ -3377,6 +3377,93 @@ let sequence_read_as_call tf (_f : expr) (_x : expr) =
     raise (TypeErrorAt (l, msg))
   | _ -> ()
 
+(* `xs[1]` written to get an item of a list (#145). wand has no syntax to
+   index a list, so the parser reads this as `xs` applied to the list `[1]`,
+   and the message was "expected List Int, got List Int -> 'a". When the
+   name is a `List`, the argument is a list literal of one item, and no
+   space stands between the name and the `[`, the message tells what to
+   write. `xs [1]` with a space is a call as written, and keeps its message.
+
+   The tree does not keep the space or where the name is, so this reads the
+   tokens: the name, a `[` that touches it, and the `]` that closes it. When
+   the text holds more than one of these, the one whose index parses to the
+   index in the tree is the one. No fix is carried: the choice between
+   `get` and `get!` is not certain. *)
+let list_index_as_call tf (f : expr) (x : expr) =
+  match strip_located f, strip_located x, repr tf, !cur_loc with
+  | Var name, List [index], TList _, Some l ->
+    let toks = tokens_of_file l.Token.file in
+    let n = Array.length toks in
+    (* The index of the `]` that closes a `[`, read from `j`, the token
+       after it, when the brackets hold one item. *)
+    let rec close depth j =
+      if j >= n then None
+      else
+        match fst toks.(j) with
+        | Token.LBracket | Token.LParen | Token.LBrace ->
+          close (depth + 1) (j + 1)
+        | Token.RBracket when depth = 0 -> Some j
+        | Token.RBracket | Token.RParen | Token.RBrace ->
+          if depth = 0 then None else close (depth - 1) (j + 1)
+        | Token.Comma when depth = 0 -> None
+        | Token.EOF -> None
+        | _ -> close depth (j + 1)
+    in
+    let candidates =
+      List.filter_map (fun i ->
+        let (a, la) = toks.(i) and (b, lb) = toks.(i + 1) in
+        if a = Token.Ident name && b = Token.LBracket
+           && lb.Token.offset = la.Token.end_offset && inside l la
+        then
+          match close 0 (i + 2) with
+          | Some j when j > i + 2 && inside l (snd toks.(j)) -> Some (i, j)
+          | _ -> None
+        else None)
+        (List.init (max 0 (n - 1)) Fun.id)
+    in
+    let same_index (i, j) =
+      let inner = Array.to_list (Array.sub toks (i + 2) (j - i - 2)) in
+      match Parser.parse_expr (inner @ [(Token.EOF, snd toks.(j))]) with
+      | e -> Ast.show e = Ast.show index
+      | exception _ -> false
+    in
+    let found =
+      match List.filter same_index candidates, candidates with
+      | c :: _, _ -> Some c
+      | [], [c] -> Some c
+      | _ -> None
+    in
+    (match found, Hashtbl.find_opt Lexer.sources l.Token.file with
+     | Some (i, j), Some src ->
+       let from_ = (snd toks.(i + 1)).Token.end_offset
+       and to_ = (snd toks.(j)).Token.offset in
+       if from_ <= to_ && to_ <= String.length src then begin
+         let text = String.trim (String.sub src from_ (to_ - from_)) in
+         (* One token, or one pair of brackets around all of it, is an atom;
+            anything else gets brackets, so it reads as one argument. *)
+         let atom =
+           j = i + 3
+           || (fst toks.(i + 2) = Token.LParen
+               && (let rec paren depth k =
+                     if k >= j then false
+                     else match fst toks.(k) with
+                       | Token.LParen | Token.LBracket | Token.LBrace ->
+                         paren (depth + 1) (k + 1)
+                       | Token.RParen | Token.RBracket | Token.RBrace ->
+                         if depth = 1 then k = j - 1
+                         else paren (depth - 1) (k + 1)
+                       | _ -> paren depth (k + 1)
+                   in
+                   paren 0 (i + 2)))
+         in
+         let index_text = if atom then text else "(" ^ text ^ ")" in
+         raise (TypeErrorAt (snd toks.(i),
+           Printf.sprintf "use List.get %s %s (as an Option) or List.get! %s %s"
+             index_text name index_text name))
+       end
+     | _ -> ())
+  | _ -> ()
+
 (* Whether `m` is a type in scope with constructors, so that `m.Ctor` names
    one of them. A module of the same name is asked first, by the callers. *)
 let is_ctor_type tenv m =
@@ -4224,6 +4311,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | _ ->
        let tx = infer tenv env x in
        sequence_read_as_call tf f x;
+       list_index_as_call tf f x;
        let tr = fresh () in
        let latent = Effect_set.unknown () in
        unify_expected ~expected:tf ~got:(TFun (tx, tr, latent));

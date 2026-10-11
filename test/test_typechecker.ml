@@ -759,6 +759,42 @@ let test_lines_read_as_one_expression () =
     "import List\nlet xs = List.map\n  (fn x -> x + 1)\n  [1, 2]\nxs"
     "[2, 3]"
 
+(* `xs[1]` is `xs` applied to the list `[1]`. wand has no syntax to index a
+   list, so when the name is a `List` and no space stands before the `[`,
+   the error says what to write (#145). *)
+let test_a_list_indexed_with_brackets () =
+  let no_hint label input needle =
+    match run input with
+    | Ok s -> Alcotest.failf "%s: expected error but got: %s" label s
+    | Error msg ->
+      if not (contains msg needle) || contains msg "List.get" then
+        Alcotest.failf "%s: expected '%s' and no hint, got: %s" label needle msg
+  in
+  err_contains "a name and an index"
+    "let xs = [1, 2, 3] in xs[1]"
+    "1:23: use List.get 1 xs (as an Option) or List.get! 1 xs";
+  err_contains "an index that is not an atom gets brackets"
+    "let f i =\n  let items = [1, 2]\n  1 + items[i + 1]\nf 0"
+    "3:7: use List.get (i + 1) items (as an Option) or List.get! (i + 1) items";
+  err_contains "an index in brackets keeps them"
+    "let xs = [1] in xs[(0)]"
+    "use List.get (0) xs (as an Option) or List.get! (0) xs";
+  no_hint "a space before the bracket is a call as written"
+    "let xs = [1, 2, 3] in xs [1]"
+    "1:23: expected List Int, got List Int -> 'a";
+  no_hint "two items are not an index"
+    "let xs = [1, 2, 3] in xs[1, 2]"
+    "expected List Int, got List Int -> 'a";
+  no_hint "a Map keeps its error"
+    "let m = {a = 1} in m[1]"
+    "expected Map Int, got List Int -> 'a";
+  no_hint "a String keeps its error"
+    "let s = \"ab\" in s[1]"
+    "expected String, got List Int -> 'a";
+  no_hint "a tuple keeps its error"
+    "let p = (1, 2) in p[1]"
+    "expected (Int, Int), got List Int -> 'a"
+
 (* A field may name its key in a document. Two fields of one constructor
    cannot read one key, whether the key is written or is the field's own
    name: a decoder would fill both from it, and an encoder would write it
@@ -2687,6 +2723,8 @@ let () =
         test_constructors_qualified_by_type;
       Alcotest.test_case "lines read as one expression" `Quick
         test_lines_read_as_one_expression;
+      Alcotest.test_case "a list indexed with brackets" `Quick
+        test_a_list_indexed_with_brackets;
       Alcotest.test_case "two fields cannot share a key" `Quick
         test_two_fields_cannot_share_a_key;
       Alcotest.test_case "two constructors cannot share a spelling" `Quick
