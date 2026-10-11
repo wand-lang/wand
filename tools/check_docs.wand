@@ -119,6 +119,49 @@ let report_undocumented names = (
   Proc.exit 1
 )
 
+-- ── The guide's index ─────────────────────────────────────────────────
+
+-- Part B of CLAUDE.md lists the members of the modules a script uses most,
+-- so that an agent does not have to ask `wand d` for each one. The list is
+-- written by hand, so a name that is added, renamed or removed makes it
+-- wrong, and an agent believes it. Each row must be what `wand d` gives:
+-- the members in its order, with `name` and `name!` written as `name(!)`.
+let guide = ./CLAUDE.md
+
+let short name = String.split "." name |> List.drop 1 |> String.join "."
+
+let index_entry names name =
+  let raising = "%{name}!";
+  if List.contains? raising names then "%{name}(!)" else name
+
+let index_row! module =
+  let names = members_of! module |> List.map short;
+  let shown =
+    names
+    |> List.filter (fn n ->
+      !(String.ends_with? "!" n
+      && List.contains? (String.slice 0 (String.length n - 1) n) names))
+    |> List.map (index_entry names);
+  "| `%{module}` | %{String.join " " shown} |"
+
+let index_module row = String.split "`" row |> List.get 1 |> Option.default ""
+
+let stale_rows! () =
+  FS.read_file! guide
+  |> String.lines
+  |> List.filter (fn l ->
+    String.starts_with? "| `" l && List.contains? (index_module l) modules)
+  |> List.filter_map (fn row ->
+    let want = index_row! (index_module row);
+    if row == want then None else Some(row, want))
+
+let report_stale rows = (
+  IO.println_err "these rows of the index in CLAUDE.md disagree with wand d:";
+  rows
+  |> List.each (fn (row, want) -> IO.println_err "  is:      %{row}\n  wand d:  %{want}");
+  Proc.exit 1
+)
+
 -- No module found means the gate ran somewhere other than the repository's
 -- root and checked nothing; that is a failure, not a pass.
 let main! () = (
@@ -129,6 +172,8 @@ let main! () = (
   );
   let missing = modules |> List.map undocumented_in! |> List.flatten;
   if List.empty? missing then () else report_undocumented missing;
+  let stale = stale_rows! ();
+  if List.empty? stale then () else report_stale stale;
   let results = modules |> List.map check;
   match List.filter Shell.failed? results with
   | [] -> IO.println "every function has an example, and every example holds"
