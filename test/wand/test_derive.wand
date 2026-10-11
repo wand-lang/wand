@@ -38,7 +38,7 @@ test "and a document missing it is refused, by name" (fn t ->
 
 test "a field of the wrong type is named too" (fn t ->
   let wrong = JSON.parse! `{"name": "a", "restarts": "many", "timeout": "1h"}`;
-  t.eq (Error `.restarts: expected Int, got "many"`) (JSON.decode Pod.decoder wrong))
+  t.eq (Error `.restarts: expected Int, got String "many"`) (JSON.decode Pod.decoder wrong))
 
 -- A domain literal decodes as itself here as anywhere else.
 type Server(host: IPv4, port: Port, at: DateTime)
@@ -179,7 +179,7 @@ test "and the argument can be another derived decoder" (fn t ->
 test "a failure inside the parameter still names its place" (fn t ->
   let doc = JSON.parse! `{"items": [1, "x"], "total": 2}`;
   t.eq
-    (Error `.items[1]: expected Int, got "x"`)
+    (Error `.items[1]: expected Int, got String "x"`)
     (JSON.decode (Paged.decoder Decode.int) doc))
 
 -- Generic and recursive at once: the type mentions itself with the same

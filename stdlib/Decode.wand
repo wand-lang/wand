@@ -40,7 +40,7 @@
 -- are read:
 --
 -- >> JSON.decode Decode.int (JSON.parse! `"3"`)
--- Error("expected Int, got \"3\"") : Result String Int
+-- Error("expected Int, got String \"3\"") : Result String Int
 --
 -- >> Decode.run Decode.int "3"
 -- Ok(3) : Result String Int

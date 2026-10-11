@@ -43,7 +43,7 @@ test "a missing field is named" (fn t ->
   t.eq ".restarrts: no such field" (failure (Decode.field "restarrts" Decode.int)))
 
 test "a wrong type names the field and what was there" (fn t ->
-  t.eq `.name: expected Int, got "web-01"` (failure (Decode.field "name" Decode.int)))
+  t.eq `.name: expected Int, got String "web-01"` (failure (Decode.field "name" Decode.int)))
 
 test "the path is the whole path" (fn t ->
   let name = Decode.field "metadata" (Decode.field "name" Decode.string);
@@ -94,7 +94,7 @@ test "one_of takes the first that works" (fn t ->
 -- reports all of them rather than picking.
 test "one_of reports every alternative when none works" (fn t ->
   t.eq
-    `no alternative matched: .nope: no such field; .name: expected Int, got "web-01"`
+    `no alternative matched: .nope: no such field; .name: expected Int, got String "web-01"`
     (failure (Decode.one_of [Decode.field "nope" Decode.int, Decode.field "name" Decode.int])))
 
 -- A domain literal decodes as itself, so the boundary produces the type the
@@ -119,9 +119,9 @@ test "and a string that is not one says so" (fn t ->
 test "a JSON string is not a number" (fn t ->
   let text = JSON.parse! `{"n": "42", "f": "1.5", "b": "true"}`;
   t.eq (
-    Error `.n: expected Int, got "42"`,
-    Error `.f: expected Float, got "1.5"`,
-    Error `.b: expected Bool, got "true"`
+    Error `.n: expected Int, got String "42"`,
+    Error `.f: expected Float, got String "1.5"`,
+    Error `.b: expected Bool, got String "true"`
   ) (
     JSON.decode (Decode.field "n" Decode.int) text,
     JSON.decode (Decode.field "f" Decode.float) text,
@@ -131,13 +131,13 @@ test "a JSON string is not a number" (fn t ->
 type Timing(ms: Int)
 
 test "a type's own decoder refuses a JSON string for an Int" (fn t ->
-  t.eq (Error `.ms: expected Int, got "12"`, Ok Timing(ms = 12)) (
+  t.eq (Error `.ms: expected Int, got String "12"`, Ok Timing(ms = 12)) (
     JSON.decode Timing.decoder (JSON.parse! `{"ms": "12"}`),
     JSON.decode Timing.decoder (JSON.parse! `{"ms": 12}`)
   ))
 
 test "TOML and YAML are as strict as JSON" (fn t ->
-  t.eq (Error `.ms: expected Int, got "12"`, Error `.ms: expected Int, got "12"`) (
+  t.eq (Error `.ms: expected Int, got String "12"`, Error `.ms: expected Int, got String "12"`) (
     TOML.decode Timing.decoder (TOML.parse! `ms = "12"`),
     YAML.decode Timing.decoder (YAML.parse! `ms: "12"`)
   ))
@@ -165,7 +165,7 @@ test "a JSON document inside a CSV row keeps each its own rule" (fn t ->
       match JSON.parse s |> Result.and_then (JSON.decode Decode.int) with
       | Ok n -> Decode.succeed n
       | Error why -> Decode.fail why);
-  t.eq (Error `[0]: expected Int, got "7"`, Ok [Timing(ms = 13)]) (
+  t.eq (Error `[0]: expected Int, got String "7"`, Ok [Timing(ms = 13)]) (
     CSV.rows inner "doc\n\"\"\"7\"\"\"\n",
     CSV.rows Timing.decoder "ms\n13\n"
   ))
@@ -177,7 +177,7 @@ test "but a number is not text" (fn t ->
 
 test "reading a field of something that is not an object" (fn t ->
   t.eq
-    `.name: expected an object, got "web-01"`
+    `.name: expected an object, got String "web-01"`
     (failure (Decode.field "name" (Decode.field "deeper" Decode.string))))
 
 -- A decoder is a value: naming one runs nothing, and one can be used
@@ -244,7 +244,9 @@ test "a present field is Some" (fn t ->
 -- `optional` says the field may be missing. It does not say its contents
 -- may be anything.
 test "a present field that will not decode is still a failure" (fn t ->
-  t.eq `.name: expected Int, got "web-01"` (failure (Decode.optional "name" Decode.int)))
+  t.eq
+    `.name: expected Int, got String "web-01"`
+    (failure (Decode.optional "name" Decode.int)))
 
 test "the remaining domain literals" (fn t ->
   let doc =
@@ -278,8 +280,8 @@ test "and what is not a port is not a port, written either way" (fn t ->
   let doc = JSON.parse! `{"a": -1, "b": ":-1", "c": "http", "d": 65536, "e": 65535}`;
   t.eq (
     Error ".a: expected Port, got -1",
-    Error `.b: expected Port, got ":-1"`,
-    Error `.c: expected Port, got "http"`,
+    Error `.b: expected Port, got String ":-1"`,
+    Error `.c: expected Port, got String "http"`,
     Error ".d: invalid port :65536: must be 0-65535",
     Ok :65535
   ) (
@@ -301,7 +303,9 @@ test "an object with dynamic keys reads as a Map" (fn t ->
 
 test "and a bad value names the key it was under" (fn t ->
   let counts = JSON.parse! `{"a": 1, "b": "x"}`;
-  t.eq (Error `.b: expected Int, got "x"`) (JSON.decode (Decode.dict Decode.int) counts))
+  t.eq
+    (Error `.b: expected Int, got String "x"`)
+    (JSON.decode (Decode.dict Decode.int) counts))
 
 -- `optional` asks whether a field is there, which only a lookup can ask.
 -- `nullable` asks whether a value is null, which is the question an element
@@ -314,7 +318,7 @@ test "a null inside a list" (fn t ->
 
 test "nullable still refuses a value that is neither" (fn t ->
   t.eq
-    (Error `expected Int, got "x"`)
+    (Error `expected Int, got String "x"`)
     (JSON.decode (Decode.nullable Decode.int) (JSON.parse! `"x"`)))
 
 -- Three fields, combined by hand. Wider than that is `and_then`, or the

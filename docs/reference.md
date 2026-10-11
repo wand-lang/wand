@@ -2576,7 +2576,7 @@ Decode.optional "restarts" Decode.int    -- Decoder (Option Int)
 {"restarts": 4}      -- Ok (Some 4)
 {}                   -- Ok None
 {"restarts": null}   -- Ok None
-{"restarts": "many"} -- Error .restarts: expected Int, got "many"
+{"restarts": "many"} -- Error .restarts: expected Int, got String "many"
 ```
 
 The last line is the point. `optional` says that the field can be missing.
@@ -2595,7 +2595,7 @@ under:
 
 ```ocaml
 {"web-01": 3, "db-01": 12}   Decode.dict Decode.int   -- Ok (Map of 2)
-{"a": 1, "b": "x"}           Decode.dict Decode.int   -- Error .b: expected Int, got "x"
+{"a": 1, "b": "x"}           Decode.dict Decode.int   -- Error .b: expected Int, got String "x"
 ```
 
 `Decode.nullable` is the sibling of `optional`, one level down. `optional`
@@ -2640,7 +2640,7 @@ take only a number or a boolean from these backends:
 
 ```ocaml
 {"restarts": 4}     Decode.int   -- Ok 4
-{"restarts": "4"}   Decode.int   -- Error .restarts: expected Int, got "4"
+{"restarts": "4"}   Decode.int   -- Error .restarts: expected Int, got String "4"
 ```
 
 A backend without types gives the text: a CSV cell, a line of output from
@@ -2703,7 +2703,7 @@ A backend that reads one record per row, or per line, first says which
 record failed. Then it says what was wrong:
 
 ```text
-[2].restarts: expected Int, got "many"
+[2].restarts: expected Int, got String "many"
 ```
 
 ### A type is its own decoder

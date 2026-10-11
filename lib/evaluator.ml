@@ -4670,12 +4670,6 @@ let json_read s : (Yojson.Safe.t, string) result =
   | j -> (match check j with None -> Ok j | Some why -> Error why)
   | exception Yojson.Json_error msg -> Error msg
 
-let expected what path j =
-  match j with
-  (* A string that failed is worth quoting: the reader wants to see what was
-     there, not to be told a second time that it was text. *)
-  | `String s -> decode_error path (Printf.sprintf "expected %s, got %S" what s)
-  | _ -> decode_error path (Printf.sprintf "expected %s, got %s" what (json_kind j))
 
 (* A decoder reads a value out of text only where the text is all there is.
    Backends that carry types -- JSON, TOML, YAML -- hand over an Int as an
@@ -4704,6 +4698,19 @@ let decoding_from ~text f =
   let before = Domain.DLS.get decoding_text in
   Domain.DLS.set decoding_text text;
   Fun.protect ~finally:(fun () -> Domain.DLS.set decoding_text before) f
+
+(* A string that failed is worth quoting: the reader wants to see what was
+   there. From a source that has only text, that is all the message says.
+   From a typed document it also says that the value was a string, since
+   `expected Int, got "12"` reads as though the decoder had not seen the
+   12, and the fault is the quotes around it (#125). *)
+let expected what path j =
+  match j with
+  | `String s when Domain.DLS.get decoding_text ->
+    decode_error path (Printf.sprintf "expected %s, got %S" what s)
+  | `String s ->
+    decode_error path (Printf.sprintf "expected %s, got String %S" what s)
+  | _ -> decode_error path (Printf.sprintf "expected %s, got %s" what (json_kind j))
 
 let from_text parse (j : Yojson.Basic.t) =
   match j with
