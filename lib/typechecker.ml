@@ -5873,6 +5873,9 @@ let stdlib_type_env : env = [
   ("json_decode",     let a = fresh () in
                       generalize []
                         (TDecoder a @-> (TJson @-> TResult (TString, a))));
+  ("json_decode_text", let a = fresh () in
+                      generalize []
+                        (TDecoder a @-> (TJson @-> TResult (TString, a))));
   ("toml_decode",     let a = fresh () in
                       generalize []
                         (TDecoder a @-> (TToml @-> TResult (TString, a))));

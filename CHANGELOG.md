@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML, so a decoder made from a type refuses `{"ms": "12"}` for `ms: Int`; CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
+
 ## [0.104.1] - 2026-10-10
 
 ### Fixed

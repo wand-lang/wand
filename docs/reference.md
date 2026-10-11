@@ -2620,21 +2620,51 @@ That rule lives in one place, so a literal, `Port.of_string` and
 `IPv4.of_string` all report it the same way, and `Port.of_string` accepts
 the same two spellings.
 
-### Text is read, never written
+### Text is read only where text is all there is
 
-A backend that carries types gives an `Int` as an `Int`. A backend without
-types gives the text, as a CSV cell does, or a line of output. Then
-`Decode.int` reads it as `Int.of_string` reads it. So one decoder serves a
-document and the output of a command:
+A backend that carries types -- JSON, TOML, YAML -- gives an `Int` as an
+`Int`. It also says when a value is a string, and a string where a number
+belongs is wrong input. So `Decode.int`, `Decode.float` and `Decode.bool`
+take only a number or a boolean from these backends:
 
 ```ocaml
 {"restarts": 4}     Decode.int   -- Ok 4
-{"restarts": "4"}   Decode.int   -- Ok 4
+{"restarts": "4"}   Decode.int   -- Error .restarts: expected Int, got "4"
 ```
 
-The reverse never happens. `Decode.string` does not take a number and make a
-string of it. A `string` that accepts anything is the scrape that this layer
-replaces:
+A backend without types gives the text: a CSV cell, a line of output from
+`Decode.lines` or `Decode.run`, a flag that `Args` reads. Then `Decode.int`
+reads the text as `Int.of_string` reads it. So one decoder serves a document
+and the output of a command, and it is as strict as its source allows:
+
+```ocaml
+CSV.rows (Decode.field "restarts" Decode.int) "restarts\n4\n"   -- Ok [4]
+Decode.run Decode.int " 4 "                                    -- Ok 4
+```
+
+A decoder made from a type follows the same rule, so `type Pod(restarts: Int)`
+refuses `{"restarts": "4"}`. A type that a document has no value of its own
+for -- `Duration`, `Path`, `Version` and the other domain types -- is written
+as a string, so its decoder reads a string from every backend. `Port` reads
+a number or a string, as [the section above](#domain-literals-decode-as-themselves)
+says.
+
+Some documents hold their numbers as strings on purpose. Read one with
+`Decode.string` and convert it where it is read, so that the program says
+it expects this:
+
+```ocaml
+let count_text =
+  Decode.string
+  |> Decode.and_then (fn s ->
+    match Int.of_string s with
+    | Ok n -> Decode.succeed n
+    | Error why -> Decode.fail why)
+```
+
+The reverse never happens in any backend. `Decode.string` does not take a
+number and make a string of it. A `string` that accepts anything is the
+scrape that this layer replaces:
 
 ```ocaml
 {"restarts": 4}     Decode.string   -- Error .restarts: expected String, got Int

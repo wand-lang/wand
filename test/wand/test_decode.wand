@@ -1,10 +1,13 @@
 let {test} = import Test
+import Args
 import Decode
 import JSON
 import CSV
 import Map
+import Result
 import String
 import TOML
+import YAML
 
 -- A decoder's job is not only to produce a value. It is to say what was
 -- wrong when it cannot, and to say it about the field rather than about the
@@ -108,15 +111,63 @@ test "and a string that is not one says so" (fn t ->
     `.name: expected Duration, got "web-01"`
     (failure (Decode.field "name" Decode.duration)))
 
--- Text backends hand over text, so a decoder reads a value out of it. The
--- reverse never happens: `string` does not stringify a number, since that
--- would make it accept anything.
-test "a number written as text still reads as a number" (fn t ->
+-- A backend with types says what each value is, so a string where a number
+-- belongs is wrong input, not a number to read out of it (#125). Text
+-- backends hand over text, so there a decoder reads the value out of it.
+-- The reverse never happens: `string` does not stringify a number, since
+-- that would make it accept anything.
+test "a JSON string is not a number" (fn t ->
   let text = JSON.parse! `{"n": "42", "f": "1.5", "b": "true"}`;
-  t.eq (Ok 42, Ok 1.5, Ok true) (
+  t.eq (
+    Error `.n: expected Int, got "42"`,
+    Error `.f: expected Float, got "1.5"`,
+    Error `.b: expected Bool, got "true"`
+  ) (
     JSON.decode (Decode.field "n" Decode.int) text,
     JSON.decode (Decode.field "f" Decode.float) text,
     JSON.decode (Decode.field "b" Decode.bool) text
+  ))
+
+type Timing(ms: Int)
+
+test "a type's own decoder refuses a JSON string for an Int" (fn t ->
+  t.eq (Error `.ms: expected Int, got "12"`, Ok Timing(ms = 12)) (
+    JSON.decode Timing.decoder (JSON.parse! `{"ms": "12"}`),
+    JSON.decode Timing.decoder (JSON.parse! `{"ms": 12}`)
+  ))
+
+test "TOML and YAML are as strict as JSON" (fn t ->
+  t.eq (Error `.ms: expected Int, got "12"`, Error `.ms: expected Int, got "12"`) (
+    TOML.decode Timing.decoder (TOML.parse! `ms = "12"`),
+    YAML.decode Timing.decoder (YAML.parse! `ms: "12"`)
+  ))
+
+test "text backends still read a number out of text" (fn t ->
+  t.eq (Ok [Timing(ms = 12)], Ok 42, Ok [1, 2], Ok 5) (
+    CSV.rows Timing.decoder "ms\n12\n",
+    Decode.run Decode.int " 42 ",
+    Decode.lines Decode.int "1\n2",
+    Args.parse (Decode.field "n" Decode.int) ["--n", "5"]
+  ))
+
+-- A type JSON has no value of its own for is written as a string, so its
+-- decoder reads the string in every backend.
+test "a duration in JSON is still a string" (fn t ->
+  t.eq (Ok 30s) (JSON.decode Decode.duration (JSON.parse! `"30s"`)))
+
+-- The kind of source belongs to the backend that started the decode, so a
+-- JSON document read inside a CSV row is strict, and the row is text again
+-- after it.
+test "a JSON document inside a CSV row keeps each its own rule" (fn t ->
+  let inner =
+    Decode.field "doc" Decode.string
+    |> Decode.and_then (fn s ->
+      match JSON.parse s |> Result.and_then (JSON.decode Decode.int) with
+      | Ok n -> Decode.succeed n
+      | Error why -> Decode.fail why);
+  t.eq (Error `[0]: expected Int, got "7"`, Ok [Timing(ms = 13)]) (
+    CSV.rows inner "doc\n\"\"\"7\"\"\"\n",
+    CSV.rows Timing.decoder "ms\n13\n"
   ))
 
 test "but a number is not text" (fn t ->
