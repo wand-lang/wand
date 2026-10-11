@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `List.flat_map` (#132).
+
 ### Changed
 
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).

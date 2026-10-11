@@ -1302,6 +1302,7 @@ let foreign_member_hint ns member =
     Some (Printf.sprintf "use %s.of_string%s (import %s)" modname
             (if bang then "!" else "") modname)
   | "List", "append" -> Some "use List.concat"
+  | "List", ("concat_map" | "bind" | "collect") -> Some "use List.flat_map"
   | "Path", "dirname" -> Some "use Path.parent"
   | "Duration", "add" -> Some "use +: '30s + 1min'"
   | "Duration", "sub" -> Some "use -: '2min - 30s'"

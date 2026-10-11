@@ -175,6 +175,11 @@ let test_foreign_members () =
     "use List.each";
   expect_error "String.sub" "import String\nString.sub \"abc\" 0 1"
     "use String.slice";
+  List.iter (fun name ->
+      expect_error ("List." ^ name)
+        ("import List\nList." ^ name ^ " (fn x -> [x]) [1]")
+        "use List.flat_map")
+    ["concat_map"; "bind"; "collect"];
   expect_error "FS.read_lines" "import FS\nFS.read_lines /tmp/x"
     "FS.read_file! reads the whole file";
   expect_error "int_of_string" "int_of_string \"4\""

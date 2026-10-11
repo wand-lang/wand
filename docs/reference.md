@@ -4474,6 +4474,7 @@ twice without paying twice.
 map        : ('a -> 'b ! 'e) -> List 'a -> List 'b ! 'e
 filter     : ('a -> Bool ! 'e) -> List 'a -> List 'a ! 'e
 filter_map : ('a -> Option 'b ! 'e) -> List 'a -> List 'b ! 'e
+flat_map   : ('a -> List 'b ! 'e) -> List 'a -> List 'b ! 'e
 fold_left  : ('a -> 'b -> 'a ! 'e) -> 'a -> List 'b -> 'a ! 'e
 fold_right : ('a -> 'b -> 'b ! 'e) -> List 'a -> 'b -> 'b ! 'e
 length     : List 'a -> Int
