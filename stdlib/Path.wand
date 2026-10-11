@@ -1,3 +1,6 @@
+import List
+import String
+
 -- Join two path segments.
 --
 -- >> Path.join /etc ./hosts
@@ -82,6 +85,60 @@ let of_string s = path_of_string s
 -- >> Path.components /etc/hosts
 -- ["etc", "hosts"] : List String
 let components p = path_components p
+
+-- A path's segments, without the `.` and empty ones that `==` ignores.
+let _segments p = List.filter (fn s -> s != ".") (path_components p)
+
+-- True when a `..` in the segments goes above where they start.
+let _climbs_out? depth parts =
+  match parts with
+  | [] -> false
+  | [".." :: t] -> depth == 0 || _climbs_out? (depth - 1) t
+  | [_ :: t] -> _climbs_out? (depth + 1) t
+
+-- The path from `dir` to `p`, or `None` when `p` is not under `dir`.
+--
+-- `FS.list_dir` and `FS.glob_in` give paths that start with the directory
+-- they read. This takes that directory off again, so `./d/logs/b.txt`
+-- prints as `logs/b.txt`.
+--
+-- It compares components, not text: `./dd/x` is not under `./d`. The two
+-- paths are compared in the form `==` uses, so `./d`, `d` and `d/` are one
+-- directory, and nothing is asked of the file system. An absolute path is
+-- never under a relative one, nor the other way: to make a relative path
+-- absolute needs the working directory. A `..` is compared as written, as
+-- `==` does, and a `p` whose `..` climbs back out of `dir` is not under it.
+-- Use `Path.normalize` first to resolve them.
+--
+-- A directory relative to itself is `.`, the path that names it from
+-- inside.
+--
+-- >> Path.relative_to ./d ./d/logs/b.txt
+-- Some(logs/b.txt) : Option Path
+--
+-- >> Path.relative_to ./d ./dd/x
+-- None : Option Path
+--
+-- >> Path.relative_to /srv/app/ /srv/app
+-- Some(.) : Option Path
+let relative_to dir p =
+  let base = _segments dir;
+  let parts = _segments p;
+  let rest = List.drop (List.length base) parts;
+  if path_is_absolute dir != path_is_absolute p then None
+  else if List.take (List.length base) parts != base then None
+  else if _climbs_out? 0 rest then None
+  else if rest == [] then Some (path_of_string ".")
+  else Some (path_of_string (String.join "/" rest))
+
+-- The path from `dir` to `p`. Raises when `p` is not under `dir`.
+--
+-- >> Path.relative_to! ./d ./d/logs/b.txt
+-- logs/b.txt : Path
+let relative_to! dir p =
+  match relative_to dir p with
+  | Some rest -> rest
+  | None -> fail_exn "relative_to: %{p} is not under %{dir}"
 
 implement Ord Path =
   -- The larger of two Paths.

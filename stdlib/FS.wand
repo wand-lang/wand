@@ -448,7 +448,10 @@ let copy src dst = try copy! src dst
 
 -- Return a list of paths for the immediate children of a directory. Raises on failure.
 --
--- The paths come back whole, not as bare names.
+-- The paths come back whole, not as bare names: each one starts with
+-- `path`, so the entries of `./d` are `./d/a` and not `a`.
+-- `Path.basename` gives the name, and `Path.relative_to` takes the
+-- directory off a path below it.
 --
 -- >> with FS.temp_dir "ex_" as d ->
 -- ..   (FS.write_file! (Path.join d ./a) "x";
@@ -457,6 +460,8 @@ let copy src dst = try copy! src dst
 let list_dir! path = fs_ls path
 
 -- Return a list of paths for the immediate children of a directory.
+--
+-- Each path starts with `path`, as `FS.list_dir!` says.
 --
 -- >> with FS.temp_dir "ex_" as d ->
 -- ..   FS.list_dir d
@@ -522,10 +527,15 @@ let glob pattern =
 -- Files only: a directory whose name fits is not in the answer, so `./*`
 -- in a directory of nothing but subdirectories answers `[]`.
 --
+-- The pattern is matched below `dir`, but each path in the answer starts
+-- with `dir`: `FS.glob_in ./**/*.ml ./src` gives `./src/lib/a.ml`, not
+-- `lib/a.ml`. `Path.relative_to dir` takes the directory off.
+--
 -- >> with FS.temp_dir "ex_" as d ->
--- ..   (FS.write_file! (Path.join d ./a.wand) "x";
--- ..    List.length (FS.glob_in *.wand d))
--- 1 : Int
+-- ..   (FS.mkdir! (Path.join d ./logs);
+-- ..    FS.write_file! (Path.join d ./logs/a.wand) "x";
+-- ..    List.filter_map (Path.relative_to d) (FS.glob_in ./**/*.wand d))
+-- [logs/a.wand] : List Path
 let glob_in pattern dir = fs_glob pattern dir
 
 -- A stream of the file's lines -- nothing is read until a terminal

@@ -5,6 +5,7 @@
 ### Added
 
 - `List.flat_map` (#132).
+- `Path.relative_to` and `Path.relative_to!` give the path from a directory to a path below it, so `./d/logs/b.txt` from `FS.glob_in` becomes `logs/b.txt` (#133).
 
 ### Changed
 
