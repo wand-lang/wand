@@ -587,8 +587,6 @@ let test_keyword_field_names () =
   e "and again through one"
     "c.spec.type"
     (Field (Field (Var "c", "spec"), "type"));
-  (* Every keyword but `result` reaches this, and `result` is an expression
-     of its own inside a contract. *)
   e "another one"
     "C(when = 1)"
     (ConstrApp ("C", [(Some "when", Int 1)], None));
@@ -888,6 +886,64 @@ let test_a_contract_clause_takes_a_call () =
   runs "a clause wrapping onto the line below"
     "let f n =\n  requires n > 0\n    && n < 10\n  n\nf 3"
     "3"
+
+(* `result` is a name like any other, and only an `ensures` clause gives it
+   a meaning of its own -- the value the body returned. #128: it was a
+   keyword everywhere, so `let result = 1` was a parse error that did not
+   say why. *)
+let test_result_is_a_name () =
+  runs "a binding" "let result = 1\nresult" "1";
+  runs "a parameter" "let f result = result + 1\nf 2" "3";
+  runs "an annotated parameter"
+    "let f (result: String) = result\nf \"x\"" "x";
+  runs "a fn" "(fn result -> result * 2) 4" "8";
+  runs "a local binding"
+    "let f x =\n  let result = x + 1;\n  result * 2\nf 3" "8";
+  runs "in a pattern"
+    "match Some 5 with\n| Some result -> result\n| None -> 0" "5";
+  runs "a field and its pun"
+    "type T(result: Int, n: Int)\nlet result = 4\nlet n = 1\n\
+     let t = T(result, n)\nmatch t with\n| T(result, n) -> result + n + t.result" "9";
+  runs "a map pun" "let {result} = {result = 7}\nresult" "7";
+  (* Inside `ensures`, the contract's meaning wins over a binding further
+     out: the clause reads the return value, not the outer `result`. *)
+  runs "an outer binding does not reach the clause"
+    "let result = 5\nlet h x =\n  ensures result == x\n  x\nh 3" "3";
+  (* A parameter of the same definition is the one place the two meet, and
+     the clause could not reach it, so it is refused. *)
+  refuses "a parameter beside an ensures"
+    "let h result =\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "one equation of several"
+    "let h 0 = 0\nlet h result =\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "a fn"
+    "let h = fn result ->\n  ensures result > 0\n  result"
+    "rename the parameter";
+  refuses "a local binding"
+    "let g x =\n  let h result =\n    ensures result > 0\n    result;\n  h x"
+    "rename the parameter";
+  (* A `requires` clause alone is no conflict: nothing there means the
+     return value. *)
+  runs "a parameter beside a requires"
+    "let h result =\n  requires result > 0\n  result\nh 3" "3"
+
+(* A word the language keeps, where a name goes, says that it is one and
+   what to write instead -- the same words wherever the name stands. *)
+let test_a_reserved_word_is_named () =
+  let says label src =
+    refuses label src "'type' is a reserved word; use another name, such as `type_`"
+  in
+  says "a binding" "let type = 1";
+  says "a parameter" "let f type = 1";
+  says "a later parameter" "let f x type = 1";
+  says "a parameter of a local function" "let g x =\n  let f type = 1;\n  f x";
+  says "a fn" "let f = fn type -> 1";
+  says "inside a tuple" "let f (a, type) = a";
+  says "a match arm" "match 1 with\n| type -> 1";
+  refuses "another word" "let in = 1" "'in' is a reserved word";
+  refuses "a contract word" "let requires = 1" "'requires' is a reserved word";
+  refuses "the other one" "let f ensures = 1" "'ensures' is a reserved word"
 
 let test_paren_seq () =
   e "two statements"
@@ -1344,5 +1400,8 @@ let () =
       Alcotest.test_case "paren seq"    `Quick test_paren_seq;
       Alcotest.test_case "a contract clause takes a call" `Quick
         test_a_contract_clause_takes_a_call;
+      Alcotest.test_case "result is a name" `Quick test_result_is_a_name;
+      Alcotest.test_case "a reserved word is named" `Quick
+        test_a_reserved_word_is_named;
     ];
   ]

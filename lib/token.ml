@@ -59,7 +59,6 @@ type t =
   | Import
   | Requires
   | Ensures
-  | Result
   | Fn
   | For
   | Do
@@ -179,7 +178,7 @@ let pp ppf tok =
     | Implement  -> "implement"
     | Import     -> "import"
     | Requires   -> "requires" | Ensures  -> "ensures"
-    | Result     -> "result" | Fn         -> "fn"
+    | Fn         -> "fn"
     | For        -> "for"
     | Do         -> "do"     | End        -> "end"
     | When       -> "when"
@@ -224,7 +223,7 @@ let equal a b = a = b
 let is_keyword = function
   | Let | In | Match | With | If | Unless | Then | Else | Type | Import
   | Interface | Implement
-  | Requires | Ensures | Result | Fn | For | Do | End
+  | Requires | Ensures | Fn | For | Do | End
   | When | As | And | Or | Handle | Return | Try -> true
   | _ -> false
 
@@ -240,7 +239,7 @@ let keyword_text = function
   | Import -> Some "import"     | Requires -> Some "requires"
   | Interface -> Some "interface"
   | Implement -> Some "implement"
-  | Ensures -> Some "ensures"   | Result -> Some "result"
+  | Ensures -> Some "ensures"
   | Fn -> Some "fn"             | For -> Some "for"
   | Do -> Some "do"             | End -> Some "end"
   | When -> Some "when"

@@ -489,6 +489,30 @@ let timeout  = 30s
 let limit    = 100MB
 ```
 
+### Reserved words
+
+These words belong to the language, and a name cannot be one of them:
+
+```
+and  as  do  else  end  ensures  fn  for  fun  handle  if  implement
+import  in  interface  let  match  or  requires  return  then  try  type
+unless  when  with
+```
+
+`true` and `false` are the two `Bool` values, and `_` is the wildcard. A
+reserved word where a name goes is a parse error that names the word:
+
+```ocaml
+let type = 1
+-- parse error: 'type' is a reserved word; use another name, such as `type_`
+```
+
+A field name is the exception: `c.type` and `Condition (type = "Ready")`
+are allowed (see [A keyword names a field](#a-keyword-names-a-field)).
+
+`result` is not reserved. It is an ordinary name, and only an `ensures`
+clause gives it a meaning of its own (see [Contracts](#contracts)).
+
 ---
 
 ## Let bindings
@@ -3099,6 +3123,25 @@ let clamp! lo hi x =
     && hi - lo < 100
   if x < lo then lo else if x > hi then hi else x
 ```
+
+`result` has this meaning only inside an `ensures` clause. Everywhere else
+it is an ordinary name: `let result = ...`, a parameter, a field and a
+pattern can all use it. Inside the clause the return value wins, so a
+`result` bound outside the function is not visible there. A parameter of the
+same function cannot be called `result` when the function has an `ensures`
+clause, because the clause could not reach it:
+
+```ocaml
+let h! result =
+  ensures result > 0
+  result
+-- parse error: a parameter is called 'result', and in an `ensures` clause
+--   'result' is the value the body returns; rename the parameter
+```
+
+`requires` and `ensures` stay reserved. A body can start with a call, so a
+contextual `requires` would make `let f x = requires x` mean a contract or a
+call, depending on the reader.
 
 ---
 
