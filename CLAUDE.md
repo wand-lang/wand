@@ -425,6 +425,25 @@ Base64, HTTP, URL, Glob, IPv4, CIDR, Port, Version, Random, Shared, Net. Every f
 comes from a module: printing is
 `IO.println`, and a file that prints writes `import IO`.
 
+The members of the modules a script uses most. `name(!)` is a pair: `name`
+returns a `Result` or an `Option`, and `name!` raises. `wand d Module.name`
+gives one name's type and examples.
+
+| module | members |
+|---|---|
+| `Proc` | args exit pid |
+| `Args` | help? parse read |
+| `IO` | flush print print_err println println_err read_all(!) read_line(!) stdin_lines |
+| `String` | between? bytes clamp contains? empty? ends_with? join length lines lower max min of_int repeat replace reverse slice split starts_with? trim trim_left trim_right truncate upper word(!) words |
+| `List` | all? any? concat contains? drop drop_while each empty empty? filter filter_map find flat_map flatten fold_left fold_right get(!) head(!) indexed length map max min range reverse sort sort_by sum tail(!) take take_while tally unique zip |
+| `Map` | delete empty empty? filter from_list get(!) has? keys map merge set size to_list update values |
+| `FS` | append(!) append_lines(!) copy(!) copy_tree(!) create_file(!) cwd delete(!) delete_tree(!) dir? exists? file? glob glob_in list_dir(!) lock(!) lock_wait(!) mkdir(!) mtime(!) read_file(!) rename(!) size(!) stream_lines stream_lines_all temp_dir temp_file write_atomic(!) write_file(!) write_lines(!) write_lines_atomic(!) |
+| `Path` | absolute? basename between? clamp components extension join max min normalize of_string parent relative? relative_to(!) to_string with_extension |
+| `Regex` | capture compile(!) match? match_all replace replace_all split |
+| `Option` | and_then default get! map none? or_else some? to_result |
+| `Result` | and_then default error? flatten get! map map_error ok? reason to_option |
+| `Int` | abs between? clamp max max_value min min_value of_string(!) pow |
+
 Big files stream instead of loading (and `Shell.stream` reads a command the
 same way): `FS.stream_lines log |>
 Stream.filter p |> Stream.fold_left f init` — a stream reads nothing
