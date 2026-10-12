@@ -16,12 +16,14 @@
 
 - A `%{x}` value between the author's double quotes cannot end the quote in a Big5, GBK or GB18030 locale. The value goes in single-quoted between the two double-quoted parts (#168).
 - A `Path` that starts with `-` in `%{...}` at the start of a word, also as a list element, goes in with `./` in front, so that no command reads it as an option (#175).
-
-### Fixed
-
 - `HTTP.request` refuses a header name that is not an RFC 7230 token and a header value with a CR, LF or NUL byte (#167).
 - A command longer than the system limit raises an error that `try` catches, and does not stop the script with a fatal error (#171).
 - `Shell.in_dir` does not use `CDPATH` and does not read `-` as `$OLDPWD`, so it runs a command in the same directory as `Shell.stream` (#172).
+- A command whose `%!{...}` text changes the quoting around a `%{...}` value is refused when it is built. Before, a raw `"` could put the value where the shell read it (#170).
+- A `%{x}` value that bash reads as arithmetic, as an operand of `-eq` and the other number tests in `[[ ]]` or as an argument of `let`, `declare`, `typeset` or `local`, must be an `Int`. Before, a value such as `a[$(cmd)]` ran `cmd` (#169).
+- A `%{x}` value after `-v` or inside `( )` in `[[ ]]`, alone in `[[ ]]`, or as an argument of `unset` is an error (#169).
+- The error for a value that is not an `Int` in arithmetic is at the value, and says why (#169).
+- A `\` and a newline inside single quotes in a command stay in the command, as `sh` keeps them. Before, they were removed as a line continuation (#173).
 
 ## [0.106.0] - 2026-10-12
 

@@ -88,7 +88,62 @@ type frame =
   { mutable q : quote; bt : bool; arith : bool; mutable pdepth : int;
     (* Opened in the value of a `NAME=` prefix: when it closes, the command
        word is still to come, so `X=$(date) git log` runs git. *)
-    assign : bool }
+    assign : bool;
+    (* A `(...)` group, which neither runs a substitution nor computes. *)
+    group : bool;
+    (* The simple command being read in this frame: its first word, the
+       words after it (a hole's word as "\000"), and the holes in it with
+       the index of the word each one is in. A hole's context can depend on
+       the command and on the words on each side of it, so the holes are
+       settled when the command ends. `dbl` is set from `[[` to `]]`. *)
+    mutable cmd : string; mutable args : string list;
+    mutable holes : (int * int) list; mutable dbl : bool }
+
+let new_frame ?(bt = false) ?(arith = false) ?(assign = false) ?(group = false) () =
+  { q = QNone; bt; arith; pdepth = 0; assign; group;
+    cmd = ""; args = []; holes = []; dbl = false }
+
+(* Words that bash reads again as arithmetic, where a quoted value is still
+   evaluated and `a[$(cmd)]` in it runs the command. In `[[ ... ]]`, the
+   operands of these operators: *)
+let arith_ops = ["-eq"; "-ne"; "-lt"; "-le"; "-gt"; "-ge"]
+
+(* The `[[ ... ]]` operators whose operands are text, where a quoted value
+   stays text. *)
+let text_ops = ["=="; "="; "!="; "=~"; "<"; ">"; "-nt"; "-ot"; "-ef"]
+let text_tests = [
+  "-n"; "-z"; "-a"; "-b"; "-c"; "-d"; "-e"; "-f"; "-g"; "-h"; "-k"; "-p";
+  "-r"; "-s"; "-u"; "-w"; "-x"; "-G"; "-L"; "-N"; "-O"; "-S";
+]
+
+(* Commands that evaluate their arguments as arithmetic, or a subscript in
+   a name argument as arithmetic. `declare -a a='([0]=$(cmd))'` and
+   `local 'a[$(cmd)]=1'` run the command although the value is quoted. A
+   value spliced into one of these must be an `Int`. *)
+let arith_arg_commands = ["let"; "declare"; "typeset"; "local"]
+
+(* `unset 'a[$(cmd)]'` evaluates the subscript in bash 4 and later. A name
+   that unset reads cannot come from a value. *)
+let name_arg_commands = ["unset"]
+
+(* The context a hole in a simple command gets, from the command's first
+   word and the words on each side of the hole. *)
+let settle cmd prev next ctx =
+  if cmd = "[[" then
+    if List.mem prev arith_ops || List.mem next arith_ops then HArith
+    else if prev = "-v" then
+      HErr "a `%{}` value cannot be the name after -v in [[ ]]: bash reads \
+            a subscript in it as arithmetic"
+    else if List.mem prev text_ops || List.mem next text_ops
+            || List.mem prev text_tests then ctx
+    else
+      HErr "a `%{}` value in [[ ]] must be an operand of a comparison, such \
+            as == or -eq, or of a test such as -n"
+  else if List.mem cmd arith_arg_commands then HArith
+  else if List.mem cmd name_arg_commands then
+    HErr (Printf.sprintf "a `%%{}` value cannot be an argument of %s: bash \
+                          reads a subscript in it as arithmetic" cmd)
+  else ctx
 
 (* One command template's atoms, holes kept apart from the text so look-ahead
    can step over one without reading into it. *)
@@ -142,12 +197,24 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
   let name_plain = ref true in
   (* The command contexts open now, innermost first; the base frame is the
      line itself. *)
-  let frames = ref [ { q = QNone; bt = false; arith = false; pdepth = 0; assign = false } ] in
+  let frames = ref [ new_frame () ] in
   let cur () = List.hd !frames in
   let in_arith () = (cur ()).arith in
   let mark_name () =
     if not (String.contains (Buffer.contents buf) '=') then name_plain := false in
   let assignment w = is_assignment w && !name_plain in
+  (* The end of a simple command: each hole in it gets its context from the
+     command and from the words on each side of it. *)
+  let close_cmd f =
+    let args = Array.of_list (List.rev f.args) in
+    let word j = if j >= 0 && j < Array.length args then args.(j) else "" in
+    List.iter (fun (k, idx) ->
+      match ctxs.(k) with
+      | HArg | HInside _ -> ctxs.(k) <- settle f.cmd (word (idx - 1)) (word (idx + 1)) ctxs.(k)
+      | HArith | HErr _ -> ())
+      f.holes;
+    f.cmd <- ""; f.args <- []; f.holes <- []; f.dbl <- false
+  in
   let finish_word () =
     let w = Buffer.contents buf in
     Buffer.clear buf;
@@ -155,20 +222,47 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     has_hole := false;
     let assign = assignment w in
     name_plain := true;
+    let f = cur () in
+    let counts = not (in_arith ()) && not (w = "" && not dynamic) in
+    let text = if dynamic then "\000" else w in
+    let was_dbl = f.dbl in
+    (* The first word of the command this frame is reading. A reserved word
+       such as `if` or `{` hands the role to the word after it, also where
+       the scan reads it as an argument, as in `f() { local ...; }`. When
+       that is wrong, a hole is held to more than it needs, never less. *)
+    let set_cmd () =
+      if not was_dbl then begin
+        f.cmd <- text; f.args <- [];
+        if text = "[[" then f.dbl <- true
+      end
+    in
+    let add_arg () =
+      if not was_dbl then
+        if List.mem f.cmd reserved && f.args = [] then set_cmd ()
+        else if List.mem text reserved then (close_cmd f; f.cmd <- text)
+        else f.args <- text :: f.args
+    in
     if !assign_tail then assign_tail := false
     (* Arithmetic operands are numbers, not commands. *)
     else if in_arith () then ()
     else if w = "" && not dynamic then ()
-    else if !skip_target then skip_target := false
-    else if not !expecting then ()
+    else if !skip_target then (skip_target := false; add_arg ())
+    else if not !expecting then add_arg ()
     (* Before the hole test: with the name plain, a hole is in the value,
        and the word is still a prefix. *)
     else if assign then ()  (* still expecting the command word *)
-    else if dynamic then (words := Dynamic :: !words; expecting := false)
+    else if dynamic then (words := Dynamic :: !words; expecting := false; set_cmd ())
     else if List.mem w reserved || List.mem w arith_commands then
-      (words := Compound w :: !words; expecting := false)
-    else (words := Literal w :: !words; expecting := false)
+      (words := Compound w :: !words; expecting := false; set_cmd ())
+    else (words := Literal w :: !words; expecting := false; set_cmd ());
+    if was_dbl && counts then begin
+      f.args <- text :: f.args;
+      if text = "]]" then f.dbl <- false
+    end
   in
+  (* A separator ends a command, except inside `[[ ... ]]`, where `&&` and
+     `||` join tests. *)
+  let end_cmd () = let f = cur () in if not f.dbl then close_cmd f in
   (* A subshell `(...)`, a command substitution `$(...)` and a backtick span
      all run commands, and what runs is the whole question here, so each is
      scanned as a command position of its own rather than skipped as opaque.
@@ -192,7 +286,8 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
       && assignment (Buffer.contents buf) in
     if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
     else (if value then has_hole := true; finish_word ());
-    frames := { q = QNone; bt; arith; pdepth = 0; assign } :: !frames;
+    let group = not bt && not arith && not value in
+    frames := new_frame ~bt ~arith ~assign ~group () :: !frames;
     expecting := not arith;
     at_word_start := true
   in
@@ -200,7 +295,7 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     finish_word ();
     let resumed =
       match !frames with
-      | top :: (_ :: _ as rest) -> frames := rest; top.assign
+      | top :: (_ :: _ as rest) -> close_cmd top; frames := rest; top.assign
       | _ -> false
     in
     (* A prefix's own `$(...)` leaves the command word still to come; any
@@ -263,7 +358,13 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
            ctxs.(k) <- HErr "a `%{}` value cannot go inside a heredoc body; \
                              pipe it in with |> instead"
          else begin
-           ctxs.(k) <- hole_ctx ();
+           let f = cur () in
+           ctxs.(k) <-
+             (match !frames with
+              | g :: parent :: _ when g.group && parent.dbl ->
+                HErr "a `%{}` value cannot go inside ( ) in [[ ]]"
+              | _ -> hole_ctx ());
+           f.holes <- (k, List.length f.args) :: f.holes;
            mark_name (); has_hole := true; at_word_start := false
          end;
          incr i
@@ -347,18 +448,18 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
            (* A newline separates two commands, exactly as `;` does -- and
               starts a heredoc body the line before it opened. *)
            | '\n' ->
-             finish_word (); expecting := true; at_word_start := true;
+             finish_word (); end_cmd (); expecting := true; at_word_start := true;
              (match !hd_pending with
               | Some (d, strip) ->
                 hd_active := Some d; hd_strip := strip;
                 hd_pending := None; Buffer.clear hd_line
               | None -> ());
              incr i
-           | '|' -> finish_word (); expecting := true; at_word_start := true;
+           | '|' -> finish_word (); end_cmd (); expecting := true; at_word_start := true;
                     i := !i + (if peek_ch 1 = '|' || peek_ch 1 = '&' then 2 else 1)
-           | '&' -> finish_word (); expecting := true; at_word_start := true;
+           | '&' -> finish_word (); end_cmd (); expecting := true; at_word_start := true;
                     i := !i + (if peek_ch 1 = '&' then 2 else 1)
-           | ';' -> finish_word (); expecting := true; at_word_start := true; incr i
+           | ';' -> finish_word (); end_cmd (); expecting := true; at_word_start := true; incr i
            | ('<' | '>') when peek_ch 1 = '(' ->
              (* Process substitution `<(cmd)` / `>(cmd)`: a command of its
                 own, not a redirection to a file. *)
@@ -405,7 +506,8 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
            | _ -> Buffer.add_char buf c; at_word_start := false; incr i
          end))
     done;
-    finish_word ()
+    finish_word ();
+    List.iter close_cmd !frames
   with Exit -> ());
   ({ words = List.rev !words; raw_tail = !raw_tail }, ctxs)
 

@@ -2631,6 +2631,40 @@ let starts_word buf (h : Token.hole) =
   | Token.Inside q -> n > 0 && Buffer.nth buf (n - 1) = q && sep (n - 2)
   | _ -> sep (n - 1)
 
+(* A raw `%!{...}` splice is shell source, and it can open or close a quote.
+   The context of each `%{...}` was read from the template at parse time,
+   on the assumption that the raw text leaves the quoting as it found it.
+   When a command has a raw splice, the contexts are read again with the
+   raw text in place, and a `%{...}` whose context changed is refused: its
+   value would otherwise land where the shell reads it (#170). Each part
+   carries the raw text of a raw hole, and `None` for a quoted one. *)
+let check_raw_contexts (parts : (string * Token.hole * string option) list) tail =
+  let segs =
+    List.concat_map (fun (lit, _, raw) ->
+      [Shell_scan.Lit lit;
+       (match raw with
+        | Some text -> Shell_scan.Lit text
+        | None -> Shell_scan.QuotedHole)]) parts
+    @ [Shell_scan.Lit tail]
+  in
+  let now = Shell_scan.hole_contexts segs in
+  let k = ref 0 in
+  List.iteri (fun i (_, (h : Token.hole), raw) ->
+    if raw = None then begin
+      let was = match h with
+        | Token.Arg -> Some Shell_scan.HArg
+        | Token.Inside q -> Some (Shell_scan.HInside q)
+        | Token.Arith -> Some Shell_scan.HArith
+        | Token.Source -> None
+      in
+      if Some now.(!k) <> was then
+        raise (EvalError (Printf.sprintf
+          "the %%!{...} text in this command changes the quoting around \
+           value %d, so the shell would read that value as source; a \
+           %%!{...} must close each quote that it opens" (i + 1)));
+      incr k
+    end) parts
+
 (* Deriving a decoder needs the decoding machinery, which is defined further
    down the file; `eval` only has to be able to reach it. *)
 let derive_decoder : (string -> value) ref =
@@ -3337,12 +3371,19 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     VString (Buffer.contents buf)
   | CmdInterp (parts, tail) ->
     let buf = Buffer.create 32 in
+    let has_raw = List.exists (fun (_, _, h) -> h = Token.Source) parts in
+    let raws = ref [] in
     List.iter (fun (lit, e, h) ->
       Buffer.add_string buf lit;
-      match eval env e, (h : Token.hole) with
+      let v = eval env e in
       (* The typechecker refuses a Command in a splice where it knows the
          type (#174); this is the case it could not see. *)
-      | VCommand _, _ -> raise (EvalError command_splice_error)
+      (match v with
+       | VCommand _ -> raise (EvalError command_splice_error)
+       | _ -> ());
+      if has_raw then
+        raws := (lit, h, (if h = Token.Source then Some (to_text v) else None)) :: !raws;
+      match v, (h : Token.hole) with
       (* A list in a bare `%{...}` is one quoted argument for each element,
          as `"$@"` is in a shell, and an empty list is no argument at all.
          The typechecker refuses the other cases where it knows the type;
@@ -3376,6 +3417,7 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
               goes in as itself, where a quote would be a syntax error. *)
            | Token.Arith     -> to_text v)
     ) parts;
+    if has_raw then check_raw_contexts (List.rev !raws) tail;
     Buffer.add_string buf tail;
     VString (Buffer.contents buf)
   | Contract (reqs, ens, body) ->

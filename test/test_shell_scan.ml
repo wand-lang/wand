@@ -353,7 +353,59 @@ let test_hole_safety () =
     "uses {Shell(echo)}\nlet n = 5\n$(echo $(( %{n} + 1 )))"
     "6";
   run_err "a String in arithmetic is a type error"
-    "uses {Shell(echo)}\nlet n = \"5\"\n$(echo $(( %{n} + 1 )))" "expected Int"
+    "uses {Shell(echo)}\nlet n = \"5\"\n$(echo $(( %{n} + 1 )))" "must be an Int"
+
+(* bash reads some operands again as arithmetic, and arithmetic runs a
+   `$(...)` in a subscript: `a[$(cmd)]` runs cmd although the value was
+   quoted. A hole there must be an Int; a hole bash reads as a name it
+   cannot carry is refused (#169). The text operands of `[[ ]]`, `test`
+   and `[` stay as they were. *)
+let ctx_of src =
+  (* `%` marks each hole in the template. *)
+  let segs = String.split_on_char '%' src
+             |> List.concat_map (fun lit -> [Lit lit; QuotedHole]) in
+  let segs = List.filteri (fun i _ -> i < List.length segs - 1) segs in
+  hole_contexts segs
+
+let show = function
+  | HArg -> "arg" | HInside c -> Printf.sprintf "inside %c" c
+  | HArith -> "arith" | HErr _ -> "refused"
+
+let test_bash_arithmetic () =
+  let check src want =
+    Alcotest.(check (list string)) src want
+      (Array.to_list (Array.map show (ctx_of src)))
+  in
+  check "[[ % -eq 0 ]]" ["arith"];
+  check "[[ 0 -lt % ]]" ["arith"];
+  check "[[ \"%\" -ge 0 ]]" ["arith"];
+  check "if [[ % -ne 1 ]]; then echo y; fi" ["arith"];
+  check "! [[ % -gt 1 ]]" ["arith"];
+  check "[[ a == b && % -le 1 ]]" ["arith"];
+  check "[[ % -eq 0 ]] && echo %" ["arith"; "arg"];
+  check "[[ -v % ]]" ["refused"];
+  check "[[ % ]]" ["refused"];
+  check "[[ ( % == a ) ]]" ["refused"];
+  check "let %" ["arith"];
+  check "declare -i n=%" ["arith"];
+  check "declare -a a=%" ["arith"];
+  check "typeset v=%" ["arith"];
+  check "f() { local v=%; }" ["arith"];
+  check "f() { local v=% }" ["arith"];
+  check "unset %" ["refused"];
+  (* Text operands and other commands are as before. *)
+  check "[[ % == foo ]]" ["arg"];
+  check "[[ foo != % ]]" ["arg"];
+  check "[[ -n % ]]" ["arg"];
+  check "[[ -f \"%\" ]]" ["inside \""];
+  check "[[ % =~ ^a ]]" ["arg"];
+  check "test % -eq 0" ["arg"];
+  check "[ % -eq 0 ]" ["arg"];
+  check "echo % -eq 0" ["arg"];
+  check "export V=%" ["arg"];
+  check "echo $(echo %) && [[ 1 -eq 1 ]]" ["arg"];
+  run_err "a String operand of -eq is a type error at the value"
+    "uses {Shell}\nlet x = \"1\"\n$?([[ %{x} -eq 0 ]])" "must be an Int, not String"
 
 (* A raw control byte in a command is refused, and no diagnostic prints one
    to the terminal: an ESC in a command word cleared the screen and hid the
@@ -379,6 +431,7 @@ let () =
     ];
     "a %{} value is data", [
       Alcotest.test_case "quoted for its context or refused" `Slow test_hole_safety;
+      Alcotest.test_case "bash arithmetic" `Quick test_bash_arithmetic;
     ];
     "control bytes", [
       Alcotest.test_case "refused, and not echoed" `Slow test_control_bytes;

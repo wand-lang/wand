@@ -5757,7 +5757,17 @@ let rec infer tenv (env : env) (e : expr) : typ =
       (* An arithmetic operand goes in as a number, so the shell cannot read
          anything else out of it; the value has to be an Int. *)
       match (h : Token.hole) with
-      | Token.Arith -> unify_expected ~expected:TInt ~got:t
+      | Token.Arith ->
+        (try unify_expected ~expected:TInt ~got:t
+         with (TypeError _ | TypeErrorAt _) as ex ->
+           match loc_of_expr e with
+           | Some l ->
+             raise (TypeErrorAt (l, Printf.sprintf
+               "the shell reads this %%{...} value as arithmetic, which runs \
+                a $(...) in a subscript, so the value must be an Int, \
+                not %s"
+               (string_of_typ t)))
+           | None -> raise ex)
       | _ ->
         cmd_holes := (t, h, loc_of_expr e) :: !cmd_holes;
         (match h, loc_of_expr e with

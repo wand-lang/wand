@@ -407,7 +407,9 @@ let read_run_cmd ?(form = "$()") s =
       in
       parts := !parts @ [(lit, expr_buf_contents, hole, at)];
       loop ()
-    | '\\' when peek s = '\n' ->
+    (* Inside single quotes the shell keeps `\` and the newline as they
+       are, so they are text there, not a continuation. *)
+    | '\\' when peek s = '\n' && !quote <> '\'' ->
       conts := (List.length !parts, Buffer.length buf) :: !conts;
       ignore (advance s); loop ()
     (* A backslash spends the next character wherever the shell would let it
