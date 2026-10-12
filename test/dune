@@ -237,3 +237,7 @@
 (test
  (name test_text_primitives)
  (libraries wand alcotest))
+
+(test
+ (name test_block_lines)
+ (libraries wand alcotest unix))

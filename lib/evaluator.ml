@@ -5438,6 +5438,62 @@ let par_timeout d thunk =
 
 let stdin_streamed = Atomic.make false
 
+(* Lines split from blocks: [read b off len] puts up to [len] bytes into [b]
+   at [off] and says how many, 0 at the end. Each line comes without its
+   '\n' -- a '\r' before it stays, as `input_line` keeps it -- and a last
+   line with no newline is still a line. A read gives what is there, so a
+   pipe's line comes out when it arrives and not when a block fills.
+
+   This was `In_channel.input_line` once per line, which locks the channel,
+   scans and copies for each line. Here a block is one read and a line is
+   one copy. The bytes not yet given out move to the front before the next
+   read, and that is at most the part of one line; a line longer than the
+   buffer makes the buffer bigger. *)
+let block_lines (read : bytes -> int -> int -> int) : unit -> string option =
+  let buf = ref (Bytes.create 65536) in
+  let start = ref 0 in      (* the bytes not given out are [start, stop) *)
+  let stop = ref 0 in
+  let scanned = ref 0 in    (* no '\n' in [start, scanned) *)
+  let eof = ref false in
+  let rec find b i n =
+    if i >= n then -1
+    else if Bytes.unsafe_get b i = '\n' then i
+    else find b (i + 1) n
+  in
+  let rec next () =
+    let i = find !buf (max !start !scanned) !stop in
+    if i >= 0 then begin
+      let line = Bytes.sub_string !buf !start (i - !start) in
+      start := i + 1;
+      scanned := i + 1;
+      Some line
+    end else if !eof then begin
+      if !start < !stop then begin
+        let line = Bytes.sub_string !buf !start (!stop - !start) in
+        start := !stop;
+        Some line
+      end else None
+    end else begin
+      let held = !stop - !start in
+      if !start > 0 then begin
+        Bytes.blit !buf !start !buf 0 held;
+        start := 0
+      end;
+      stop := held;
+      scanned := held;
+      if held = Bytes.length !buf then begin
+        let bigger = Bytes.create (2 * held) in
+        Bytes.blit !buf 0 bigger 0 held;
+        buf := bigger
+      end;
+      (match read !buf held (Bytes.length !buf - held) with
+       | 0 -> eof := true
+       | n -> stop := held + n);
+      next ()
+    end
+  in
+  next
+
 (* The close half takes what the read ended as: `~early:true` for a stream
    that stopped before its source ran out -- a satisfied `take`, or a stage
    that raised -- and `~early:false` for one read to exhaustion. Only a
@@ -5450,13 +5506,23 @@ let rec stream_provider (src : stream_source)
     ((fun () -> match !rest with [] -> None | v :: tl -> rest := tl; Some v),
      fun ~early:_ -> ())
   in
-  let of_channel ~close ic =
+  let of_file ic =
+    let next = block_lines (In_channel.input ic) in
+    ((fun () ->
+        match next () with
+        | Some l -> Some (VString l)
+        | None -> None),
+     fun ~early:_ -> close_in_noerr ic)
+  in
+  (* Stdin is read a line at a time, not in blocks: `IO.read_line` and
+     `IO.read_all` read the same channel after a stream that stopped early,
+     and a block would take from them what the stream did not use. *)
+  let of_stdin ic =
     ((fun () ->
         match In_channel.input_line ic with
         | Some l -> Some (VString l)
         | None -> None),
-     if close then (fun ~early:_ -> close_in_noerr ic)
-     else (fun ~early:_ -> ()))
+     fun ~early:_ -> ())
   in
   match src with
   | SVals vs -> of_vals vs
@@ -5511,7 +5577,7 @@ let rec stream_provider (src : stream_source)
          "Shell.stream: the handler must answer with a list of lines"))
   | SFile p ->
     (match perform_wand ("FS!stream_lines", VPath p) with
-     | VLineSource ic -> of_channel ~close:true ic
+     | VLineSource ic -> of_file ic
      | VList vs -> of_vals vs
      | _ -> raise (EvalError
          "stream_lines: the handler must answer with a list of lines"))
@@ -5523,7 +5589,7 @@ let rec stream_provider (src : stream_source)
        if Atomic.exchange stdin_streamed true then
          raise (EvalError
            "stdin has already been streamed once and cannot be re-run")
-       else of_channel ~close:false ic
+       else of_stdin ic
      | VList vs -> of_vals vs
      | _ -> raise (EvalError
          "stdin_lines: the handler must answer with a list of lines"))

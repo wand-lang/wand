@@ -479,46 +479,16 @@ let rec wait_for_input fd =
   | _ -> Evaluator.check_interrupt (); wait_for_input fd
 
 let line_reader fd =
-  let buf = Buffer.create 4096 in
-  let chunk = Bytes.create 65536 in
-  let eof = ref false in
-  let start = ref 0 in
-  let scanned = ref 0 in
-  let take upto next =
-    let line = Buffer.sub buf !start (upto - !start) in
-    start := next;
-    if !start > 65536 then begin
-      let rest = Buffer.sub buf !start (Buffer.length buf - !start) in
-      Buffer.clear buf; Buffer.add_string buf rest; start := 0; scanned := 0
-    end;
-    line
+  let rec read b off len =
+    if Sched.active () then wait_for_input fd;
+    match Unix.read fd b off len with
+    | n -> n
+    | exception Unix.Unix_error (Unix.EINTR, _, _) -> read b off len
+    | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) ->
+      read b off len
+    | exception Unix.Unix_error _ -> 0
   in
-  let rec find i =
-    if i >= Buffer.length buf then None
-    else if Buffer.nth buf i = '\n' then Some i
-    else find (i + 1)
-  in
-  let rec next () =
-    match find (max !start !scanned) with
-    | Some i -> scanned := i + 1; Some (take i (i + 1))
-    | None ->
-      scanned := Buffer.length buf;
-      if !eof then
-        (if !start < Buffer.length buf then
-           Some (take (Buffer.length buf) (Buffer.length buf))
-         else None)
-      else begin
-        if Sched.active () then wait_for_input fd;
-        (match Unix.read fd chunk 0 (Bytes.length chunk) with
-         | 0 -> eof := true
-         | n -> Buffer.add_subbytes buf chunk 0 n
-         | exception Unix.Unix_error (Unix.EINTR, _, _) -> ()
-         | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EWOULDBLOCK), _, _) -> ()
-         | exception Unix.Unix_error _ -> eof := true);
-        next ()
-      end
-  in
-  next
+  Evaluator.block_lines read
 
 (* A command read as it goes, for `Shell.stream`. What the caller gets back
    is a puller over the child's stdout and a stop; the child outlives

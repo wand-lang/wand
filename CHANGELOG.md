@@ -19,6 +19,7 @@
 
 ### Changed
 
+- Stream lines are read in blocks, which makes line streams faster (#158).
 - A `;` at the end of a line inside a `( ... )` block continues an arm or branch body when the next line is at the body's column, as a newline does (#119).
 - In a construction of a record of one field, one name that is not the field fills that field: `B(x)` is `B(n = x)` (#115).
 - `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
