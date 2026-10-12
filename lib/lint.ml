@@ -332,6 +332,26 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
            List.map (fun (lit, _, _) -> lit) parts @ [tail]
          | _ -> []
        in
+       (* A newline before the first word or after the last one separates
+          nothing: a command that opens on the line under `$(` and closes
+          with `)` on a line of its own is one command. *)
+       let blank c = c = ' ' || c = '\t' || c = '\n' in
+       let trim_left s =
+         let n = String.length s in
+         let i = ref 0 in
+         while !i < n && blank s.[!i] do incr i done;
+         String.sub s !i (n - !i)
+       in
+       let trim_right s =
+         let j = ref (String.length s) in
+         while !j > 0 && blank s.[!j - 1] do decr j done;
+         String.sub s 0 !j
+       in
+       let last = List.length literals - 1 in
+       let literals = List.mapi (fun i s ->
+         let s = if i = 0 then trim_left s else s in
+         if i = last then trim_right s else s) literals
+       in
        if List.exists runs_on literals then
          acc := { rule = Lint_rules.V_SHELL2;
                   loc = !here;

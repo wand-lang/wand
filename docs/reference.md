@@ -2185,7 +2185,19 @@ What is checked, and when:
   second command, as it does in a shell script, so a command broken over two
   lines for width runs as two. End the line with `\` to continue it, which
   is what a shell reads too. `V-SHELL2` reports the break, and `wand t --fix`
-  writes the `\`.
+  writes the `\`. A newline before the first word or after the last one
+  separates nothing, so a command can open on the line under `$?(` and
+  close with `)` on a line of its own. `wand f` keeps each `\` and its line
+  break. It indents the continued lines one step past the line that opens
+  the command, and puts a `)` that follows a break under that line. Inside
+  quotes, and where a `\` joins two halves of one word, it changes nothing:
+  there the spaces are part of what the command runs.
+
+  ```ocaml
+  let r = $?(cd /tmp && \
+    git status --short \
+  )
+  ```
 - **You cannot narrow shell control flow.** A reserved word in command
   position is a type error under a narrowed manifest, as in
   `$(for f in *; do ...; done)`. Neither check can bound what the body runs.

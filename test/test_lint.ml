@@ -413,7 +413,16 @@ let test_shell2 () =
      one command and says nothing. *)
   silent "continued with a backslash"
     "uses {Shell}\nlet a = $(echo one \\\n  two)\na";
-  silent "one line" "uses {Shell}\nlet a = $(echo one two)\na"
+  silent "one line" "uses {Shell}\nlet a = $(echo one two)\na";
+  (* A newline before the first word or after the last separates nothing:
+     a command that opens on the line under `$?(` and closes with `)` on a
+     line of its own is one command, and `wand f` writes it so (#114). *)
+  silent "opened on the next line"
+    "uses {Shell}\nlet a = $?(\n  echo hi\n)\na";
+  silent "with a hole in it, opened on the next line"
+    "uses {Shell}\nlet n = \"x\"\nlet a = $?(\n  echo %{n}\n)\na";
+  fires "a newline between two words still counts"
+    "uses {Shell}\nlet a = $?(\n  echo one\n  two\n)\na" "V-SHELL2"
 
 (* A bidirectional override in a string or a comment: the glyphs read one
    way and the source runs another. A warning, since a string may hold real

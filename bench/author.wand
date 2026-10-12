@@ -294,8 +294,13 @@ let steps_in (line: String) =
 -- tool call it made as one line, and with each in full, in order.
 let agent! (dir: Path) (bin: Path) lang = (
   let path = "%{bin}:%{setting "PATH" "/usr/bin:/bin"}";
-  let r =
-    $?(cd %{dir} && PATH=%{path} claude -p %{prompt lang} --model %{model} --output-format stream-json --verbose --setting-sources project --strict-mcp-config --no-session-persistence --allowedTools Read,Write,Edit,Glob,Grep,Bash --max-budget-usd %{budget});
+  let r = $?(cd %{dir} && PATH=%{path} claude -p %{prompt lang} \
+    --model %{model} \
+    --output-format stream-json --verbose \
+    --setting-sources project --strict-mcp-config \
+    --no-session-persistence \
+    --allowedTools Read,Write,Edit,Glob,Grep,Bash \
+    --max-budget-usd %{budget});
   let lines = String.lines r.stdout;
   let last = List.reverse lines |> List.head |> Option.default "";
   match JSON.parse last |> Result.and_then (JSON.decode Report.decoder) with
