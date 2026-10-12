@@ -19,6 +19,7 @@
 
 ### Changed
 
+- A tuple index such as `acc.0` is accepted when the type of the tuple is known later in the same definition, as in a fold step whose `else` branch gives the tuple (#147).
 - `xs[1]` on a list gives an error that says what to write: `use List.get 1 xs (as an Option) or List.get! 1 xs` (#145).
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).

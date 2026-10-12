@@ -2496,7 +2496,8 @@ let test_errors_say_the_fix () =
               let step acc line =\n  if line == \"\" then acc\n  else\n    \
               let old = Map.get line acc.0 |> Option.default [];\n    \
               (Map.set line (1 :: old) acc.0, acc.1)\n\
-              let r = IO.stdin_lines () |> Stream.fold_left step (Map.empty, 0)\n" with
+              let step2 acc line = Map.get line acc.0\n\
+              let r = IO.stdin_lines () |> Stream.fold_left step2 (Map.empty, 0)\n" with
    | Error msg when contains msg "whole call" ->
      Alcotest.failf "a tuple read too early is not about the pipe: %s" msg
    | Error _ -> ()
@@ -2601,10 +2602,69 @@ let test_tuple_index () =
     "'.1' reads an element of a tuple, and this is Int";
   err_contains "a module" "import List\nList.1" "a module is not a tuple"
 
+(* A read of `p.N` from a value whose type is not known yet waits for it,
+   and is settled when the type becomes known later in the same top-level
+   item. A read still waiting at the item's end is the error (#147). *)
+let test_tuple_index_later () =
+  ok "the else branch gives a fold step its type"
+    "import List\n\
+     let step acc x = if x == 0 then acc else (acc.0 + 1, acc.1 + x)\n\
+     List.fold_left step (0, 0) [1, 0, 2]"
+    "(2, 3)";
+  ok "a lambda given straight to the fold"
+    "import List\n\
+     List.fold_left (fn acc x -> (acc.0 + x, acc.1 + 1)) (0, 0) [1, 2, 3]"
+    "(6, 3)";
+  ok "the issue's step with a stream"
+    "import Stream\nimport IO\n\
+     let step acc line = if line == \"\" then acc else (acc.0 + 1, acc.1)\n\
+     let res = Stream.fold_left step (0, 0) (Stream.of_list [\"a\", \"\", \"b\"])\n\
+     res.0"
+    "2";
+  ok "a map in a pair, read before the if"
+    "import IO\nimport Map\nimport Option\nimport Stream\n\
+     let step acc line =\n  if line == \"\" then acc\n  else\n    \
+     let old = Map.get line acc.0 |> Option.default [];\n    \
+     (Map.set line (1 :: old) acc.0, acc.1)\n\
+     let r = Stream.fold_left step (Map.empty, 0) (Stream.of_list [\"a\", \"a\"])\n\
+     Map.size r.0"
+    "1";
+  ok "a local function settled by its use"
+    "let h = fn q -> q.0 in h (1, 2)" "1";
+  ok "an argument that comes after the lambda"
+    "(fn p -> p.0 + 1) (let z = 1 in (z, 2))" "2";
+  ok "a chained read"
+    "let f p = if true then p else ((p.0.1, 1), 2)\n(f ((5, 6), 7)).0.1" "6";
+  err_contains "nothing in the definition gives the type"
+    "let step acc = acc.0 + 1"
+    "'acc' needs its type before '.0' can be read: write its tuple type, \
+     such as '(acc: (A, B))'";
+  err_contains "a result alone does not give the argument's type"
+    "import List\nlet step acc x = (acc.0 + x, acc.1 + 1)\n\
+     List.fold_left step (0, 0) [1]"
+    "'acc' needs its type before '.0' can be read";
+  err_contains "the type comes later, and is too short"
+    "let f acc = if true then acc else (acc.2 + 1, acc.1)"
+    "a tuple of 2 has elements .0 to .1";
+  err_contains "the type comes later, and is not a tuple"
+    "let f acc = if true then acc else 5 + acc.0"
+    "'.0' reads an element of a tuple, and this is Int";
+  err_contains "the element read and the element given differ"
+    "let f acc = if true then acc else (acc.1 ++ \"s\", 1)"
+    "Int and String are not the same type";
+  (* A read still waiting keeps its element from being generalised: `y`
+     is one value, so it cannot be a number and a String. *)
+  err_contains "a waiting element is not generalised"
+    "import String\n\
+     let f p =\n  let y = p.0\n  let a = y + 1\n  let b = String.length y\n  \
+     if true then p else (1, 2)"
+    "expected String, got Int"
+
 let () =
   Alcotest.run "Typechecker" [
     "tuple index", [
       Alcotest.test_case "p.N" `Quick test_tuple_index;
+      Alcotest.test_case "p.N known later" `Quick test_tuple_index_later;
     ];
     "recursion", [
       Alcotest.test_case "a group member called before its body" `Quick

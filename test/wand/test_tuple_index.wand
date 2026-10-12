@@ -45,3 +45,17 @@ test "from Map.to_list" (fn t ->
   t.eq [1, 2] (Map.to_list m |> List.map (fn kv -> kv.1)))
 
 test "in an interpolation" (fn t -> t.eq "a=1" "%{pair.0}=%{pair.1}")
+
+-- ── the type of the tuple can come later in the definition (#147) ──────
+--
+-- A fold's step function reads `acc.0` before anything says what `acc` is.
+-- The read waits until the definition tells: here the `if` gives `acc` the
+-- type of the pair in its `else` branch.
+
+let count_blank acc line = if line == "" then acc else (acc.0 + 1, acc.1)
+
+test "the else branch gives the step its type" (fn t ->
+  t.eq (2, 0) (List.fold_left count_blank (0, 0) ["a", "", "b"]))
+
+test "a lambda given straight to the fold" (fn t ->
+  t.eq (6, 3) (List.fold_left (fn acc x -> (acc.0 + x, acc.1 + 1)) (0, 0) [1, 2, 3]))
