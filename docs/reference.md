@@ -1438,7 +1438,9 @@ syntax, so a `Command` can only be built where its words were written.
 
 #### Running a command in another directory
 
-A command runs in the script's directory. `Shell.in_dir dir c` is the
+A command runs in the current directory of the process: the directory
+that `wand` was started from, not the directory that holds the script. A
+relative path in `FS` is read from the same directory. `Shell.in_dir dir c` is the
 command `c`, to run in `dir`. It runs nothing. Give the result to any
 function that takes a `Command`:
 
@@ -1450,7 +1452,7 @@ $*(wand widget.wand) |> Shell.in_dir copy |> Shell.run!
 
 Only that command runs in `dir`. The script and its other commands stay
 where they are, because wand has no `cd`. A relative `dir` is read from the
-script's directory. On a command that has a directory already, a relative
+current directory of the process. On a command that has a directory already, a relative
 `dir` is read from that directory, as a second `cd` is. A `dir` that is not
 a directory raises when the command runs.
 

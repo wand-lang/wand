@@ -103,7 +103,8 @@ let inspect_with (c: Command) (input: String) = try inspect_with! c input
 -- function that takes a `Command`.
 --
 -- Only this command runs in `dir`. The script and its other commands stay
--- where they are. A relative `dir` is read from the script's directory.
+-- where they are. A relative `dir` is read from the current directory of
+-- the process, not from the directory that holds the script.
 -- On a command that has a directory already, a relative `dir` is read from
 -- that directory, as a second `cd` is.
 -- A `dir` that is not a directory raises when the command runs.

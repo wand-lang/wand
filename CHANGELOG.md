@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Documentation
+
+- The reference and the `Shell.in_dir` doc say that a command, and a relative `dir`, use the current directory of the process, not the directory of the script (#118).
+
 ## [0.105.0] - 2026-10-12
 
 ### Added
