@@ -271,3 +271,15 @@ test "a long value reaches the command whole" (fn t ->
   let bare = String.trim $(printf %s %{v} | wc -c);
   let quoted = String.trim $(printf %s "%{v}" | wc -c);
   t.eq "200000 200000" "%{bare} %{quoted}")
+
+-- ── A variable read as arithmetic ────────────────────────────────────────
+
+-- bash reads the value of `X` again as arithmetic in `$((X))`, so a value
+-- assigned to `X` must be an `Int` (#177). A `String` there is a type error.
+test "an Int assigned to a variable that arithmetic reads" (fn t ->
+  let n = 20;
+  t.eq "42" $(X=%{n}; echo $((X * 2 + 2))))
+
+test "a String assigned to a variable that arithmetic does not read" (fn t ->
+  let s = "a[$(id)]";
+  t.eq "a[$(id)] 3" $(X=%{s}; Y=3; echo "$X" $((Y))))
