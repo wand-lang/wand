@@ -470,6 +470,29 @@ let test_code_action_annotates_parameter () =
      | _ -> Alcotest.fail "expected one text edit")
   | l -> Alcotest.failf "expected one action, got %d" (List.length l)
 
+(* Each missing import is a diagnostic of its own, with a type error in
+   the file, and its action puts the line where `wand t --fix` does (#150). *)
+let test_code_action_adds_missing_imports () =
+  let text =
+    "import FS\nimport Path\n\
+     let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n" in
+  let (_, outs) = session [did_open uri text; code_action_at 24 uri 2 2] in
+  let actions = items_of (response_for 24 outs) in
+  let titles = List.map (fun a -> s (m "title" a)) actions in
+  Alcotest.(check (list string)) "one action each"
+    ["Insert `import Int`"; "Insert `import Digest`"; "Insert `import Hash`"] titles;
+  let edit_line title =
+    List.find_map (fun a ->
+      if s (m "title" a) <> title then None
+      else match m uri (m "changes" (m "edit" a)) with
+        | `List [edit] -> Some (int_of (m "line" (m "start" (m "range" edit))))
+        | _ -> None) actions
+  in
+  Alcotest.(check (option int)) "Digest before FS" (Some 0)
+    (edit_line "Insert `import Digest`");
+  Alcotest.(check (option int)) "Hash after FS" (Some 1)
+    (edit_line "Insert `import Hash`")
+
 let formatting_req id uri =
   request id "textDocument/formatting"
     (`Assoc [("textDocument", `Assoc [("uri", `String uri)]);
@@ -806,6 +829,7 @@ let () =
       Alcotest.test_case "manifest update" `Quick test_code_action_updates_manifest;
       Alcotest.test_case "dead import"     `Quick test_code_action_removes_dead_import;
       Alcotest.test_case "parameter type"  `Quick test_code_action_annotates_parameter;
+      Alcotest.test_case "missing imports" `Quick test_code_action_adds_missing_imports;
     ];
     "formatting", [
       Alcotest.test_case "whole document"  `Quick test_formatting;

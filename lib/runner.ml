@@ -4642,10 +4642,22 @@ let ctor_spellings (imp : import_env) (scope : Typechecker.env) =
 let typecheck_source ?(set_main = true) ~path (src : string)
     : (source_check, Diag.t) result =
   let full = entry_path path in
+  (* The standard library imports the file is missing, known from its
+     parse alone (#150). They are found before the check runs, and travel
+     with whatever error it ends on, so one answer names them all. A
+     module of the standard library is checked with every module in scope,
+     so it has none. *)
+  let missing = ref [] in
+  let with_missing (d : Diag.t) =
+    let extra = Missing_imports.not_in (Diag.all d) !missing in
+    if extra = [] then d else { d with Diag.others = d.Diag.others @ extra }
+  in
   try
     if set_main then Package.set_main_file full;
     let tokens   = Lexer.tokenize src in
     let (prog, item_locs) = Parser.parse_program_with_locs tokens in
+    if not (is_stdlib_file full) then
+      missing := Missing_imports.find ~item_locs prog;
     let base_dir = Filename.dirname full in
     let cache = Hashtbl.create 8 in
     let loading = ref [] in
@@ -4676,7 +4688,8 @@ let typecheck_source ?(set_main = true) ~path (src : string)
           List.map (fun (l, m) -> Diag.error ~code:"E-TYPE" ?loc:l m) rest
         | [] -> []
       in
-      Error { (Diag.error ~code:"E-TYPE" ?loc ?fix msg) with Diag.others }
+      Error (with_missing
+               { (Diag.error ~code:"E-TYPE" ?loc ?fix msg) with Diag.others })
     | Ok (full_type_env, own_type_env, last_t, holes) ->
       (* Read before the record, because a record's fields are evaluated in
          no stated order and these come off the check that just ran. *)
@@ -4711,7 +4724,7 @@ let typecheck_source ?(set_main = true) ~path (src : string)
   | (Lexer.LexError _ | Parser.ParseError _ | Typechecker.TypeError _
     | Typechecker.TypeErrorAt _ | Module_types.ImportError _
     | Module_types.ImportErrorAt _ | Package.Error _ | Failure _) as e ->
-    Error (diag_of_exn e)
+    Error (with_missing (diag_of_exn e))
 
 let typecheck_file path : (source_check, Diag.t) result =
   try

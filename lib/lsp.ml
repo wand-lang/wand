@@ -736,16 +736,15 @@ let action_edit lines text (d : Diag.t) : (string * J.t list) option =
   let loc_line = match d.Diag.loc with Some l -> l.Token.line | None -> 1 in
   match d.Diag.fix with
   | Some (Diag.InsertLine t) ->
-    let n = match lines with
-      | first :: _ when String.length first >= 2
-                        && first.[0] = '#' && first.[1] = '!' -> 2
-      | _ -> 1
-    in
+    (* The place `wand t --fix` puts the line: an import joins the run of
+       imports in its order, and a manifest goes first. *)
+    let (n, inserted) = Fix.insertion lines t in
     let title =
       if Fix.is_manifest_text t then "Add manifest: " ^ t
       else "Insert `" ^ t ^ "`"
     in
-    Some (title, [json_of_line_edit lines (Autoedit.Insert_line (n, t))])
+    Some (title, [json_of_line_edit lines
+                    (Autoedit.Insert_line (n, String.concat "\n" inserted))])
   | Some (Diag.ReplaceLine t) ->
     let n =
       if Fix.is_manifest_text t then

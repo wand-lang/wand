@@ -71,10 +71,14 @@
 - `let {Sha256} = Digest` gives `did you forget to import the standard library Digest?` at its position, and not `expected a module implementing nothing` (#149).
 - `wand t --fix` changes `let {Sha256} = Digest` at the top level to `let {Sha256} = import Digest` (#149).
 - `let {Sha256} = Digest` with `import Digest` in the file says to write `let {Sha256} = import Digest`, and `wand t --fix` makes that change (#149).
+- `wand t` reports every missing standard library import with the first error, each at its first use, and not only the first one (#150).
+- `wand t --fix` adds every missing standard library import in one run, also when the file has an error that it cannot fix (#150).
+- The editor gives a fix for each missing standard library import, and puts the import where `wand t --fix` puts it, not on the first line (#150).
 
 ### Documentation
 
 - The reference writes the chained cons pattern with `::`, not `:` (#117).
+- The reference says that `wand t --fix` adds the missing standard library imports first, and keeps them when it stops at an error that it cannot fix (#150).
 
 ## [0.104.1] - 2026-10-10
 
