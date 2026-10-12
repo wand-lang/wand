@@ -216,6 +216,13 @@
  (libraries wand alcotest))
 
 (test
+ (name test_resolve)
+ (deps
+  %{exe:../bin/wand.exe}
+  (source_tree wand))
+ (libraries wand alcotest unix))
+
+(test
  (name test_sched)
  (libraries wand alcotest unix))
 

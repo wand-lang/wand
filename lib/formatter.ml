@@ -1308,6 +1308,10 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
   | CIDR s | Version s | Size s | IPv4 s -> Doc.text s
   | Port n     -> Doc.text (":" ^ string_of_int n)
   | Var x      -> Doc.text x
+  (* The evaluator's resolved forms, printed as the source wrote them. *)
+  | Slot (x, _) -> Doc.text x
+  | Global g | GlobalCtor g -> Doc.text g.g_name
+  | ModField (g, f, _, _) -> Doc.text (g.g_name ^ "." ^ f)
   | Constr x   -> Doc.text x
   | EnvVar x   -> Doc.text ("$" ^ x)
   | Hole       -> Doc.text "?"

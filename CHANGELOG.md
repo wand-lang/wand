@@ -34,9 +34,11 @@
 - `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
 - A call to a wand function is approximately 15% faster (#122).
 - Each step of evaluation is cheaper. A loop that calls a function is approximately 25% faster, and a program that runs for ever still stops at once on Ctrl-C (#157).
+- A name that a function binds, such as a parameter or a `let`, is found by its place, and a name from outside the function is found once and kept. Speed tasks 02, 03 and 09 are approximately 30% faster (#156).
 
 ### Fixed
 
+- A function value bound by `let`, such as `let inc = add 1`, no longer sees its own new name inside the function it came from. A program where that name hid another one now runs as it typechecks (#156).
 - A constructor used as a function value, such as `Stream.filter_map Some`, is accepted over a stream that reads a file, as a lambda is (#120).
 - An effect mismatch on the left of a `|>` no longer gives the hint about `|>` taking the whole call (#120).
 - An unbound name that the same definition binds in another scope gives "'x' is bound at line N, but that binding is not in scope here", not the `wand d` hint (#119).

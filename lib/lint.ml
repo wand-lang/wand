@@ -513,6 +513,9 @@ let rec names_of_expr (e : Ast.expr) : string list =
   let of_list es = List.concat_map names_of_expr es in
   match e with
   | Ast.Var n | Ast.Constr n -> [n]
+  | Ast.Slot (n, _) -> [n]
+  | Ast.Global g | Ast.GlobalCtor g -> [g.Ast.g_name]
+  | Ast.ModField (g, label, _, _) -> [label; g.Ast.g_name]
   (* `IO.println`: the head is the namespace, the label is its member. *)
   | Ast.Field (e, label) -> label :: names_of_expr e
   | Ast.Int _ | Ast.Float _ | Ast.String _ | Ast.Bool _ | Ast.Unit

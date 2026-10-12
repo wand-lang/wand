@@ -714,6 +714,84 @@ let rec lookup_var name (e : env) =
     then Some v
     else lookup_var name rest
 
+(* What a resolved lookup answers when the name is not there. A value of
+   its own, compared by address, so a lookup that finds the name allocates
+   nothing to say so. *)
+let absent : value = VString "\000absent"
+
+(* `lookup_var`, answering `absent` for a name that is not there. *)
+let rec lookup_name name (e : env) : value =
+  match e with
+  | [] -> absent
+  | (k, VEnvIndex tbl) :: rest when k = env_index_key ->
+    (match StrTbl.find_opt tbl name with
+     | Some v -> v
+     | None -> lookup_name name rest)
+  | (k, v) :: rest ->
+    if k == name
+       || (String.length k = String.length name && String.equal k name)
+    then v
+    else lookup_name name rest
+
+(* A name bound outside the definition that uses it. The definition's own
+   bindings are stepped past without a compare -- the resolver has said
+   none of them is this name -- and the binder at the edge is checked to be
+   the one the resolver saw there. What lies past the edge is the
+   environment the definition was made in. Nothing ever changes a list
+   that is already made, so the same list answers the same: the cache
+   keeps the list and its answer, and the next lookup from that list is
+   one compare. When the edge is not the resolver's binder -- the REPL
+   merged a function's equations, say -- the name is looked up by its text
+   from the front. *)
+let lookup_global (g : Ast.global) (e : env) : value =
+  let rec past d l =
+    match l with
+    | (k, _) :: rest -> if d = 1 then (if k == g.Ast.g_edge then rest else e) else past (d - 1) rest
+    | [] -> e
+  in
+  let from = if g.Ast.g_depth = 0 then e else past g.Ast.g_depth e in
+  if from == e && g.Ast.g_depth <> 0 then lookup_name g.Ast.g_name e
+  else begin
+    let cache = g.Ast.g_cache in
+    let hit = cache.Ast.hit in
+    if Obj.is_block hit && (Obj.obj (Obj.field hit 0) : env) == from
+    then (Obj.obj (Obj.field hit 1) : value)
+    else begin
+      let v = lookup_name g.Ast.g_name from in
+      if v != absent then cache.Ast.hit <- Obj.repr (from, v);
+      v
+    end
+  end
+
+(* The binding `d` steps in, if it is the binder's own; otherwise the
+   lookup by name. The binder's string is the one the pattern holds, and
+   binding a name pushes that string, so one pointer compare says whether
+   this is the binding the resolver meant. *)
+let lookup_slot name d (e : env) : value =
+  let by_name () =
+    match lookup_var name e with Some v -> v | None -> absent in
+  let rec go d l =
+    match l with
+    | (k, v) :: rest ->
+      if d = 0 then (if k == name then v else by_name ())
+      else go (d - 1) rest
+    | [] -> by_name ()
+  in
+  go d e
+
+(* Set `WAND_CHECK_SLOTS` to have every resolved lookup also made by name,
+   and a difference raised. The tests run with it, so a place where the
+   resolver's model of the environment is wrong shows there. *)
+let check_slots = Sys.getenv_opt "WAND_CHECK_SLOTS" <> None
+
+exception Slot_mismatch of string
+
+let check_slot name (e : env) (found : value) =
+  match lookup_var name e with
+  | Some v when v == found -> ()
+  | None when found == absent -> ()
+  | _ -> raise (Slot_mismatch name)
+
 (* A definition that only forwards.
 
    `let trim s = str_trim s` takes its argument and hands it to a builtin
@@ -744,9 +822,9 @@ let forwarding_builtin env params body =
       match strip_located e with
       | App (f, x) ->
         (match strip_located x with
-         | Var n -> peel (n :: args) f
+         | Var n | Slot (n, _) | Global { g_name = n; _ } -> peel (n :: args) f
          | _     -> None)
-      | Var f -> Some (f, args)
+      | Var f | Slot (f, _) | Global { g_name = f; _ } -> Some (f, args)
       | _     -> None
     in
     (match peel [] body with
@@ -1593,6 +1671,20 @@ let check_interrupt () =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0 then
     check_interrupt_now ()
 
+(* What a position does before what it holds: take a stop that was asked
+   for, give a fiber's turn when its turn is used up, and take one of the
+   steps a `Wand.limit` allows. *)
+let take_step (c : loc_cell) =
+  if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+  then check_interrupt_now ();
+  c.budget <- c.budget - 1;
+  if c.budget <= 0 then fiber_turn c;
+  let f = c.fuel in
+  if f != unlimited then begin
+    f.left <- f.left - 1;
+    if f.left < 0 then out_of_steps f
+  end
+
 let () = Sched.interrupt_pending := (fun () ->
   Atomic.get interrupt_requested <> 0)
 
@@ -2151,9 +2243,9 @@ let ctor_in_scope env name =
    `Always` match in a `match` over a `PullPolicy` when another type in the
    file has an `Always` too, and what lets `T.Ctor` match by its key. *)
 let ctor_matches env name vname =
-  Ctor.equal (ctor_in_scope env name) vname
-  || (if String.contains name '.' then Ctor.key vname = name
-      else Ctor.name vname = name)
+  (* The name first: it needs no lookup, and it settles most arms that
+     match. The two halves are the same as before, in the other order. *)
+  Ctor.named vname name || Ctor.equal (ctor_in_scope env name) vname
 
 let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
   match p, v with
@@ -2428,8 +2520,13 @@ let contract_text e = Doc.to_string (Formatter.emit_splice 0 e)
    read from the environment there. *)
 let rec payload_shape = function
   | Located (_, inner) | Qualified (_, inner) -> payload_shape inner
-  | App (f, _) -> (match strip_located f with Constr _ -> true | _ -> false)
+  | App (f, _) ->
+    (match strip_located f with Constr _ | GlobalCtor _ -> true | _ -> false)
   | _ -> false
+
+let unbound_variable name env =
+  raise (EvalError (Printf.sprintf "unbound variable '%s'%s"
+    name (Util.hint name (env_names env))))
 
 let rec eval (env : env) (e : expr) : value = eval_in (loc_cell ()) false env e
 
@@ -2454,7 +2551,7 @@ and nullary_payload env x =
   let is_nullary qual e =
     let found =
       match qual, strip_located e with
-      | None, Constr name -> lookup_var name env
+      | None, (Constr name | GlobalCtor { g_name = name; _ }) -> lookup_var name env
       | Some m, Constr name ->
         (match lookup_var m env with
          | Some (VRecord r) -> vrecord_get name r
@@ -2512,9 +2609,35 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
   | Var name ->
     (match lookup_var name env with
      | Some v -> v
-     | None   ->
-       raise (EvalError (Printf.sprintf "unbound variable '%s'%s"
-         name (Util.hint name (env_names env)))))
+     | None   -> unbound_variable name env)
+  | Slot (name, d) ->
+    let v = lookup_slot name d env in
+    if check_slots then check_slot name env v;
+    if v == absent then unbound_variable name env else v
+  | Global g ->
+    let v = lookup_global g env in
+    if check_slots then check_slot g.Ast.g_name env v;
+    if v == absent then unbound_variable g.Ast.g_name env else v
+  | ModField (g, label, cf, positions) ->
+    (* The steps the positions around `m` took, as they took them. *)
+    for _ = 1 to positions do take_step c done;
+    let m = g.Ast.g_name in
+    let mv = lookup_global g env in
+    if check_slots then check_slot m env mv;
+    (match mv with
+     | VRecord r ->
+       let hit = cf.Ast.hit in
+       if Obj.is_block hit && (Obj.obj (Obj.field hit 0) : vrecord) == r
+       then (Obj.obj (Obj.field hit 1) : value)
+       else
+         (match vrecord_get label r with
+          | Some v -> cf.Ast.hit <- Obj.repr (r, v); v
+          | None -> eval_in c tail env (Field (Constr m, label)))
+     | _ -> eval_in c tail env (Field (Constr m, label)))
+  | GlobalCtor g ->
+    let v = lookup_global g env in
+    if check_slots then check_slot g.Ast.g_name env v;
+    if v == absent then eval_in c tail env (Constr g.Ast.g_name) else v
   | Constr name ->
     (match lookup_var name env with
      | Some v -> v
@@ -2569,8 +2692,13 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
        if tail then apply_tail_c c vf vx else apply_c c vf vx)
   | Let (p, e1, e2, _) ->
     let v1 = eval_in c false env e1 in
+    (* `let f = fn ...` is recursive: the function sees itself. Only a
+       `fn` written there is: a function value that came from elsewhere,
+       `let g = add 1`, was written where `g` is not in scope, and binding
+       `g` inside it would let a name of the caller's shadow one of its
+       own. *)
     let v1 = match p, v1 with
-      | PVar name, VFun (fenv, params, body) ->
+      | PVar name, VFun (fenv, params, body) when Resolve.is_fn e1 ->
         VFix (name, fenv, params, body)
       | _ -> v1
     in

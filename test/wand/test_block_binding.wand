@@ -43,3 +43,12 @@ test "a block that does real work" (fn t ->
       );
     t.ok done?
   ))
+
+-- `let g = f 1` binds a function that was written elsewhere. Inside it, a
+-- name means what it meant where it was written, so a new `inc` here does
+-- not reach the `inc` that `add` sees.
+test "a function value keeps the names it was written with" (fn t ->
+  let inc = 5;
+  let add a b = a + b + inc;
+  let inc = add 1;
+  t.eq 8 (inc 2))

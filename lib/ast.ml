@@ -201,6 +201,40 @@ type expr =
   | With     of expr * pat * expr
   | Annot    of type_expr * expr
   | MapLit   of (string * expr) list
+  (* The three forms below are never written by the parser. The
+     evaluator's resolver (`resolve.ml`) writes them in place of a `Var`
+     or a module's field just before a definition runs, and nothing but
+     the evaluator ever sees them.
+
+     `Slot (x, d)`: the name `x`, bound by a binder of this definition
+     `d` bindings in from the front of the environment. `x` is the
+     binder's own string, so the evaluator checks the binding it finds
+     there by one pointer compare, and looks `x` up by name when that
+     fails. *)
+  | Slot     of string * int
+  (* `Global g`: a name bound outside the definition. See `global`. *)
+  | Global   of global
+  (* `GlobalCtor g`: a constructor named where a value goes, looked up as
+     `Global` looks a name up. *)
+  | GlobalCtor of global
+  (* `ModField (g, f, c, n)`: `m.f` where `m` names a module: `m` looked
+     up as a `Global`, and `c` keeps the field. `n` is how many positions
+     the parser wrapped `m` in, each a step that `Wand.limit` counts. *)
+  | ModField of global * string * cache * int
+
+(* A name bound outside the definition it is used in. The definition's
+   own bindings are the first `g_depth` of the environment, and the last
+   of them is `g_edge`'s; what is past them is the environment the
+   definition was made in, which does not change once it is made. So the
+   evaluator steps past `g_depth` bindings, checks the binder there by one
+   pointer compare, and keeps what the rest answered for the name, against
+   that rest: when the same rest comes again, so does the answer. *)
+and global = { g_name : string; g_depth : int; g_edge : string; g_cache : cache }
+
+(* What a lookup found last time, as one value so that two domains that
+   fill it at once each leave a whole answer. The evaluator owns what it
+   holds; it is an integer while nothing is known. *)
+and cache = { mutable hit : Obj.t }
 
 and case = pat * expr option * expr
 
@@ -328,7 +362,8 @@ let rec strip_located = function
    `Located` around it: an argument is not `Located` otherwise. So this
    asks of the node itself and does not step through a `Located`. *)
 let is_constr_payload e =
-  let is_constr f = match strip_located f with Constr _ -> true | _ -> false in
+  let is_constr f =
+    match strip_located f with Constr _ | GlobalCtor _ -> true | _ -> false in
   match e with
   | App (f, _) -> is_constr f
   | Qualified (_, inner) ->
@@ -384,7 +419,9 @@ let rec show : expr -> string = function
   | Port n     -> Printf.sprintf "port:%d" n
   | Version s  -> Printf.sprintf "ver:%s" s
   | Size s     -> Printf.sprintf "size:%s" s
-  | Var x      -> x
+  | Var x | Slot (x, _) -> x
+  | Global g | GlobalCtor g -> g.g_name
+  | ModField (g, f, _, _) -> Printf.sprintf "%s.%s" g.g_name f
   | Constr x   -> x
   | EnvVar x   -> Printf.sprintf "$%s" x
   | Hole       -> "?"

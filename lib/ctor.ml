@@ -45,7 +45,21 @@ let modul = function
   | Builtin _ | Local _ -> None
   | Owned (m, _) -> Some m
 
-let equal (a : t) (b : t) = a = b
+let equal (a : t) (b : t) = a == b || a = b
+
+(* Whether a pattern's constructor name names [c]: its key where the name
+   holds a dot, `T.Ctor`, and its bare name otherwise. The same answer as
+   comparing with `key` or `name`, without building the bare name. *)
+let named c n =
+  if String.contains n '.' then String.equal (key c) n
+  else match c with
+    | Builtin b -> String.equal b n
+    | Local k | Owned (_, k) ->
+      let lk = String.length k and ln = String.length n in
+      if lk = ln then String.equal k n && not (String.contains k '.')
+      else
+        let rec same i = i >= ln || (k.[lk - ln + i] = n.[i] && same (i + 1)) in
+        lk > ln && k.[lk - ln - 1] = '.' && same 0
 
 (* What a reader sees: the constructor as it was written. Two constructors of
    one name print alike, which is what a value has always looked like. *)

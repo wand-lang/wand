@@ -144,6 +144,7 @@ let uses (prog : program) item_locs =
     | With (r, p, b) -> go r; pat at p; go b
     | Annot (t, e) -> ty at t; go e
     | MapLit fs -> List.iter (fun (_, e) -> go e) fs
+    | Slot _ | Global _ | GlobalCtor _ | ModField _ -> ()
   in
   List.iteri (fun i item ->
     let at =

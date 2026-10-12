@@ -2277,7 +2277,9 @@ let merge_clause env name arity params body existing_params existing_body =
    to one. A script's own declarations belong to no module: nothing else can
    name its types, so its constructors stay `Local`. *)
 let run_item ?modul env item =
-  match item with
+  (* Each name a definition binds itself is resolved to its place in the
+     environment before the definition runs. See `resolve.ml`. *)
+  match Resolve.item item with
   | Ast.TLLet (_, [], body) when Option.is_some (import_kind_of body) -> env  (* pre-loaded *)
   | Ast.TLLet (name, [], body) ->
     (name, eval env body) :: env
@@ -3668,7 +3670,7 @@ let run_program ?(mode = Normal) ~base_dir prog =
          Evaluator.forget_loc ();
          let (env, last) =
            match item with
-           | Ast.TLExpr e -> (env, eval env e)
+           | Ast.TLExpr e -> (env, eval env (Resolve.expr [] e))
            | _            -> (run_item env item, last)
          in
          (* A file's own definitions pile up in front of the base, so a fresh
@@ -3857,7 +3859,7 @@ let run_test_program ~base_dir ?(item_locs = []) prog
         match item with
         | Ast.TLExpr e ->
           let result =
-            try Ok (eval env e)
+            try Ok (eval env (Resolve.expr [] e))
             with
             | EvalError msg -> Error (Evaluator.stamp_loc msg)
             | Failure msg   -> Error msg
@@ -4399,7 +4401,7 @@ let run_session ?(evaluate = true) (sess : session) (src : string)
           with_file_bounds prog.Ast.manifest (fun () ->
           List.iter (fun item ->
             Evaluator.forget_loc ();
-            match item with
+            match Resolve.item item with
             | Ast.TLLet (_, [], body) when Option.is_some (import_kind_of body) -> ()  (* pre-loaded *)
             | Ast.TLLet (name, [], body) ->
               env_ref := (name, eval !env_ref body) :: !env_ref

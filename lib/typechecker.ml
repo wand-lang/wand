@@ -4654,6 +4654,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Port _     -> TPort
   | Version _  -> TVersion
   | Size _     -> TSize
+  (* The evaluator's resolved forms never reach the checker. *)
+  | Slot _ | Global _ | GlobalCtor _ | ModField _ ->
+    raise (TypeError "internal error: a resolved name reached the typechecker")
   | Var name ->
     (match List.assoc_opt name env with
      (* A function naming itself inside a closure of its own body. *)
