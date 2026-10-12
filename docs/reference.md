@@ -1575,6 +1575,22 @@ value in with `|>` instead). `[[ ... ]]` and `(( ... ))` read a word as a
 number the same way `$(( ))` does; a file that narrows `Shell(...)` cannot
 use `[[`, since no word list can bound what it evaluates.
 
+bash also reads some operands again as arithmetic after they are quoted,
+and arithmetic runs a `$(...)` in a subscript: a value `a[$(cmd)]` runs
+`cmd`. So a `%{x}` must be an `Int` where it is an operand of `-eq`, `-ne`,
+`-lt`, `-le`, `-gt` or `-ge` in `[[ ... ]]`, or an argument of `let`,
+`declare`, `typeset` or `local`. In `[[ ... ]]`, a `%{x}` must be an
+operand of a comparison or a test (`==`, `!=`, `=~`, `-n`, `-f` and the
+others); after `-v`, inside `( )`, or alone, it is an error. A `%{x}` is
+also an error as an argument of `unset`. `test` and `[ ]` do not read
+their operands as arithmetic, so they take any value:
+
+```ocaml
+let n = 3
+$?([[ %{n} -gt 2 ]])        -- n must be an Int
+$?([[ %{name} == admin ]])  -- any value: it is text here
+```
+
 **A list gives one argument for each element.** `%{xs}` with a `List` puts
 each element in as one quoted argument, as `"$@"` does in a shell. An empty
 list gives no argument. This is how a command takes a number of arguments
