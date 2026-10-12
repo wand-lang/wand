@@ -1396,6 +1396,66 @@ let test_a_semicolon_that_begins_a_line () =
     "let f x =\n  let t = x\n ;\n  t + 1\n"
     "the ';' above ended the definition"
 
+(* A `;` at the end of a line inside a bracket, in a body that began a line
+   of its own in that bracket (#119). The newline alone already ran the
+   line below into the arm, and the `;` handed it to the block instead, so
+   a `let` above the `;` reached nothing below it and the error was an
+   unbound name two lines under its binding. *)
+let test_a_semicolon_in_a_bracketed_arm () =
+  let src ~none_first =
+    "let show x = (\n\
+    \  match x with\n"
+    ^ (if none_first then "  | None -> 0\n" else "")
+    ^ "  | Some v ->\n\
+      \    let next = v * 2;\n\
+      \    let more = next + 1;\n\
+      \    more * 10\n"
+    ^ (if none_first then "" else "  | None -> 0\n")
+    ^ ")\n\
+       show (Some 1)"
+  in
+  runs "the last arm (the issue's example)" (src ~none_first:true) "30";
+  runs "an arm with one below it" (src ~none_first:false) "30";
+  runs "with the newline, as before"
+    "let show x = (\n\
+    \  match x with\n\
+    \  | None -> 0\n\
+    \  | Some v ->\n\
+    \    let next = v * 2\n\
+    \    next + 1\n\
+     )\n\
+     show (Some 1)" "3";
+  runs "statements of a branch in a bracket"
+    "uses {IO}\n\
+     import IO\n\
+     (if true then\n\
+    \  IO.print \"a\";\n\
+    \  IO.print \"b\";\n\
+    \  1\n\
+     else 2)" "1";
+  (* A line that falls back to the block's column is the block's, as it
+     was: the arm holds `v * 2` and the block goes on with `99`. *)
+  runs "a line left of the arm's body is the block's"
+    "let show x = (\n\
+    \  match x with\n\
+    \  | None -> 0\n\
+    \  | Some v ->\n\
+    \    v * 2;\n\
+    \  99\n\
+     )\n\
+     show (Some 1)" "99";
+  (* The second part of #119 holds since #135: an arm level with the outer
+     `match` goes to it, not to the inner one. *)
+  runs "a nested match leaves the outer arm to the outer match"
+    "let f x y =\n\
+    \  match x with\n\
+    \  | Some a ->\n\
+    \    match y with\n\
+    \    | [] -> a\n\
+    \    | [h :: _] -> h\n\
+    \  | _ -> 0\n\
+     f (Some 1) []" "1"
+
 (* A nested `match` with no brackets took every arm below it, the outer
    one's included, whatever their column (#135). An arm that begins a line
    left of the inner match's first arm now goes to the outer one. *)
@@ -1663,6 +1723,8 @@ let () =
       Alcotest.test_case "; body without parens" `Quick test_semicolon_body_without_parens;
       Alcotest.test_case "a ; that begins a line" `Quick
         test_a_semicolon_that_begins_a_line;
+      Alcotest.test_case "a ; in a bracketed arm" `Quick
+        test_a_semicolon_in_a_bracketed_arm;
       Alcotest.test_case "a nested match ends at an arm to its left" `Quick
         test_a_nested_match_ends_at_an_arm_to_its_left;
       Alcotest.test_case "an if branch holds statements" `Quick

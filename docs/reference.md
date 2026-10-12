@@ -902,6 +902,21 @@ let report n =
   n
 ```
 
+This is also true for a body inside a block. In an arm of a `match` in
+`( ... )`, a `;` at the end of a line continues the arm while the line below
+is at or past the arm body's column. A line at the block's own column is the
+next statement of the block:
+
+```ocaml
+let show x = (
+  match x with
+  | None -> ()
+  | Some v ->
+    let next = v * 2;
+    IO.println "%{next}"
+)
+```
+
 `wand f` writes these lines as one bracketed sequence,
 `(IO.println "found %{n}"; n)`. A body that starts on the `=` or `->` line is
 one statement, and the lines under it continue that statement. A line after a

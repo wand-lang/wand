@@ -328,7 +328,9 @@ let deploy! target =
   "deployed"
 ```
 
-A line that falls back inside the body's column is not part of it. A body
+This holds inside a `( ... )` block too: under an arm in a block, a line-end
+`;` keeps the next line in the arm. A line that falls back inside the
+body's column is not part of it. A body
 written on the `=` or `->` line is one statement; to sequence there, use
 parentheses: `fn x -> (log! x; x)`.
 

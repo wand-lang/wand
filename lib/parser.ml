@@ -797,10 +797,18 @@ let semicolon_joins_the_body s anchor =
    a bracket a `;` is the block's own separator and already means
    something, and `a; b` on one line ends the item as it always did. A `;`
    that begins a line is on a line below the statement before it, so the
-   line it is on can hold the next statement. *)
+   line it is on can hold the next statement.
+
+   Inside a bracket too (#119), for a body anchored in that same bracket --
+   an arm, a branch or a binding's body that began a line of its own -- and
+   a `;` at the end of a line. There the newline alone already ran the line
+   below into the body, since it sits at or past the body's column, and the
+   `;` ended the body and handed the line to the block: the same lines
+   meant two things, and a `let` above the `;` reached nothing below it.
+   A `;` that begins a line inside a bracket stays the block's. *)
 let semicolon_continues_the_body s =
-  s.paren_depth = 0
-  && s.stmt_depth = 0
+  (if s.paren_depth = 0 then s.stmt_depth = 0
+   else s.stmt_depth = s.paren_depth)
   && match semicolon_ahead s with
   | None -> false
   | Some (j, leading) ->

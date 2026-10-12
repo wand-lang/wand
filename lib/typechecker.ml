@@ -1909,12 +1909,76 @@ let with_defined_below names f =
   defined_below := names @ saved;
   Fun.protect ~finally:(fun () -> defined_below := saved) f
 
+(* Each name the item being checked binds anywhere inside itself -- a `let`,
+   a parameter, a pattern of an arm -- with the line it is bound on. A name
+   found here and not in scope is a scope problem: a binding that does not
+   reach the use. The module hint does not apply to it, and the author who
+   reads it looks for a spelling mistake that is not there (#119). *)
+let bound_in_item : (string * int) list ref = ref []
+
+let binders_within (e : expr) : (string * int) list =
+  let acc = ref [] in
+  let add line p =
+    match line with
+    | Some l -> List.iter (fun n -> acc := (n, l) :: !acc) (Ast.pat_names p)
+    | None -> ()
+  in
+  let rec go line e =
+    match e with
+    | Located (l, e) -> go (Some l.Token.line) e
+    | Fn (ps, body) -> List.iter (add line) ps; go line body
+    | Let (p, e1, e2, _) ->
+      let at = match e1 with
+        | Located (l, _) -> Some l.Token.line
+        | _ -> line
+      in
+      add at p; go line e1; go line e2
+    | LetRec (bindings, e2, _) ->
+      List.iter (fun (n, ps, body) ->
+        add line (PVar n); List.iter (add line) ps; go line body) bindings;
+      go line e2
+    | Match (s, cases) ->
+      go line s;
+      List.iter (fun (p, g, b) ->
+        add line p; Option.iter (go line) g; go line b) cases
+    | Handle (b, cases) ->
+      go line b;
+      List.iter (function
+        | EffectCase (_, p, k, body) ->
+          add line p; add line (PVar k); go line body
+        | ReturnCase (p, body) -> add line p; go line body) cases
+    | With (r, p, body) -> go line r; add line p; go line body
+    | App (a, b) | BinOp (_, a, b) | Seq (a, b) -> go line a; go line b
+    | If (a, b, c) | Unless (a, b, c) -> go line a; go line b; go line c
+    | UnOp (_, a) | Field (a, _) | Qualified (_, a) | Try a | Annot (_, a)
+    | RunCmd (a, _) | RunQuery (a, _) | MkCommand (a, _) -> go line a
+    | Tuple es | List es -> List.iter (go line) es
+    | ConstrApp (_, args, _) -> List.iter (fun (_, a) -> go line a) args
+    | ConstrUpdate (_, r, fs, _) ->
+      go line r; List.iter (fun (_, a) -> go line a) fs
+    | Contract (rs, es, b) ->
+      List.iter (go line) rs; List.iter (go line) es; go line b
+    | Interp (parts, _) | RawInterp (parts, _) ->
+      List.iter (fun (_, a) -> go line a) parts
+    | CmdInterp (parts, _) -> List.iter (fun (_, a, _) -> go line a) parts
+    | MapLit kvs -> List.iter (fun (_, a) -> go line a) kvs
+    | _ -> ()
+  in
+  go None e;
+  List.rev !acc
+
 let unbound_message name (env : env) =
   match List.assoc_opt name !defined_below with
   | Some line ->
     Printf.sprintf
       "'%s' is defined below, at line %d. Move the definition above its \
        first use" name line
+  | None ->
+  match List.assoc_opt name !bound_in_item with
+  | Some line ->
+    Printf.sprintf
+      "unbound variable '%s' -- '%s' is bound at line %d, but that binding \
+       is not in scope here" name name line
   | None ->
   let hint = match foreign_name_hint name with
     | Some h -> " -- " ^ h
@@ -8018,9 +8082,10 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       (List.tl (List.fold_right (fun b acc -> (b @ List.hd acc) :: acc)
                   item_binders [[]]))
   in
-  let saved_below = !defined_below in
+  let saved_below = !defined_below and saved_bound = !bound_in_item in
   let (env, last_t) =
-  Fun.protect ~finally:(fun () -> defined_below := saved_below) @@ fun () ->
+  Fun.protect ~finally:(fun () ->
+    defined_below := saved_below; bound_in_item := saved_bound) @@ fun () ->
   List.fold_left (fun acc item ->
   (* A tuple element read inside the item is settled by the item's end, or
      never (#147). *)
@@ -8028,6 +8093,13 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     incr item_index;
     current_item := !item_index;
     defined_below := below_each.(!item_index);
+    bound_in_item := (match item with
+      | TLLet (_, ps, body) -> binders_within (Fn (ps, body))
+      | TLLetRec bindings ->
+        List.concat_map (fun (_, ps, body) -> binders_within (Fn (ps, body)))
+          bindings
+      | TLLetPat (_, e) | TLExpr e -> binders_within e
+      | _ -> []);
     match item with
     | TLLet (_, [], body) when is_import_expr body ->
       (env, last_t)  (* pre-loaded by load_imports_for *)

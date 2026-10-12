@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+### Changed
+
+- A `;` at the end of a line inside a `( ... )` block continues an arm or branch body when the next line is at the body's column, as a newline does (#119).
+
+### Removed
+
+### Fixed
+
+- An unbound name that the same definition binds in another scope gives "'x' is bound at line N, but that binding is not in scope here", not the `wand d` hint (#119).
+
+### Documentation
+
 ## [0.105.0] - 2026-10-12
 
 ### Added
