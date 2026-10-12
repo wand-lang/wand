@@ -2522,6 +2522,60 @@ let test_a_member_cannot_leave_its_effects_open () =
   (* A member performing nothing says nothing. *)
   iface_ok "interface Plain(name: Unit -> String)\n\nlet f (m: Plain) = m\n\nf\n"
 
+(* A constructor used as a function value has an open effect row, as a
+   lambda does (#120). Its arrows were closed and pure, so a function over
+   a stream that reads a file refused `Some`, while `fn l -> Some l` was
+   accepted. *)
+let test_a_constructor_as_a_function_value () =
+  let file = Filename.temp_file "wand_ctor_" ".txt" in
+  Out_channel.with_open_text file (fun oc -> output_string oc "a\nb\n");
+  Fun.protect ~finally:(fun () -> Sys.remove file) @@ fun () ->
+  let prelude =
+    Printf.sprintf
+      "uses {FS.Read}\n\
+       import FS\nimport List\nimport Path\nimport Stream\n\
+       type Box = Box String\n\
+       type Pair = Pair String Int\n\
+       let lines = FS.stream_lines (Path.of_string \"%s\")\n" file
+  in
+  let counts label body expected = ok label (prelude ^ body) expected in
+  counts "Stream.filter_map Some (the issue's example)"
+    "lines |> Stream.filter_map Some |> Stream.count" "2";
+  counts "Stream.map Some" "lines |> Stream.map Some |> Stream.count" "2";
+  counts "a constructor of the file's own type"
+    "lines |> Stream.map Box |> Stream.count" "2";
+  counts "a constructor bound to a name"
+    "let wrap = Some\nlines |> Stream.map wrap |> Stream.count" "2";
+  counts "the bound name, over a pure stream and an effectful one"
+    "let wrap = Some\n\
+     Stream.count (Stream.map wrap (Stream.of_list [1]))\n\
+     + Stream.count (Stream.map wrap lines)" "3";
+  counts "Ok, whose arrow was already open"
+    "lines |> Stream.map Ok |> Stream.count" "2";
+  (* Partly applied, a constructor of two fields is a function of one. *)
+  counts "a constructor of two fields, one at a time"
+    "lines |> Stream.map Pair |> Stream.map (fn f -> f 1) |> Stream.count" "2";
+  counts "and over a list"
+    "[\"a\", \"b\"] |> List.map Pair |> List.map (fn f -> f 2) |> List.length"
+    "2";
+  counts "Pair \"a\" is a function of the Int"
+    "match (Pair \"a\") 3 with | Pair s n -> n" "3";
+  (* A function whose written row is closed and pure still does not take
+     a stream that reads a file. The pipe is correct there, so the error
+     does not send the reader to it. *)
+  (match run (prelude ^
+              "let keep : String -> Option String ! {} = fn l -> Some l\n\
+               lines |> Stream.filter_map keep |> Stream.count") with
+   | Error msg when contains msg "whole call" ->
+     Alcotest.failf "an effect mismatch is not about the pipe: %s" msg
+   | Error msg when contains msg "these effects do not match" -> ()
+   | Error msg -> Alcotest.failf "expected an effect mismatch, got: %s" msg
+   | Ok v -> Alcotest.failf "expected an error, got %s" v);
+  (* Two types that do not fit keep it. *)
+  err_contains "a pipe after a call keeps the hint"
+    (prelude ^ "List.length [[1]] |> List.map (fn x -> x)")
+    "`|>` takes the whole call on its left as its input"
+
 (* Four errors that gave the types and not the fix. An LLM writing plimsoll
    met each one, and each now says what to write (issue #37). *)
 let test_errors_say_the_fix () =
@@ -2910,5 +2964,7 @@ let () =
     ];
     "errors say the fix", [
       Alcotest.test_case "four errors from issue 37" `Quick test_errors_say_the_fix;
+      Alcotest.test_case "a constructor as a function value" `Quick
+        test_a_constructor_as_a_function_value;
     ];
   ]

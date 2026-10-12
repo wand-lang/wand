@@ -1433,8 +1433,15 @@ let disambiguate a b =
    pipe for nothing. (#148) *)
 let unify_failure = ref ""
 
-let failed_to_unify msg =
+(* Whether that failure was two effect rows and not two types. The types
+   fit, so the call on the left of a `|>` has the shape the right side
+   takes, and reading the pipe the other way could not be the cause: the
+   `|>` hint does not apply to it (#120). *)
+let unify_failure_effects = ref false
+
+let failed_to_unify ?(effects = false) msg =
   unify_failure := msg;
+  unify_failure_effects := effects;
   raise (TypeError msg)
 
 let unify_now t1 t2 =
@@ -1443,7 +1450,7 @@ let unify_now t1 t2 =
     let (sa, sb) = disambiguate a b in
     failed_to_unify (Printf.sprintf "%s and %s are not the same type" sa sb)
   | Effect_set.Conflict (a, b) ->
-    failed_to_unify (effects_conflict_message a b)
+    failed_to_unify ~effects:true (effects_conflict_message a b)
   | TypeError msg -> failed_to_unify msg
 
 (* ── A tuple element read before the tuple's type is known (#147) ────────
@@ -1564,8 +1571,8 @@ let unify_expected ~expected ~got =
     let (sa, sb) = disambiguate a b in
     failed_to_unify (Printf.sprintf "expected %s, got %s" sa sb)
   | Effect_set.Conflict (a, b) ->
-    failed_to_unify (effects_conflict_message ~expected:"the type"
-                       ~got:"the body" a b)
+    failed_to_unify ~effects:true
+      (effects_conflict_message ~expected:"the type" ~got:"the body" a b)
   | TypeError msg -> failed_to_unify msg
 
 (* ── Schemes and environment ──────────────────────────────────────────────── *)
@@ -4520,8 +4527,24 @@ let rec module_join a b =
    Raise, which a construction does not perform; a construction that names
    its fields settles after they are unified instead, with `perform_stored`
    below. *)
+(* A constructor named in an expression is a function value like a lambda,
+   and its arrows get a fresh open row each, as `fn x -> Some x` does. The
+   scheme keeps them closed and pure, so that one row is not shared by every
+   use (see `ctor_schemes`); but a closed row unifies with no other, and
+   `Stream.filter_map Some` over a stream that reads a file was refused:
+   "these effects do not match: {} and {FS.Read, Raise | ..}" (#120). A
+   fresh row per use performs nothing and is shared with nothing. Only the
+   constructor's own spine: a field's arrows say what the field holds. *)
+let rec open_ctor_spine t =
+  match t with
+  | TFun (a, b, eff)
+    when Effect_set.is_closed eff
+         && Effect_set.EffSet.is_empty (Effect_set.labels_of eff) ->
+    TFun (a, open_ctor_spine b, Effect_set.unknown ())
+  | t -> t
+
 let instantiate_ctor (sch : scheme) =
-  let t = instantiate sch in
+  let t = open_ctor_spine (instantiate sch) in
   List.iter performs (stored_rows sch);
   t
 
@@ -6221,8 +6244,11 @@ and infer_binop tenv (env : env) op a b : typ =
     (* And only two types that do not fit. Any other error raised while
        the call is checked -- a missing import, a field read on a value of
        no known type -- is about what is written, however the pipe is
-       read. *)
-    let a_mismatch msg = msg <> "" && msg = !unify_failure in
+       read. Nor two effect rows: there the types fit, so the pipe is read
+       as it was meant, and the hint sent the reader to it for nothing
+       (#120). *)
+    let a_mismatch msg =
+      msg <> "" && msg = !unify_failure && not !unify_failure_effects in
     let explained f =
       match strip_located a with
       | App _ ->

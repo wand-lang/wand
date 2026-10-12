@@ -3543,6 +3543,12 @@ type Wrap = Wrap (List Int)     -- one field, type List Int
 type Pair = Pair (Int, Int)     -- one field, tuple type (Int, Int)
 ```
 
+A constructor with positional fields is also a function value. Give it
+where a function goes, as `fn x -> Some x` goes: `Stream.filter_map Some`,
+`List.map Circle`. It is accepted over a stream that reads a file too, as a
+lambda is. A constructor with two fields that gets one argument is a
+function of the second: `List.map Rect [1, 2]` is a list of `Int -> Shape`.
+
 A constructor with no fields cannot take the parentheses after it, so they
 go to the call around it, as the next argument:
 

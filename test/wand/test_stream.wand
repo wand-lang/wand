@@ -323,3 +323,7 @@ test "tally counts what the stages let through" (fn t ->
     |> Stream.filter_map (String.word 0)
     |> Stream.filter (fn w -> w == "a")
     |> Stream.tally))
+
+test "a constructor is a function over a file's stream (#120)" (fn t ->
+  let count log = FS.stream_lines log |> Stream.filter_map Some |> Stream.count;
+  t.eq 3 (Test.with_lines ./mock.log ["a", "b", "c"] (fn () -> count ./mock.log)))

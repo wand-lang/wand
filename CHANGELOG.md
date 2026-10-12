@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A constructor used as a function value, such as `Stream.filter_map Some`, is accepted over a stream that reads a file, as a lambda is (#120).
+- An effect mismatch on the left of a `|>` no longer gives the hint about `|>` taking the whole call (#120).
 - An unbound name that the same definition binds in another scope gives "'x' is bound at line N, but that binding is not in scope here", not the `wand d` hint (#119).
 
 ### Documentation
