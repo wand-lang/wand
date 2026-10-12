@@ -1240,6 +1240,25 @@ Most keys in a document from elsewhere need them:
 
 Quoted keys work in patterns too: `| {"content-type" = v} -> v`.
 
+A name alone puns, as it does in a map pattern: `{name, port}` is
+`{name = name, port = port}`, and `{name, port = 80}` mixes the two forms.
+`wand f` writes `{name = name}` as `{name}`. A quoted key always carries its
+value.
+
+Every value in a map has the same type. Values of different types under
+names are a record, and a record needs a `type`. The type error says so and
+writes the type with the map's own names:
+
+```ocaml
+{groups = Map.empty, skipped}
+-- type error: expected Map 'a, got Int. `{...}` builds a Map, and all its
+-- values have one type. Named fields of different types need a type:
+-- `type T(groups: ..., skipped: ...)`, then `T(groups = ..., skipped)`
+
+type Acc(groups: Map (List Int), skipped: Int)
+Acc(groups = Map.empty, skipped)
+```
+
 A map holds a key once. Give a key twice, and the last value wins. The key
 keeps the position where it first appeared. That is what an assignment means.
 It also writes a document back in the order it arrived:

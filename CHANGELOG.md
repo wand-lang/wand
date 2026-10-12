@@ -15,6 +15,7 @@
 - The digits after a `.` are one tuple index: `p.0.1` is `(p.0).1`, not `p` and the Float `0.1` (#144).
 - A tuple index with a leading zero, such as `p.01`, is an error that says to write `p.1` (#144).
 - `wand f` keeps `p.1` as it is written (#144).
+- A name alone in a `{...}` map literal puns, as in a map pattern: `{a, b = x}` is `{a = a, b = x}` (#146).
 - `Int.to_string`, `Float.to_string`, `Bool.to_string`, `Duration.to_string`, `Size.to_string`, `DateTime.to_string` and `Port.to_string` write a value as the text that `"%{x}"` gives, and `of_string` reads it back (#143).
 - A list pattern can give its first elements with commas before the `::`: `[a, b :: rest]` is `[a :: b :: rest]` (#117).
 - A `:` written for cons in a pattern, as in `[x : xs]` or `(x : xs)`, carries a fix, and `wand t --fix` changes it to `::` (#117).
@@ -22,6 +23,8 @@
 ### Changed
 
 - `xs[1]` on a list gives an error that says what to write: `use List.get 1 xs (as an Option) or List.get! 1 xs` (#145).
+- `wand f` writes `{a = a}` in a map literal as `{a}`, as it does in a map pattern (#146).
+- When the values of a `{...}` map literal have different types, the type error says that a Map holds values of one type, and that fields of different types need a `type`: `type T(groups: ..., skipped: ...)`, then `T(groups = ..., skipped)` (#146).
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).

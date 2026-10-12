@@ -70,6 +70,47 @@ let test_ocaml_record_update () =
   ok "and the wand form works"
     "type T (a : Int, b : Int)\nlet r = T(a = 1, b = 2)\nlet u = T(r, b = 3)\nu.b"
 
+(* `{groups, skipped}` puns in a literal as it does in a pattern. A writer
+   who reaches for names in braces often wants a record with fields of
+   different types, so when the values do not fit one type the error says
+   what braces build and writes the type out with the literal's own names:
+   a pun stays bare, as it would in the construction (#146). *)
+let test_map_literal_pun () =
+  ok "a pun reads the name" "import Map\nlet a = 1\nlet b = 2\n\
+                             let m = {a, b}\nMap.get! \"b\" m";
+  ok "beside a key with a value"
+    "import Map\nlet skipped = 3\nlet m = {groups = 4, skipped}\n\
+     Map.get! \"skipped\" m";
+  ok "one name alone" "import Map\nlet a = 1\nMap.size {a}";
+  ok "a pattern puns" "let {a, b} = {a = 1, b = 2}\na + b";
+  ok "a quoted key" "import Map\nMap.size {a = 1, \"b c\" = 2}";
+  let says = "`{...}` builds a Map, and all its values have one type. \
+              Named fields of different types need a type" in
+  expect_error "values of two types, with a pun"
+    "import Map\nlet skipped = 0\nlet acc = {groups = Map.empty, skipped}\nacc"
+    ("expected Map 'a, got Int. " ^ says);
+  expect_error "with the literal's names"
+    "import Map\nlet skipped = 0\nlet acc = {groups = Map.empty, skipped}\nacc"
+    "`type T(groups: ..., skipped: ...)`, then `T(groups = ..., skipped)`";
+  expect_error "at the pun's position"
+    "import Map\nlet skipped = 0\nlet acc = {groups = Map.empty, skipped}\nacc"
+    "3:32:";
+  expect_error "and with no pun"
+    "import Map\nlet acc = {groups = Map.empty, skipped = 1}\nacc"
+    "expected Map 'a, got Int. `{...}` builds a Map";
+  expect_error "at the value's position"
+    "import Map\nlet acc = {groups = Map.empty, skipped = 1}\nacc"
+    "2:42:";
+  expect_error "every name, in order"
+    "let a = 1\nlet m = {a,\n  b = \"x\", d = 2}\nm"
+    "`type T(a: ..., b: ..., d: ...)`, then `T(a, b = ..., d = ...)`";
+  (* An error inside one value is about that value, not about the map. *)
+  match Runner.run_string "{a = 1, b = [1, \"x\"]}" with
+  | Ok _ -> Alcotest.fail "a list of two types typechecked"
+  | Error msg ->
+    if contains msg "builds a Map" then
+      Alcotest.failf "an error inside a value explains the map: %s" msg
+
 let test_ocaml_try_with () =
   expect_error "try ... with cases"
     "try 1 / 0 with _ -> 0"
@@ -279,6 +320,7 @@ let () =
       Alcotest.test_case "fun"         `Quick test_ocaml_fun_is_accepted;
       Alcotest.test_case "variant of"  `Quick test_ocaml_variant_of;
       Alcotest.test_case "record update" `Quick test_ocaml_record_update;
+      Alcotest.test_case "map literal pun" `Quick test_map_literal_pun;
       Alcotest.test_case "try with"    `Quick test_ocaml_try_with;
       Alcotest.test_case "names"       `Quick test_ocaml_unbound_names;
     ];
