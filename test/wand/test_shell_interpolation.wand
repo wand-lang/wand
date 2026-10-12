@@ -214,3 +214,17 @@ b'))
 test "a backslash and a newline outside quotes continue the line" (fn t ->
   t.eq "[a][b]" $(printf "[%s]" a \
     b))
+
+-- A `%!{...}` that opens a quote and leaves it open would move the values
+-- after it inside that quote, where the shell reads them. The command is
+-- refused when it is built, and the error can be caught.
+test "a raw splice that leaves a quote open is refused" (fn t ->
+  let q = `"`;
+  t.raises (fn () -> $(printf "[%s]" %!{q} %{"$(id)"} %!{q})))
+
+test "a raw splice that closes the author's quote is refused" (fn t ->
+  let q = `"`;
+  t.raises (fn () -> $(printf "[%s]" "%!{q}" %{"a"})))
+
+test "a raw splice that closes its own quotes is accepted" (fn t ->
+  t.eq "[x][a b]" $(printf "[%s]" %!{"'x'"} %{"a b"}))

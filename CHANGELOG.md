@@ -13,6 +13,7 @@
 
 ### Fixed
 
+- A command whose `%!{...}` text changes the quoting around a `%{...}` value is refused when it is built. Before, a raw `"` could put the value where the shell read it (#170).
 - A `%{x}` value that bash reads as arithmetic, as an operand of `-eq` and the other number tests in `[[ ]]` or as an argument of `let`, `declare`, `typeset` or `local`, must be an `Int`. Before, a value such as `a[$(cmd)]` ran `cmd` (#169).
 - A `%{x}` value after `-v` or inside `( )` in `[[ ]]`, alone in `[[ ]]`, or as an argument of `unset` is an error (#169).
 - The error for a value that is not an `Int` in arithmetic is at the value, and says why (#169).

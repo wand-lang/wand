@@ -1655,6 +1655,13 @@ variable, or from the output of another command cannot change what runs.
 Under `%!{...}` it can. Sometimes that is what you want, and `grep` finds
 every site.
 
+A `%!{...}` cannot take the other values in the command with it. If its
+text opens a quote and leaves it open, or closes a quote that you opened,
+the `%{...}` values after it would land where the shell reads them. wand
+reads the command again when it builds it, with the raw text in place, and
+refuses it if the quoting around any `%{...}` value changed. The error can
+be caught with `try`.
+
 Only a `String` can be shell syntax. A `%!{...}` over a value of any other
 type, such as a `Path` from `FS.glob`, an `Int` or a `URL`, reads data as
 shell source: a log file named `x;rm -rf ~.log` makes `$(gzip %!{p})` run
