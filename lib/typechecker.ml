@@ -5351,10 +5351,33 @@ let rec infer tenv (env : env) (e : expr) : typ =
                (string_of_typ t))))))
   | MapLit [] ->
     TMap (fresh ())
-  | MapLit ((_, e0) :: rest) ->
+  | MapLit ((_, e0) :: rest as kvs) ->
     let t = infer tenv env e0 in
+    (* Values of different types under names are most often a record the
+       writer wanted, so the mismatch says what braces build and writes the
+       type out with the literal's own names (#146). No fix is carried: the
+       field types are not in the braces, and a tuple may be what is
+       wanted. *)
+    let explain msg =
+      let punned (k, v) =
+        match strip_located v with Var x -> x = k | _ -> false in
+      let decl = String.concat ", "
+          (List.map (fun (k, _) -> k ^ ": ...") kvs) in
+      let ctor = String.concat ", "
+          (List.map (fun kv -> if punned kv then fst kv else fst kv ^ " = ...")
+             kvs) in
+      Printf.sprintf
+        "%s. `{...}` builds a Map, and all its values have one type. Named \
+         fields of different types need a type: `type T(%s)`, then `T(%s)`"
+        msg decl ctor
+    in
     List.iter (fun (_, e) ->
-      unify_expected ~expected:t ~got:(infer tenv env e)) rest;
+      let got = infer tenv env e in
+      try unify_expected ~expected:t ~got
+      with TypeError msg ->
+        match loc_of_expr e with
+        | Some l -> raise (TypeErrorAt (l, explain msg))
+        | None -> raise (TypeError (explain msg))) rest;
     TMap t
   (* A command literal runs nothing. It performs `Shell!command` all the
      same, so that the words it names and the effect it carries are read off

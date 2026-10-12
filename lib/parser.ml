@@ -1691,7 +1691,8 @@ and list_ s =
   end
 
 (* `{x = 1, y = 2}` -- a map literal. `{}` is the empty map, sugar for
-   `Map.empty`. Keys are identifiers or quoted strings. *)
+   `Map.empty`. Keys are identifiers or quoted strings, and an identifier
+   alone puns: `{x}` is `{x = x}`. *)
 and brace_map_ s =
   (* { already consumed *)
   if peek s = Token.RBrace then (ignore (advance s); MapLit [])
@@ -1730,15 +1731,24 @@ and brace_map_ s =
         "a record update names its type: `T(%s, %s)`. Braces are a map"
         base fields)
     in
+    (* A bare identifier puns, as it does in a map pattern: `{a, b = x}` is
+       `{a = a, b = x}`. Each value carries its own position, so a value
+       whose type does not fit the others is the one the error points at --
+       a pun at its name. *)
     let parse_entry () =
-      let key = match advance s with
+      let key_loc = peek_loc s in
+      let key, punned = match advance s with
         | Token.Ident k  ->
-          if peek s = Token.With then update_drift k else k
-        | Token.String k -> k
+          if peek s = Token.With then update_drift k
+          else (k, peek s = Token.Comma || peek s = Token.RBrace)
+        | Token.String k -> (k, false)
         | t -> fail (Format.asprintf "expected map key, got %a" Token.pp t)
       in
-      expect s Token.Eq;
-      (key, expr_ 0 s)
+      if punned then (key, Located (key_loc, Var key))
+      else begin
+        expect s Token.Eq;
+        (key, locate s (fun () -> expr_ 0 s))
+      end
     in
     let entries = ref [parse_entry ()] in
     while peek s = Token.Comma do

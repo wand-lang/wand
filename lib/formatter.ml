@@ -1509,9 +1509,14 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
     (* Measured from where the brace actually lands, as the other two
        bracket forms are: a map opened on a binding's line starts well
        right of the indent it wraps to. *)
+    (* Punned whenever the key already names its variable, the rule a map
+       pattern is printed under. Braces have no update form for a pun to be
+       read as, so a pun is safe anywhere in them, alone or not. *)
     emit_sequence ~col indent "{" "}"
       (List.map (fun (k, e) ->
-         Doc.text (map_key k ^ " = ") ^^ emit_expr (indent + 2) e) kvs)
+         match strip_located e with
+         | Var v when v = k && map_key k = k -> Doc.text k
+         | _ -> Doc.text (map_key k ^ " = ") ^^ emit_expr (indent + 2) e) kvs)
 
 and emit_app ?col indent e =
   let col = match col with Some c -> c | None -> indent in

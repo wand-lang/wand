@@ -2171,6 +2171,22 @@ let test_import_region_with_comment_left_alone () =
 (* `wand f` writes every guard with `if` (#142). `when` is the earlier
    spelling, and it becomes `if`. A guard that is an `if` expression keeps
    its brackets, and an `if` after the arrow stays the body. *)
+(* A map literal puns as a map pattern does, and is printed by the same
+   rule: a key that names its own variable is written alone (#146). *)
+let test_a_map_literal_pun_is_kept () =
+  let check label src want =
+    let out = fmt src in
+    Alcotest.(check string) label want out;
+    Alcotest.(check string) (label ^ ": and settles") out (fmt out)
+  in
+  check "a pun is kept"
+    "let m = {a, b = 3}\n" "let m = {a, b = 3}\n";
+  check "one pun alone is kept" "let m = {a}\n" "let m = {a}\n";
+  check "a key that names its variable puns"
+    "let m = {a = a, b = c}\n" "let m = {a, b = c}\n";
+  check "a quoted key keeps its value"
+    "let m = {\"b c\" = b}\n" "let m = {\"b c\" = b}\n"
+
 let test_a_guard_is_written_with_if () =
   let check label src want =
     let out = fmt src in
@@ -2361,5 +2377,7 @@ let () =
         test_a_constructor_and_its_bracket_are_kept;
       Alcotest.test_case "a guard is written with if" `Quick
         test_a_guard_is_written_with_if;
+      Alcotest.test_case "a map literal pun is kept" `Quick
+        test_a_map_literal_pun_is_kept;
     ];
   ]

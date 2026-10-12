@@ -256,7 +256,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `"hi %{name}"` interpolation | `${x}`, `#{x}`, f-strings |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `let f n = ...` (already recursive) | `let rec` |
-| `{a = 1}` map; `{a, b = x}` pattern (puns) | `{a: 1}`, `[a = 1]` |
+| `{a = 1}` map; `{a, b = x}` puns, in a map and in a pattern | `{a: 1}`, `[a = 1]` |
 | `T(r, b = 3)` record update | `{r with b = 3}` |
 | `Pod(name, restarts)` fields, punned in a pattern or a construction | `Pod{name}`, positional fields |
 | `p.0`, `p.1` a tuple's elements, `p.0.1` in a nested one (the tuple's type must be known) | `fst p`, `p[1]`, `p._1` |
