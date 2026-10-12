@@ -8489,7 +8489,12 @@ above any destructured `let {a} = import X`. wand prints one line
 for each applied fix: `rule: line — what changed`. With `--json` it prints the
 applied set in the diagnostics shape. A parse error refuses the whole run, and
 so does a type error with no fix. wand writes nothing, because a fix around a
-broken file is a guess. A plain `wand t` reports the findings that carry no fix,
+broken file is a guess. Missing standard library imports are the one
+exception. A `Digest.hex` in a file that has no `import Digest`, and no name
+`Digest` of its own, is known from the source alone. So `wand t` reports
+each missing import with the first error, and `--fix` adds them all first,
+in one run, and keeps them when it then refuses at an error with no fix.
+A plain `wand t` reports the findings that carry no fix,
 and `--fix` leaves them alone.
 
 ### `--json`

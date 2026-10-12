@@ -163,6 +163,32 @@ let replace_extent text (l : Token.loc) from_ to_ =
     | _ -> None
 
 
+(* Where an inserted line goes, as the 1-based line to insert before, and
+   the lines to insert there. The editor's code action asks here too, so
+   the two put a line in the same place. *)
+let insertion lines text =
+  let n =
+    if is_import_text text then import_line_for lines text
+    (* Manifest creation: the manifest is the first thing in the file,
+       after a shebang if one is there. *)
+    else if is_shebang lines then 2 else 1
+  in
+  let after = List.filteri (fun i _ -> i >= n - 1) lines in
+  (* An import that lands against the code below it takes the blank line
+     the formatter would put there, so a fixed file is a fixed point. *)
+  let inserted =
+    match is_import_text text, after with
+    | true, next :: _ when String.trim next <> "" && not (is_import_text next) ->
+      [text; ""]
+    (* A manifest stands off from the file below it. Every file in the
+       tree writes it that way and the formatter leaves it that way, so a
+       manifest inserted against the first import made a file that was
+       correct and looked hand-patched. *)
+    | false, next :: _ when String.trim next <> "" -> [text; ""]
+    | _ -> [text]
+  in
+  (n, inserted)
+
 (* Apply one fix, answering the new lines and what happened -- or None when
    the fix is not one this engine applies. *)
 let apply_fix lines (d : Diag.t) : (string list * applied) option =
@@ -172,27 +198,9 @@ let apply_fix lines (d : Diag.t) : (string list * applied) option =
   in
   match d.Diag.fix with
   | Some (Diag.InsertLine text) ->
-    let n =
-      if is_import_text text then import_line_for lines text
-      (* Manifest creation: the manifest is the first thing in the file,
-         after a shebang if one is there. *)
-      else if is_shebang lines then 2 else 1
-    in
+    let (n, inserted) = insertion lines text in
     let before = List.filteri (fun i _ -> i < n - 1) lines in
     let after  = List.filteri (fun i _ -> i >= n - 1) lines in
-    (* An import that lands against the code below it takes the blank line
-       the formatter would put there, so a fixed file is a fixed point. *)
-    let inserted =
-      match is_import_text text, after with
-      | true, next :: _ when String.trim next <> "" && not (is_import_text next) ->
-        [text; ""]
-      (* A manifest stands off from the file below it. Every file in the
-         tree writes it that way and the formatter leaves it that way, so a
-         manifest inserted against the first import made a file that was
-         correct and looked hand-patched. *)
-      | false, next :: _ when String.trim next <> "" -> [text; ""]
-      | _ -> [text]
-    in
     at n ("inserted " ^ quote text) (before @ inserted @ after)
   | Some (Diag.ReplaceLine text) ->
     let n =
@@ -276,7 +284,49 @@ let apply_findings lines (diags : Diag.t list) =
    a fix than five. *)
 let max_passes = 50
 
-let fix_source ~path (src : string) : (string * applied list, Diag.t) result =
+(* The fixes that add a standard library import. *)
+let is_import_fix (d : Diag.t) =
+  match d.Diag.fix with
+  | Some (Diag.InsertLine t) -> is_import_text t
+  | _ -> false
+
+(* The missing standard library imports, added first and kept whatever the
+   rest of the run does (#150). Which imports a file is missing is known
+   from its parse alone, so a check reports every one with its first
+   error, and they are added in one pass: a type error in the same file
+   does not hold them back. The check is made again after each pass, in
+   case an added import shows that one more is missing. *)
+let add_imports ~path lines =
+  let rec go lines applied passes =
+    if passes = 0 then (lines, applied)
+    else
+      match Runner.typecheck_source ~path (join_lines lines) with
+      | Ok _ -> (lines, applied)
+      | Error d ->
+        let wanted = List.filter is_import_fix (Diag.all d) in
+        let (lines', pass) =
+          List.fold_left (fun (lines, acc) d ->
+            match apply_fix lines d with
+            | Some (lines', a) -> (lines', a :: acc)
+            | None -> (lines, acc)) (lines, []) wanted
+        in
+        if pass = [] then (lines, applied)
+        else go lines' (List.rev_append (List.rev pass) applied) (passes - 1)
+  in
+  let (lines, applied) = go lines [] 5 in
+  (lines, List.rev applied)
+
+(* What a run of the engine ends with: the text, the fixes applied to it,
+   and, when the run refused, the error it refused at. A refused run keeps
+   only the imports it added before the rest of the fixes. *)
+type outcome = {
+  text    : string;
+  fixes   : applied list;
+  refused : Diag.t option;
+}
+
+let fix_outcome ~path (src : string) : outcome =
+  let (start, imports) = add_imports ~path (split_lines src) in
   let rec go lines applied passes =
     if passes = 0 then Ok (join_lines lines, List.rev applied)
     else
@@ -286,8 +336,8 @@ let fix_source ~path (src : string) : (string * applied list, Diag.t) result =
          | Some (lines', a) -> go lines' (a :: applied) (passes - 1)
          | None ->
            (* An error this engine cannot correct: refuse, keeping the
-              file exactly as it was -- even fixes from earlier passes
-              are abandoned rather than written around a broken state. *)
+              file as the imports left it -- fixes from earlier passes are
+              abandoned rather than written around a broken state. *)
            Error d)
       | Ok sc ->
         let diags =
@@ -296,11 +346,21 @@ let fix_source ~path (src : string) : (string * applied list, Diag.t) result =
          | (_, []) -> Ok (join_lines lines, List.rev applied)
          | (lines', pass) -> go lines' (List.rev_append pass applied) (passes - 1))
   in
-  go (split_lines src) [] max_passes
+  match go start [] max_passes with
+  | Ok (text, applied) -> { text; fixes = imports @ applied; refused = None }
+  | Error d -> { text = join_lines start; fixes = imports; refused = Some d }
 
-(* In place, like `wand f`. Nothing is written when nothing changed or
-   when the engine refuses. *)
-let fix_file path : (applied list, Diag.t) result =
+(* The whole run, or the error it refused at. A refusal here drops the
+   imports too: `fix_outcome` is what keeps them. *)
+let fix_source ~path (src : string) : (string * applied list, Diag.t) result =
+  match fix_outcome ~path src with
+  | { refused = Some d; _ } -> Error d
+  | { text; fixes; _ } -> Ok (text, fixes)
+
+(* In place, like `wand f`. Nothing is written when nothing changed. When
+   the engine refuses, the imports it added are written, and the error
+   comes back with them. *)
+let fix_file path : (applied list, Diag.t * applied list) result =
   let full =
     if Filename.is_relative path
     then Filename.concat (Sys.getcwd ()) path
@@ -308,22 +368,25 @@ let fix_file path : (applied list, Diag.t) result =
   in
   match In_channel.with_open_text full In_channel.input_all with
   | exception Sys_error msg ->
-    Error (Diag.error ~code:"E-FAIL" ("cannot open file: " ^ msg))
+    Error (Diag.error ~code:"E-FAIL" ("cannot open file: " ^ msg), [])
   | src ->
-    match fix_source ~path src with
-    | Error d -> Error d
-    | Ok (fixed, applied) ->
-      (* Beside and renamed into place, like every other write wand makes.
-         Truncating the source the reader is editing and then filling it
-         means a crash or a full disk part way through leaves half a file
-         and no copy of the other half. *)
-      if fixed <> src then
-        match Runner.write_atomic full fixed with
-        | () -> Ok applied
-        | exception Unix.Unix_error (e, f, _) ->
-          Error (Diag.error ~code:"E-FAIL"
-                   (Printf.sprintf "cannot write file: %s: %s" f
-                      (Unix.error_message e)))
-        | exception Failure m ->
-          Error (Diag.error ~code:"E-FAIL" ("cannot write file: " ^ m))
-      else Ok applied
+    let o = fix_outcome ~path src in
+    let answer () =
+      match o.refused with
+      | Some d -> Error (d, o.fixes)
+      | None -> Ok o.fixes
+    in
+    (* Beside and renamed into place, like every other write wand makes.
+       Truncating the source the reader is editing and then filling it
+       means a crash or a full disk part way through leaves half a file
+       and no copy of the other half. *)
+    if o.text <> src then
+      match Runner.write_atomic full o.text with
+      | () -> answer ()
+      | exception Unix.Unix_error (e, f, _) ->
+        Error (Diag.error ~code:"E-FAIL"
+                 (Printf.sprintf "cannot write file: %s: %s" f
+                    (Unix.error_message e)), [])
+      | exception Failure m ->
+        Error (Diag.error ~code:"E-FAIL" ("cannot write file: " ^ m), [])
+    else answer ()

@@ -688,6 +688,90 @@ let test_destructured_module_local () =
   Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
   Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
 
+(* ── Missing imports, known from the parse (#150) ───────────────────────── *)
+
+let issue_150 =
+  "import FS\nimport Path\n\
+   let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n"
+
+let import_fixes ds =
+  List.filter_map (fun (d : Diag.t) ->
+    match d.Diag.fix with
+    | Some (Diag.InsertLine t) -> Some t
+    | _ -> None) ds
+
+let position (d : Diag.t) =
+  match d.Diag.loc with
+  | Some l -> Printf.sprintf "%d:%d" l.Token.line l.Token.col
+  | None -> "none"
+
+(* Every missing import is reported with the first error, once each, at
+   its first use, and each carries its line. *)
+let test_missing_imports_reported () =
+  let ds = Diag.all (type_error issue_150) in
+  Alcotest.(check (list string)) "each import, once"
+    ["import Int"; "import Digest"; "import Hash"] (import_fixes ds);
+  Alcotest.(check (list string)) "at the first use of each"
+    ["3:12"; "3:42"; "3:54"]
+    (List.filter_map (fun (d : Diag.t) ->
+       match d.Diag.fix with
+       | Some (Diag.InsertLine _) -> Some (position d)
+       | _ -> None) ds);
+  Alcotest.(check int) "the module the check found is not said twice" 1
+    (List.length (List.filter (fun (d : Diag.t) ->
+       Lint.contains d.Diag.message "standard library Int?") ds))
+
+(* With a type error first, the missing imports come with it. *)
+let test_missing_imports_with_type_error () =
+  let ds = Diag.all (type_error "let y = 1 + \"a\"\nlet x = List.map\n") in
+  Alcotest.(check bool) "the type error first" true
+    (Lint.contains (List.hd ds).Diag.message "not the same type");
+  Alcotest.(check (list string)) "and the import" ["import List"]
+    (import_fixes ds)
+
+(* One run adds them all, though the type error stays. The imports are
+   kept and the error comes back with them. *)
+let test_missing_imports_fixed_in_one_run () =
+  let o = Fix.fix_outcome ~path:"wand_fix_test.wand" issue_150 in
+  Alcotest.(check string) "every import, in order"
+    "import Digest\nimport FS\nimport Hash\nimport Int\nimport Path\n\
+     let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n"
+    o.Fix.text;
+  Alcotest.(check int) "three fixes" 3 (List.length o.Fix.fixes);
+  (match o.Fix.refused with
+   | Some d ->
+     Alcotest.(check bool) "the type error remains" true
+       (Lint.contains d.Diag.message "expected Int, got Size")
+   | None -> Alcotest.fail "expected the type error");
+  (* `fix_source` refuses as it did. *)
+  ignore (refuse issue_150)
+
+(* With nothing else wrong, the file ends correct. *)
+let test_missing_imports_then_clean () =
+  let (fixed, _) =
+    fix_clean "let f p = Path.to_string p |> String.upper\n\
+               let g xs = List.map (fn x -> Int.to_string x) xs\n" in
+  Alcotest.(check string) "all four, then the code"
+    "import Int\nimport List\nimport Path\nimport String\n\n\
+     let f p = Path.to_string p |> String.upper\n\
+     let g xs = List.map (fn x -> Int.to_string x) xs\n" fixed
+
+(* A name of the file's own, a built-in type's constructor and a field
+   default are not missing imports. A name taken from a module is not the
+   module. *)
+let test_missing_imports_not_reported () =
+  let names src = import_fixes (Diag.all (type_error src)) in
+  Alcotest.(check (list string)) "a type of the file's own" []
+    (names "type Digest = A | B\nlet x = Digest.A\nlet y = 1 + \"a\"\n");
+  Alcotest.(check (list string)) "a constructor of Option" []
+    (names "let x = Option.Some 1\nlet y = 1 + \"a\"\n");
+  Alcotest.(check (list string)) "a field default" []
+    (names "type App(env: Map String = Map.empty)\n");
+  Alcotest.(check (list string)) "a name taken from the module" ["import Digest"]
+    (names "let {hex} = import Digest\nlet f x = Digest.hex x\nlet y = 1 + \"a\"\n");
+  Alcotest.(check (list string)) "a type and a pattern" ["import Digest"]
+    (names "let f (x: Digest.Algorithm) =\n  match x with\n  | Digest.Sha256 -> 1\n  | _ -> 2\n")
+
 let () =
   Alcotest.run "fix" [
     "manifest", [
@@ -760,6 +844,17 @@ let () =
         test_destructured_module_import;
       Alcotest.test_case "names taken in a function" `Quick
         test_destructured_module_local;
+    ];
+    "missing imports", [
+      Alcotest.test_case "all are reported" `Quick test_missing_imports_reported;
+      Alcotest.test_case "with a type error" `Quick
+        test_missing_imports_with_type_error;
+      Alcotest.test_case "one run adds them all" `Quick
+        test_missing_imports_fixed_in_one_run;
+      Alcotest.test_case "then the file is correct" `Quick
+        test_missing_imports_then_clean;
+      Alcotest.test_case "what is not one" `Quick
+        test_missing_imports_not_reported;
     ];
     "a function nothing calls", [
       Alcotest.test_case "a bare main! is called" `Quick test_bare_main_is_called;

@@ -841,11 +841,24 @@ let main () =
               else print_endline (path ^ effect_set es))
          else if fix then
            (match Wand.Fix.fix_file path with
-            | Error d ->
-              (* An error with no applicable fix: nothing was written. *)
+            | Error (d, applied) ->
+              (* An error with no applicable fix. Only the missing imports
+                 were written, and they are listed above the error. *)
               if json then
-                (print_endline (Wand.Diag.to_json_array ~file:path [d]); exit 1)
-              else (Printf.eprintf "Error: %s\nnothing fixed\n" (Wand.Diag.legacy d); exit 1)
+                (print_endline
+                   (Wand.Diag.to_json_array ~file:path
+                      (List.map (fun a -> a.Wand.Fix.diag) applied @ [d]));
+                 exit 1)
+              else begin
+                List.iter (fun a ->
+                  Printf.printf "%s: %d — %s\n"
+                    a.Wand.Fix.code a.Wand.Fix.line a.Wand.Fix.note) applied;
+                flush stdout;
+                Printf.eprintf "Error: %s\n%s\n" (Wand.Diag.legacy d)
+                  (if applied = [] then "nothing fixed"
+                   else "nothing else fixed");
+                exit 1
+              end
             | Ok applied ->
               if json then
                 print_endline
@@ -923,12 +936,21 @@ let main () =
              let failed = ref false and fixed = ref 0 and items = ref [] in
              List.iter (fun path ->
                match Wand.Fix.fix_file path with
-               | Error d ->
+               | Error (d, applied) ->
                  failed := true;
+                 fixed := !fixed + List.length applied;
                  if json then
                    items := !items
+                     @ List.map (fun a -> Wand.Diag.to_json ~file:path a.Wand.Fix.diag)
+                         applied
                      @ List.map (Wand.Diag.to_json ~file:path) (Wand.Diag.all d)
-                 else report_diags_under ~path d
+                 else begin
+                   List.iter (fun a ->
+                     Printf.printf "%s: %s: %d — %s\n"
+                       path a.Wand.Fix.code a.Wand.Fix.line a.Wand.Fix.note) applied;
+                   flush stdout;
+                   report_diags_under ~path d
+                 end
                | Ok applied ->
                  fixed := !fixed + List.length applied;
                  if json then
