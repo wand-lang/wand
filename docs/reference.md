@@ -1546,12 +1546,16 @@ Most tools take `--`, and the ones that do not take a path instead
 (`./%{name}` rather than `%{name}`).
 
 Write `%{x}` between quotes of your own, and it becomes part of that word.
-It is not an argument of its own. wand escapes it for the quote it sits in.
-The shell reads nothing in the value as syntax:
+It is not an argument of its own. wand quotes it for the quote it sits in.
+Between double quotes, wand closes your quote, puts the value in single
+quotes and opens your quote again, so the word stays one word. A backslash
+before each special character is not safe in every locale: in Big5 or GBK a
+byte of the value and the backslash after it can be one character. The
+shell reads nothing in the value as syntax:
 
 ```ocaml
 let name = "$(whoami)"
-$(echo "hi %{name}")        -- runs: echo "hi \$(whoami)"    (one argument)
+$(echo "hi %{name}")        -- runs: echo "hi "'$(whoami)'""    (one argument)
 $(grep "^%{name}" log)      -- the value is part of the pattern
 ```
 

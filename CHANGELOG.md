@@ -11,6 +11,10 @@
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
 
+### Fixed
+
+- A `%{x}` value between the author's double quotes cannot end the quote in a Big5, GBK or GB18030 locale. The value goes in single-quoted between the two double-quoted parts (#168).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added

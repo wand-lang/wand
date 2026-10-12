@@ -2582,18 +2582,25 @@ let shell_quote v =
    to read.
 
    Inside single quotes only the quote itself can end the span: it is closed,
-   the character escaped outside, and the span reopened. Inside double
-   quotes the four the shell still reads there take a backslash. *)
+   the character escaped outside, and the span reopened.
+
+   Inside double quotes the author's quote is closed, the value goes in
+   single-quoted, and the quote is opened again, so the value is one
+   single-quoted span between two double-quoted ones -- still one word. A
+   backslash before each of the four characters the shell reads there was
+   the earlier answer, and it is not safe in every locale (#168). In Big5,
+   GBK, GB18030 and others a byte such as 0xA4 starts a two-byte character
+   whose second byte can be a backslash, so the shell read the value's lead
+   byte and the added backslash as one character, and the double quote
+   after them ended the quote. A single-quoted span ends only at a single
+   quote, a byte that no such encoding uses as a second byte. *)
 let quote_within q v =
-  let buf = Buffer.create (String.length v + 8) in
-  String.iter (fun c ->
-    if q = '\'' then
-      (if c = '\'' then Buffer.add_string buf "'\\''" else Buffer.add_char buf c)
-    else begin
-      if c = '"' || c = '\\' || c = '$' || c = '`' then Buffer.add_char buf '\\';
-      Buffer.add_char buf c
-    end) v;
-  Buffer.contents buf
+  if q = '\'' then begin
+    let buf = Buffer.create (String.length v + 8) in
+    String.iter (fun c ->
+      if c = '\'' then Buffer.add_string buf "'\\''" else Buffer.add_char buf c) v;
+    Buffer.contents buf
+  end else "\"" ^ shell_quote v ^ "\""
 
 (* Deriving a decoder needs the decoding machinery, which is defined further
    down the file; `eval` only has to be able to reach it. *)

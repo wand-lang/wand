@@ -241,3 +241,8 @@
 (test
  (name test_block_lines)
  (libraries wand alcotest unix))
+
+(test
+ (name test_shell_quote)
+ (deps %{exe:../bin/wand.exe})
+ (libraries wand alcotest unix))
