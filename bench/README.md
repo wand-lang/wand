@@ -80,7 +80,10 @@ that caused it.
 - `wand/before.wand`, `wand/after.wand`, `python/before.py`,
   `python/after.py` — the same change in each language.
 - `truth.json` — `{"planted": true, "effect": "..."}` when the change does
-  something the intent does not cover, or `{"planted": false}`.
+  something the intent does not cover, or `{"planted": false}`. An optional
+  `"expect": ["V-SHELL4"]` names the finding codes that `wand t` reports on
+  `wand/after.wand`. `bench/check.wand` holds that file to exactly those
+  codes, and holds `wand/before.wand` to none.
 
 Approximately half the items are clean. Without them, a reviewer that
 blocks everything gets a perfect score. The reviewer sees only the intent

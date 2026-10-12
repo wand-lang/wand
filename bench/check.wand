@@ -1,5 +1,6 @@
 uses {Env, FS.Read, FS.Write, IO, Proc, Shell}
 
+import Decode
 import FS
 import IO
 import JSON
@@ -22,8 +23,12 @@ let {Truth, items!, sides} = import ./review
 --              hidden case
 --   speed      each task's three programs print the same thing, on a
 --              small input
---   review     each item's wand files typecheck with nothing to report,
---              its Python parses, and its truth.json reads
+--   review     each item's wand files typecheck, its Python parses, and
+--              its truth.json reads. wand/before.wand reports nothing.
+--              wand/after.wand reports exactly the finding codes in the
+--              truth's `expect`, which is empty when it is not given: an
+--              error, a finding not in `expect`, or a code in `expect`
+--              that is not reported is a problem
 --
 -- A reference that stops passing means the language changed under the
 -- task, or the task is wrong. CI does not run this; run it after a change
@@ -33,6 +38,38 @@ let {Truth, items!, sides} = import ./review
 -- WAND names the build under test, as for the tools in `tools/`.
 
 let named (p: Path) = Path.to_string (Path.basename p)
+
+-- One finding of `wand t --json`, as far as the check reads it.
+type Finding(severity: String, code: String)
+
+-- What is wrong with what `wand t` says about a wand file that is held to
+-- the finding codes in `expect`.
+let wand_problems (where: String) (expect: List String) (file: Path) = (
+  let r = $?(%{wand_exe} t --json %{file});
+  match JSON.parse r.stdout |> Result.and_then (JSON.decode (Decode.list Finding.decoder)) with
+  | Error why -> ["%{where}: wand t --json gave no findings to read (%{why}) %{r.stderr}"]
+  | Ok findings -> (
+    let errors =
+      findings
+      |> List.filter (fn f -> f.severity == "error")
+      |> List.map (fn f -> "%{where}: error %{f.code}");
+    let codes = List.map (fn f -> f.code) findings;
+    let unexpected =
+      codes
+      |> List.filter (fn c -> !(List.contains? c expect))
+      |> List.unique
+      |> List.map (fn c -> "%{where}: unexpected finding %{c}");
+    let missing =
+      expect
+      |> List.filter (fn c -> !(List.contains? c codes))
+      |> List.map (fn c -> "%{where}: expected finding %{c} is not reported");
+    let failed =
+      if r.code != 0 && List.empty? errors then
+        ["%{where}: wand t exited %{r.code} %{r.stderr}"]
+      else [];
+    List.flatten [errors, unexpected, missing, failed]
+  )
+)
 
 let author_problems! () =
   FS.list_dir! ./bench/author
@@ -58,23 +95,21 @@ let speed_problems! () =
   )
 
 -- What is wrong with one side of a review item.
-let side_problems (item: Path) (lang, ext) =
+-- `expect` is the truth's: the finding codes after.wand reports.
+let side_problems (item: Path) (expect: List String) (lang, ext) =
   let dir = Path.join item (Path.of_string lang);
-  [Path.of_string "before.%{ext}", Path.of_string "after.%{ext}"]
-  |> List.filter_map (fn name -> (
+  [("before", []), ("after", expect)]
+  |> List.flat_map (fn (stem, codes) -> (
+    let name = Path.of_string "%{stem}.%{ext}";
     let file = Path.join dir name;
     let where = "review/%{named item}/%{lang}/%{name}";
-    if !(FS.file? file) then Some "%{where}: missing"
+    if !(FS.file? file) then ["%{where}: missing"]
     else match lang with
-      | "wand" -> (
-        let r = $?(%{wand_exe} t %{file});
-        if r.code == 0 && String.empty? r.stdout && String.empty? r.stderr then None
-        else Some "%{where}: %{r.stdout} %{r.stderr}"
-      )
+      | "wand" -> wand_problems where codes file
       | _ -> (
         let r =
           $?(python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" %{file});
-        if r.code == 0 then None else Some "%{where}: %{r.stderr}"
+        if r.code == 0 then [] else ["%{where}: %{r.stderr}"]
       )
   ))
 
@@ -89,13 +124,18 @@ let review_problems! () =
       | Ok _ -> []
       | Error why -> ["review/%{named item}/truth.json: %{why}"]
     in
+    let expect =
+      match truth with
+      | Ok t -> t.expect
+      | Error _ -> []
+    in
     let intent_problem =
       if FS.file? (Path.join item ./intent.md) then []
       else ["review/%{named item}: no intent.md"];
     List.flatten [
       truth_problem,
       intent_problem,
-      List.flatten (List.map (side_problems item) sides)
+      List.flatten (List.map (side_problems item expect) sides)
     ])
   |> List.flatten
 

@@ -60,7 +60,10 @@ let workers = int_setting "WORKERS" 4
 -- The two languages an item is written in, and the extension of each.
 let sides = [("wand", "wand"), ("python", "py")]
 
-type Truth(planted: Bool, effect: String = "")
+-- `expect` names the finding codes, such as "V-SHELL4", that `wand t`
+-- reports on the item's wand/after.wand. bench/check.wand holds the file
+-- to exactly that list.
+type Truth(planted: Bool, effect: String = "", expect: List String = [])
 
 type Verdict(block: Bool, reason: String)
 
