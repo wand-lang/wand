@@ -242,6 +242,15 @@ let find_field_index names label =
 
 (* ── Values ───────────────────────────────────────────────────────────────── *)
 
+(* A table keyed by a name. The generic `Hashtbl` compares keys with the
+   runtime's polymorphic compare, and a name is looked up on almost every
+   step: that compare was 5-10% of the time in the slow speed tasks. *)
+module StrTbl = Hashtbl.Make (struct
+  type t = string
+  let equal = String.equal
+  let hash (s : string) = Hashtbl.hash s
+end)
+
 type value =
   | VInt      of int
   | VFloat    of float
@@ -390,7 +399,7 @@ type value =
      It is a hint, not an authority: a miss keeps walking. That way an
      environment can be appended to, sliced, or carry several indexes without
      any of it having to know. *)
-  | VEnvIndex      of (string, value) Hashtbl.t
+  | VEnvIndex      of value StrTbl.t
 
 and conn = {
   c_fd : Unix.file_descr;
@@ -664,9 +673,9 @@ let regex_literals : (string * string, Re.re) Hashtbl.t Domain.DLS.key =
 let env_index_key = "\000index"
 
 let index_env (base : env) : env =
-  let tbl = Hashtbl.create (List.length base * 2 + 16) in
+  let tbl = StrTbl.create (List.length base * 2 + 16) in
   (* First binding wins, as walking the list would. *)
-  List.iter (fun (k, v) -> if not (Hashtbl.mem tbl k) then Hashtbl.add tbl k v) base;
+  List.iter (fun (k, v) -> if not (StrTbl.mem tbl k) then StrTbl.add tbl k v) base;
   (env_index_key, VEnvIndex tbl) :: base
 
 (* Every name an environment can reach, for a "did you mean" hint. *)
@@ -674,7 +683,7 @@ let rec env_names (e : env) =
   match e with
   | [] -> []
   | (k, VEnvIndex tbl) :: rest when k = env_index_key ->
-    Hashtbl.fold (fun k _ acc -> k :: acc) tbl [] @ env_names rest
+    StrTbl.fold (fun k _ acc -> k :: acc) tbl [] @ env_names rest
   | (k, _) :: rest -> k :: env_names rest
 
 (* Re-index as a file's own definitions pile up, so a lookup never walks more
@@ -687,10 +696,16 @@ let rec lookup_var name (e : env) =
   match e with
   | [] -> None
   | (k, VEnvIndex tbl) :: rest when k = env_index_key ->
-    (match Hashtbl.find_opt tbl name with
+    (match StrTbl.find_opt tbl name with
      | Some _ as found -> found
      | None -> lookup_var name rest)
-  | (k, v) :: rest -> if String.equal k name then Some v else lookup_var name rest
+  (* The length first: it is read here, where `String.equal` is a call into
+     the runtime, and most names that do not match differ in length. *)
+  | (k, v) :: rest ->
+    if k == name
+       || (String.length k = String.length name && String.equal k name)
+    then Some v
+    else lookup_var name rest
 
 (* A definition that only forwards.
 
@@ -1366,7 +1381,11 @@ let loc_cell () = Domain.DLS.get current_loc
 let mark_loc (c : loc_cell) (l : Token.loc) =
   c.at_line <- l.Token.line;
   c.at_col  <- l.Token.col;
-  c.at_file <- l.Token.file
+  (* A string is a pointer, and writing a pointer into a mutable field goes
+     through the write barrier: 7% of a loop that calls a function, paid on
+     every position it passed. The file changes only when a call crosses
+     into another file, so the write is kept for then. *)
+  if c.at_file != l.Token.file then c.at_file <- l.Token.file
 
 (* Prefix a runtime error with where it was raised, unless it says already. *)
 (* The file a run was asked for. A position in that file needs no name --
@@ -1920,6 +1939,10 @@ let functional = function
 
 let rec wand_equal a b =
   match a, b with
+  (* The two that `==` compares most, answered without the runtime's
+     general compare, which is what the last case below reaches. *)
+  | VInt x, VInt y -> Int.equal x y
+  | VString x, VString y -> String.equal x y
   | _ when functional a || functional b ->
     raise (EvalError "cannot compare functions for equality")
   | _ when normalized a && normalized b ->
@@ -2392,6 +2415,15 @@ let check_request_host allow value =
    parser's form of it is not wand, and an error never prints it. *)
 let contract_text e = Doc.to_string (Formatter.emit_splice 0 e)
 
+(* Whether an argument has the shape `nullary_payload` looks for: a
+   constructor applied to something, under any positions and qualifiers. A
+   necessary condition only -- whether the constructor takes nothing is
+   read from the environment there. *)
+let rec payload_shape = function
+  | Located (_, inner) | Qualified (_, inner) -> payload_shape inner
+  | App (f, _) -> (match strip_located f with Constr _ -> true | _ -> false)
+  | _ -> false
+
 let rec eval (env : env) (e : expr) : value = eval_at false env e
 
 (* Evaluate in tail position: the value of `e` is the value of whatever
@@ -2493,20 +2525,24 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     raise (EvalError (Printf.sprintf "unknown operator '%s'" op))
   | BinOp (op, a, b) -> eval_binop env op a b
   | Fn (params, body) -> VFun (env, params, body)
-  | App (f, x) when nullary_payload env x <> None ->
+  | App (f, x) ->
     (* The other half of the typechecker's rule: a bracket after a
        constructor is its payload, and one that takes no payload hands the
        bracket back to the call around it. Both sides have to agree, or a
        file typechecks and then fails at run time -- which is what happened
        when only the checker knew. `test_typechecker` runs what it checks,
-       so the two are pinned together there. *)
-    (match nullary_payload env x with
+       so the two are pinned together there.
+
+       Only an argument that is itself a constructor applied to something
+       can be that, which the syntax says without a lookup. Asking every
+       call cost 6% of a loop that calls a function, and comparing the
+       answer with `<> None` went out to the runtime's compare each time. *)
+    (match if payload_shape x then nullary_payload env x else None with
      | Some (ctor, arg) -> eval_at tail env (App (App (f, ctor), arg))
-     | None -> assert false)
-  | App (f, x) ->
-    let vf = eval env f in
-    let vx = eval env x in
-    if tail then apply_tail vf vx else apply vf vx
+     | None ->
+       let vf = eval env f in
+       let vx = eval env x in
+       if tail then apply_tail vf vx else apply vf vx)
   | Let (p, e1, e2, _) ->
     let v1 = eval env e1 in
     let v1 = match p, v1 with
@@ -3156,9 +3192,14 @@ and apply_tail vf vx =
   | _ -> raise (EvalError "cannot apply a non-function")
 
 and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
-  match try_match ~prefix p v env with
-  | Some env' -> env'
-  | None      -> raise (EvalError "pattern match failure")
+  match p with
+  (* A parameter that is a name, which is most of them, binds without
+     building the option `try_match` answers with. *)
+  | PVar name | PLocated (_, PVar name) -> (name, v) :: env
+  | _ ->
+    match try_match ~prefix p v env with
+    | Some env' -> env'
+    | None      -> raise (EvalError "pattern match failure")
 
 and eval_match (tail : bool) (env : env) sv cases =
   match cases with

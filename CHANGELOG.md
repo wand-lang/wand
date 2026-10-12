@@ -20,6 +20,7 @@
 - The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
 - The benchmark harness writes its long `claude -p` command over several lines (#114).
 - `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
+- A call to a wand function is approximately 15% faster (#122).
 
 ### Fixed
 
