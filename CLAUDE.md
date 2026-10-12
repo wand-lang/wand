@@ -238,7 +238,8 @@ reads any file with no `FS.Read`. The labels describe what a file's wand
 code does, and wand reads the file rather than the binary. Never write a
 manifest as though it bounded a subprocess.
 A literal command word the list omits is a type error; a word decided
-at run time is checked at spawn and flagged by `V-SHELL1`. Doing more than
+at run time, or a `%!{...}` splice, is checked at spawn and flagged by
+`V-SHELL1`. Doing more than
 the manifest says is a type error; declaring more than the file does is an
 `A-USES1` warning. Effects are inferred — never annotated: `wand t`
 suggests the exact manifest line, narrowed when it can read every command
@@ -400,7 +401,7 @@ today at midnight is `Clock.now () |> DateTime.day_start`.
 - `$(git status)` runs a command, raises on failure, yields the trimmed stdout `String`.
 - `$?(cmd)` yields a `ShellResult` for inspecting exit code/stderr instead of raising.
 - `$*(cmd)` is the command itself, unrun: a `Command`, which `Shell.run!`, `Shell.run` and `Shell.query` take. `$()` and `$?()` are the first and third of those over one. Use it for a command that is named, passed or listed; nothing turns a `String` into one. Building one performs `Shell`, so the manifest answers for the words wherever they are run.
-- Inside a command, `%{x}` splices a value quoted as one argument — use it for data. `%!{x}` splices text to be read *as shell source* — only for text that is deliberately shell (a flag string, a pipeline fragment).
+- Inside a command, `%{x}` splices a value quoted as one argument — use it for data. `%!{x}` splices text to be read *as shell source* — only for a `String` that is deliberately shell (a flag string, a pipeline fragment). A `%!{x}` over a `Path` or any other type is `V-SHELL4`, and `wand t --fix` makes it `%{x}`.
 - `report |> $?(mail ops@example.com)` pipes the left value to the command's stdin.
 - `Shell.stream cmd` reads a command's output line by line — the answer for `tail -f` and friends, which `$()` cannot bound. Stopping the read kills the command; an early stop ignores its exit code.
 - Parse captures with `Decode.lines`, `Decode.run` — not by hand.

@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `wand t` reports a `%!{x}` in a command where `x` is not a `String`, such as a `Path`, as `V-SHELL4`, and `wand t --fix` changes it to `%{x}` (#123).
+
+### Fixed
+
+- `V-SHELL1` says that a `%!{...}` splice can add words or commands, not that the first word is decided at run time, when the first word is a literal (#123).
+
 ### Documentation
 
 - The reference and the `Shell.in_dir` doc say that a command, and a relative `dir`, use the current directory of the process, not the directory of the script (#118).

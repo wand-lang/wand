@@ -353,6 +353,49 @@ let test_shell1_dynamic () =
   silent "literal words under a narrowed manifest"
     "uses {Shell(git), IO}\nimport IO\nIO.println $(git status)"
 
+(* A raw splice after a literal first word: the first word is checked, and
+   the splice is why the rest is not. The message says that, and not that
+   the first word is the run's (#123). *)
+let test_shell1_raw_reason () =
+  let text src =
+    List.filter_map (fun (f : Lint.finding) ->
+      if f.Lint.rule = Lint_rules.V_SHELL1 then Some f.Lint.text else None)
+      (findings src)
+  in
+  Alcotest.(check (list string)) "a raw splice after a literal word"
+    [Lint_rules.shell1_raw]
+    (text "uses {Shell(gzip)}\nlet s = \"-9 x\"\nlet r = $(gzip %!{s})\nr");
+  Alcotest.(check (list string)) "a first word the run decides"
+    [Lint_rules.shell1_dynamic]
+    (text "uses {Shell(git)}\nlet c = \"git\"\nlet r = $(%!{c} status)\nr")
+
+(* A raw splice of a value that is not a String reads data as shell source.
+   The finding points at the `%!{` and its fix makes it `%{` (#123). *)
+let test_shell4 () =
+  let glob =
+    "uses {FS.Read, Shell}\nimport FS\nimport List\n\
+     FS.glob ./logs/*.log |> List.each (fn p -> $(gzip -9 %!{p}))"
+  in
+  fires "a Path from FS.glob" glob "V-SHELL4";
+  fires "an Int" "uses {Shell}\nlet f! (n: Int) = $(head -n %!{n} x)\nf! 1"
+    "V-SHELL4";
+  fires "under a narrowed manifest too"
+    "uses {Shell(ls)}\nlet f! (p: Path) = $(ls %!{p})\nf! /tmp" "V-SHELL4";
+  not_fired "a String" "uses {Shell}\nlet f! (s: String) = $(ls %!{s})\nf! \"-l\""
+    "V-SHELL4";
+  not_fired "a quoted splice of a Path"
+    "uses {Shell}\nlet f! (p: Path) = $(ls %{p})\nf! /tmp" "V-SHELL4";
+  (* Under `--strict` it fails the file, as the other V-SHELL rules do. *)
+  let f = List.find (fun (f : Lint.finding) -> f.Lint.rule = Lint_rules.V_SHELL4)
+      (findings glob) in
+  Alcotest.(check bool) "a violation" true (Lint.fails_strict f);
+  Alcotest.(check (pair int int)) "at the %!{" (4, 54)
+    (f.Lint.loc.Token.line, f.Lint.loc.Token.col);
+  (match f.Lint.fix with
+   | Some (Lint.ReplaceAt { from_; to_; _ }) ->
+     Alcotest.(check (pair string string)) "the fix" ("%!{", "%{") (from_, to_)
+   | _ -> Alcotest.fail "V-SHELL4 carries no fix")
+
 (* Shell(...) entries have the same accounting as effect labels: one no
    command position runs is flagged -- but only when every position is
    literal, because an interpolated one may be exactly where the
@@ -936,6 +979,9 @@ let () =
       Alcotest.test_case "A-USES1 binaries" `Quick test_uses1_shell_binaries;
       Alcotest.test_case "V-USES2"  `Quick test_uses2;
       Alcotest.test_case "V-SHELL1" `Quick test_shell1_dynamic;
+      Alcotest.test_case "V-SHELL1 over a raw splice" `Quick
+        test_shell1_raw_reason;
+      Alcotest.test_case "V-SHELL4" `Quick test_shell4;
       Alcotest.test_case "V-SHELL3 and A-SHELL2" `Quick test_shell3;
       Alcotest.test_case "V-CTOR1" `Quick test_ctor1;
       Alcotest.test_case "A-BIND1"  `Quick test_bind1;

@@ -76,6 +76,12 @@ test "an interpolated value cannot perform effects of its own" (fn t ->
     t.eq false (FS.exists? (Path.of_string marker))
   ))
 
+-- A Path is data too. This is the form `wand t --fix` writes for a
+-- `%!{p}` over a Path (V-SHELL4).
+test "a file name with a semicolon is one argument" (fn t ->
+  let p = Path.of_string "x;echo INJECTED.log";
+  t.eq "[x;echo INJECTED.log]" $(printf "[%s]" %{p}))
+
 -- ── Raw interpolate: the value is shell source ──────────────────────────
 
 test "raw! splits on spaces" (fn t -> t.eq "[a][b]" (raw! "a b"))

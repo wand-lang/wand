@@ -1577,7 +1577,13 @@ That is why there are two spellings. Under `%{...}` a value is only an
 argument to the command you wrote. A value from a file, from an environment
 variable, or from the output of another command cannot change what runs.
 Under `%!{...}` it can. Sometimes that is what you want, and `grep` finds
-every site. A manifest also limits which commands each spelling can reach:
+every site.
+
+Only a `String` can be shell syntax. A `%!{...}` over a value of any other
+type, such as a `Path` from `FS.glob`, an `Int` or a `URL`, reads data as
+shell source: a log file named `x;rm -rf ~.log` makes `$(gzip %!{p})` run
+`rm`. `V-SHELL4` reports each such splice. It is a warning, and an error
+under `--strict`, and `wand t --fix` changes the `%!{` to `%{`. A manifest also limits which commands each spelling can reach:
 `uses {Shell(git, curl)}`. See [Manifests](#manifests).
 
 Raw interpolation works only in a command. A string literal has no argument
@@ -2151,6 +2157,10 @@ What is checked, and when:
   does a `--dry-run` rehearsal. `V-SHELL1` reports each such site. It is a
   warning, and an error under `--strict`, for a repository that wants each
   command word readable from the text.
+- **A `%!{...}` anywhere in a command** is checked at the spawn too, even
+  when the first word is a literal. The splice can add words, or a `;` and a
+  further command, so `$(gzip -9 %!{p})` can run more than `gzip`.
+  `V-SHELL1` reports it, and says that the splice is the reason.
 - **A command runs to the end of its line.** A newline inside `$()` starts a
   second command, as it does in a shell script, so a command broken over two
   lines for width runs as two. End the line with `\` to continue it, which
@@ -8295,10 +8305,11 @@ punish the safer choice.
 | `V-SHADOW1` | a top-level name is bound twice in one file, so which value the name means depends on the line it is read from — rename one of them |
 | `V-CLOCK1` | a length of time is measured by subtracting two readings of `Clock.now`, which a clock step spoils — wrap the work in `Clock.timed` |
 | `A-SHELL1` | a `$()` holds a shell pipeline of three or more operators |
-| `V-SHELL1` | the manifest narrows `Shell` to named binaries, but a command word is decided at run time |
+| `V-SHELL1` | the manifest narrows `Shell` to named binaries, but a command word is decided at run time, or a `%!{...}` splice can add words and commands |
 | `V-NET1` | the manifest narrows `Net` to named hosts, but a request is built with a host decided at run time |
 | `V-SHELL2` | a command runs on to a second line, which starts a second command |
 | `V-SHELL3` | `Shell.inspect` runs a command known to change things, such as `kubectl apply` or `rm`, which a rehearsal would run for real — run it with `$(...)` |
+| `V-SHELL4` | a `%!{...}` splice reads a value that is not a `String`, such as a `Path`, as shell source — write `%{...}`; `wand t --fix` changes it |
 | `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
 | `V-CTOR1` | a `match` arm names bare a constructor that another type in scope shares — write the type, as in `PullPolicy.Always`; `wand t --fix` writes it |
 | `A-IF1` | a `match` has only the arms `true` and `false` — write `if`, or `unless` where the `true` arm is `()` |
