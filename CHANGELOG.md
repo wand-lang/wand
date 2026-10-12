@@ -19,6 +19,7 @@
 - `Int.to_string`, `Float.to_string`, `Bool.to_string`, `Duration.to_string`, `Size.to_string`, `DateTime.to_string` and `Port.to_string` write a value as the text that `"%{x}"` gives, and `of_string` reads it back (#143).
 - A list pattern can give its first elements with commas before the `::`: `[a, b :: rest]` is `[a :: b :: rest]` (#117).
 - A `:` written for cons in a pattern, as in `[x : xs]` or `(x : xs)`, carries a fix, and `wand t --fix` changes it to `::` (#117).
+- `++` joins two lists as well as two strings: `[1] ++ [2]` is `[1, 2]` (#151).
 
 ### Changed
 

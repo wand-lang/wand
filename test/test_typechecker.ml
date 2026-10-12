@@ -528,7 +528,7 @@ let test_handler_payloads_are_typed () =
     {|import FS
 handle FS.write_file! /tmp/x "hi" with
 | FS!write_file (path, _) k -> path ++ "!" ++ k ()|}
-    "expected String, got Path";
+    "and this is Path";
   err_contains "resuming a read with the wrong type"
     "import FS\nhandle FS.read_file! /tmp/x with | FS!read_file _ k -> k 42"
     "expected String, got Int";
@@ -670,13 +670,10 @@ let test_annotation_mismatch_has_a_position () =
     "1\nlet x : Int = \"s\"\nx"
     "2:15: expected Int, got String"
 
-(* A message names what to write. `++` on lists and a two-list map by its
-   name in another language each got an answer that was true and did not
-   say what joins or pairs two lists. *)
+(* A message names what to write. A two-list map by its name in another
+   language got an answer that was true and did not say what pairs two
+   lists. *)
 let test_list_joins_and_pairs_say_how () =
-  err_contains "++ on lists"
-    "[1] ++ [2]"
-    "two lists are joined with 'List.concat xs ys'";
   err_contains "map2"
     "import List\nList.map2 (fn a b -> a + b) [1] [2]"
     "'List.zip xs ys |> List.map (fn (x, y) -> ...)'";
@@ -1679,7 +1676,7 @@ let test_a_parameter_type_is_checked () =
   in
   fails "the body contradicts the annotation"
     "type Pod (name : String)\nlet f (p: Pod) = p ++ \"x\"\nf"
-    "expected";
+    "and this is Pod";
   fails "the call contradicts the annotation"
     "type Pod (name : String)\nlet f (p: Pod) = p.name\nf 3"
     "expected Pod, got Int";
@@ -1796,6 +1793,61 @@ let test_add_constraint () =
        "let f : 'a: Ord -> 'a -> 'b: Ord -> 'b -> ('a, 'b) = \
         fn a b c d -> (if a < b then b else a, if c < d then d else c) in \
         f 1 2 \"a\" \"b\"")
+
+(* `++` joins two strings or two lists (#151): one type on both sides and
+   in the result, decided by use, as `+` decides between Int and Float. *)
+let test_concat_constraint () =
+  let ok label src expected =
+    match Runner.run_string src with
+    | Ok v -> Alcotest.(check string) label expected v
+    | Error msg -> Alcotest.failf "%s: %s" label msg
+  in
+  let fails label src needle =
+    match Runner.run_string src with
+    | Ok v -> Alcotest.failf "%s: expected a type error, got %s" label v
+    | Error msg ->
+      if not (Lint.contains msg needle) then
+        Alcotest.failf "%s: expected %S in: %s" label needle msg
+  in
+  ok "two lists" "[1] ++ [2]" "[1, 2]";
+  ok "two strings" {|"a" ++ "b"|} "ab";
+  ok "an empty list on either side" "([] ++ [1], [2] ++ [])" "([1], [2])";
+  ok "it binds as tightly as +" "1 :: [2] ++ [3]" "[1, 2, 3]";
+  ok "and associates to the left" {|["a"] ++ ["b"] ++ ["c"]|}
+    {|["a", "b", "c"]|};
+  ok "one function, used at both"
+    {|let join a b = a ++ b in (join [1] [2, 3], join "x" "y")|}
+    {|([1, 2, 3], "xy")|};
+  (* The left list is copied once, and the right one is shared: a long
+     list joins without a quadratic path. *)
+  ok "a long list"
+    "import List\nList.length (List.range 1 200000 ++ List.range 1 200000)"
+    "400000";
+  Alcotest.(check string) "a join stays polymorphic" "'a: Concat -> 'a -> 'a"
+    (type_of "join" "let join a b = a ++ b in join");
+  Alcotest.(check string) "the printed form round-trips" "List Int"
+    (type_of "written variable"
+       "let join : 'a: Concat -> 'a -> 'a = fn a b -> a ++ b in join [1] [2]");
+  Alcotest.(check string) "the bare spelling too" "String"
+    (type_of "bare" {|let join : Concat -> Concat -> Concat = fn a b -> a ++ b in join "a" "b"|});
+  (* Joined and ordered: String is the one type that is both. *)
+  Alcotest.(check string) "joined and compared is a String"
+    "String -> String -> Bool"
+    (type_of "both" "let f a b = a ++ b < a in f");
+  fails "two numbers" "1 ++ 2"
+    "'++' joins two strings or two lists, and this is Int";
+  fails "a path" "/tmp ++ /var"
+    "'++' joins two strings or two lists, and this is Path";
+  fails "a string and a list" {|"a" ++ [1]|}
+    "'++' joins two strings or two lists, not a String and a List Int";
+  fails "a list and a string" {|[1] ++ "a"|}
+    "'++' joins two strings or two lists, not a List Int and a String";
+  fails "two lists of different elements" {|[1] ++ ["a"]|}
+    "expected Int, got String";
+  fails "joined and added" "let f a b = (a ++ b, a + b) in f"
+    "also used as a number";
+  fails "a list added with +" "[1] + [2]" "lists join with '++', not '+'";
+  fails "a String still names to_string" {|"n: " ++ 3|} "expected String, got Int"
 
 (* Written effects are checked, not assumed: an annotation cannot quietly
    narrow what a function does. This is what makes writing them safe to
@@ -2741,6 +2793,8 @@ let () =
         test_ordering_is_a_constraint;
       Alcotest.test_case "adding is a constraint" `Quick
         test_add_constraint;
+      Alcotest.test_case "joining is a constraint" `Quick
+        test_concat_constraint;
       Alcotest.test_case "unknown operation rejected"   `Quick test_handler_rejects_an_unknown_operation;
       Alcotest.test_case "handler keeps other raises"   `Quick test_handler_keeps_raises_it_cannot_account_for;
     ];

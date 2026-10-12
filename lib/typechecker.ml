@@ -110,8 +110,10 @@ and tv = {
 (* `Free` may become anything. `Num` is `Int` or `Float`, the `Num` in
    `Num -> Num`. `Add` is what `+` and `-` take: the numbers, and the two
    quantities that add without leaving their type. `Ord` is any type wand
-   can order, which is the widest set. *)
-and constrained = Free | Ord | Add | Num
+   can order, which is the widest set. `Concat` is what `++` takes: a
+   `String` or a `List`. It stands beside the other three rather than inside
+   them: it shares `String` with `Ord` and nothing with `Add`. *)
+and constrained = Free | Ord | Add | Num | Concat
 
 (* Builtin signatures are written with `@->` so the tables stay readable.
    Every builtin's *own* latent effect is filled in separately; the arrow
@@ -222,6 +224,7 @@ let fresh ()     = fresh_as Free
 let fresh_num () = fresh_as Num
 let fresh_add () = fresh_as Add
 let fresh_ord () = fresh_as Ord
+let fresh_concat () = fresh_as Concat
 
 (* The types wand orders. `Int`, `Float` and `String` were ordered before
    there was a constraint; the temporal four join them here.
@@ -253,11 +256,22 @@ let is_additive = function
   | TInt | TFloat | TSize | TDuration -> true
   | _ -> false
 
+(* The types `++` joins. *)
+let is_concat = function
+  | TString | TList _ -> true
+  | _ -> false
+
+(* What `++` says of a type it does not join. *)
+let concat_message t =
+  Printf.sprintf "'++' joins two strings or two lists, and this is %s" t
+
 (* Which of two constraints a unified variable keeps: the narrower one.
    `Num` is inside `Add`, `Add` is inside `Ord`, and all of them are inside
-   `Free`. *)
+   `Free`. `Concat` meets only `Free` here: `unify_` answers for it against
+   the other three before it asks. *)
 let narrower a b =
   match a, b with
+  | Concat, _ | _, Concat -> Concat
   | Num, _ | _, Num -> Num
   | Add, _ | _, Add -> Add
   | Ord, _ | _, Ord -> Ord
@@ -837,6 +851,7 @@ let string_of_typ_with ~expand_aliases t =
         | Num  -> Some "Num"
         | Add  -> Some "Add"
         | Ord  -> Some "Ord"
+        | Concat -> Some "Concat"
         | Free -> None
       in
       (match constraint_name with
@@ -1233,6 +1248,16 @@ let rec unify_ t1 t2 =
   | TProcess, TProcess -> ()
   | TName n1, TName n2 when n1 = n2 -> ()
   | TVar tv1, TVar tv2 when tv1 == tv2 -> ()
+  (* A value joined with `++` and ordered is a String, the one type in both
+     sets. One joined and added is nothing: no type is in both. *)
+  | TVar ({ constrained = Concat; _ } as tv1), TVar ({ constrained = Ord; _ } as tv2)
+  | TVar ({ constrained = Ord; _ } as tv1), TVar ({ constrained = Concat; _ } as tv2) ->
+    tv1.def <- Some TString; tv2.def <- Some TString
+  | TVar { constrained = Concat; _ }, TVar { constrained = (Add | Num); _ }
+  | TVar { constrained = (Add | Num); _ }, TVar { constrained = Concat; _ } ->
+    raise (TypeError
+      "'++' joins two strings or two lists, and this value is also used as \
+       a number, which neither is")
   (* Two variables: link so that the narrower constraint survives on
      whichever remains undefined. *)
   | TVar tv1, TVar tv2 ->
@@ -1254,6 +1279,9 @@ let rec unify_ t1 t2 =
          type" (string_of_typ (TVar tv))))
     else if (tv.constrained = Num || tv.constrained = Add) && t = TString then
       raise (TypeError "strings concatenate with '++', not '+'")
+    else if (tv.constrained = Num || tv.constrained = Add)
+            && (match t with TList _ -> true | _ -> false) then
+      raise (TypeError "lists join with '++', not '+'")
     else if tv.constrained = Num && t <> TInt && t <> TFloat then
       raise (TypeError (Printf.sprintf
         "expected a number, got %s -- * and / work on Int and Float"
@@ -1265,6 +1293,8 @@ let rec unify_ t1 t2 =
     (* The ordered set grows as types gain a normalizer, so the message
        names the type that is not in it rather than listing the set. The
        reference has the list. *)
+    else if tv.constrained = Concat && not (is_concat t) then
+      raise (TypeError (concat_message (string_of_typ t)))
     else if tv.constrained = Ord && not (is_ordered t) then
       raise (TypeError (Printf.sprintf
         "%s is not ordered, so it cannot be compared with < > <= >="
@@ -1727,7 +1757,13 @@ let cur_loc : Token.loc option ref = ref None
    its type is one with a module of its own name: `Path`, `Int`. Whether
    that module has `to_string` is asked later. *)
 let offer_to_string ~arg x ~expected ~got =
-  match repr expected, repr got with
+  (* Where `++` wants a String or a List and was given a Path or an Int,
+     the likely aim is a String, so the text is offered as for a String. *)
+  let expected = match repr expected with
+    | TVar { constrained = Concat; _ } -> TString
+    | t -> t
+  in
+  match expected, repr got with
   | TString, (TName _ | TVar _) -> ()
   | TString, t ->
     let m = string_of_typ t in
@@ -2327,12 +2363,13 @@ let builtin_type_name n = List.mem n builtin_type_names
 
 (* How many type arguments a builtin takes. A name that takes none is not a
    type constructor at all, so `Int Int` is the same mistake as `Map String
-   String` and gets the same answer. `Num`, `Add` and `Ord` are written in
-   signatures without being declared anywhere, so they are named here too. *)
+   String` and gets the same answer. `Num`, `Add`, `Ord` and `Concat` are
+   written in signatures without being declared anywhere, so they are named
+   here too. *)
 let builtin_type_arity = function
   | "List" | "Map" | "Option" | "Decoder" | "Shared" -> Some 1
   | "Result"                              -> Some 2
-  | "Num" | "Add" | "Ord"                 -> Some 0
+  | "Num" | "Add" | "Ord" | "Concat"      -> Some 0
   | n when builtin_type_name n            -> Some 0
   | _                                     -> None
 
@@ -2695,6 +2732,7 @@ let type_of_te_bound_with_vars ?(effects_off_pure = false)
        | "Num"      -> fresh_num ()
        | "Add"      -> fresh_add ()
        | "Ord"      -> fresh_ord ()
+       | "Concat"   -> fresh_concat ()
        | "Int"      -> TInt      | "Float"    -> TFloat
        | "String"   -> TString   | "Bool"     -> TBool
        | "Unit"     -> TUnit     | "Path"     -> TPath     | "Glob"     -> TGlob
@@ -2740,9 +2778,11 @@ let type_of_te_bound_with_vars ?(effects_off_pure = false)
         | "Num" -> fresh_num ()
         | "Add" -> fresh_add ()
         | "Ord" -> fresh_ord ()
+        | "Concat" -> fresh_concat ()
         | other ->
           raise (TypeError (Printf.sprintf
-            "'%s' is not a constraint; the constraints are Num, Add and Ord"
+            "'%s' is not a constraint; the constraints are Num, Add, Ord \
+             and Concat"
             other))
       in
       (match Hashtbl.find_opt vars name with
@@ -6043,24 +6083,27 @@ and infer_binop tenv (env : env) op a b : typ =
     check_empty_default ~other:TInt b tb (fun () -> unify_expected ~expected:TInt ~got:tb);
     TInt
   | "++" ->
-    (* `++` joins strings only. Given a list it said "expected String, got
-       List Int", which is true and does not say what joins two lists. *)
+    (* Two strings or two lists, one type throughout and decided by use, as
+       `+` is: `let join a b = a ++ b` stays `'a: Concat -> 'a -> 'a` and
+       works at both. *)
+    let c = fresh_concat () in
     let operand e =
       let t = infer tenv env e in
-      (match repr t with
-       | TList _ ->
-         raise (TypeError
-           "'++' joins two strings; two lists are joined with \
-            'List.concat xs ys'")
-       | _ -> ());
-      try unify_expected ~expected:TString ~got:t
+      try unify_expected ~expected:c ~got:t
       with TypeError _ as ex ->
-        offer_to_string ~arg:false e ~expected:TString ~got:t;
+        (* A String and a List: each is joined, just not with the other. *)
+        (match repr c, repr t with
+         | TString, TList _ | TList _, TString ->
+           failed_to_unify (Printf.sprintf
+             "'++' joins two strings or two lists, not a %s and a %s"
+             (string_of_typ c) (string_of_typ t))
+         | _ -> ());
+        offer_to_string ~arg:false e ~expected:c ~got:t;
         raise ex
     in
     operand a;
     operand b;
-    TString
+    c
   | "::" ->
     let elem_t = fresh () in
     unify_expected ~expected:elem_t ~got:(infer tenv env a);
@@ -8242,7 +8285,8 @@ let stdlib_member : (string -> string -> scheme option) ref =
   ref (fun _ _ -> None)
 
 (* `expected String, got Path` says what to call when `Path.to_string`
-   exists and takes a Path: the hint, and the fix that the error site found
+   exists and takes a Path, and so does `'++'` given a Path on its left:
+   the hint, and the fix that the error site found
    for it. The standard library is asked only here, when the check is done,
    because loading a module checks it, and that must not occur during the
    check of another file. *)
@@ -8251,7 +8295,8 @@ let with_to_string msg fix =
   string_offer := None;
   match offer with
   | Some (m, offer_fix)
-    when String.ends_with ~suffix:("expected String, got " ^ m) msg ->
+    when String.ends_with ~suffix:("expected String, got " ^ m) msg
+      || String.ends_with ~suffix:(concat_message m) msg ->
     let takes_m =
       match (try !stdlib_member m "to_string" with _ -> None) with
       | Some (Mono t | Poly (_, _, t)) ->

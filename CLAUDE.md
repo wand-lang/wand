@@ -296,7 +296,9 @@ type per expression, never mixed implicitly (`Float.of_int` /
 variable carrying a constraint -- "`Int` or `Float`, decided at use". `+` and `-` also add two `Size`s or
 two `Duration`s (`Add` in a signature); `*` and `/` do not. A `Duration`
 also moves a `DateTime`, and two `DateTime`s subtract to the `Duration`
-between them — two instants do not add.
+between them — two instants do not add. `++` joins two `String`s or two
+`List`s (`Concat` in a signature): `[1] ++ [2]` is `[1, 2]`; a `String`
+and a `List` do not join.
 
 Statements: one per line at the top level, nothing else needed. A `;` after
 a binding ends its right-hand side and hands the rest to its body, and needs

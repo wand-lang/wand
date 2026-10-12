@@ -3223,7 +3223,9 @@ and eval_binop (env : env) op a b : value =
      | VString s1, VString s2 ->
        charge_bytes (String.length s1 + String.length s2);
        VString (s1 ^ s2)
-     | _ -> raise (EvalError "'++' requires strings"))
+     (* Linear in the left list, and the right one is shared, not copied. *)
+     | VList l1, VList l2 -> VList (List.rev_append (List.rev l1) l2)
+     | _ -> raise (EvalError "'++' requires two strings or two lists"))
   | "::" ->
     let vh = eval env a in
     (match eval env b with
