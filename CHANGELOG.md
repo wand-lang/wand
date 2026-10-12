@@ -19,6 +19,9 @@
 - `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
 - The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
 - The benchmark harness writes its long `claude -p` command over several lines (#114).
+- `String.words` is faster (#122).
+- `String.split` with a delimiter of one character is faster (#122).
+- `String.lines` is faster (#122).
 
 ### Fixed
 

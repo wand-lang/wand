@@ -3714,22 +3714,30 @@ let str_split_impl delim str =
   let slen = String.length str in
   if dlen = 0 then
     List.init slen (fun i -> VString (String.make 1 str.[i]))
-  else begin
+  else if dlen = 1 then begin
+    (* A one-character delimiter is the common case -- every split on a
+       space or a comma. Read from the end, so that each field goes on the
+       front of the list in its final place: building it forwards and then
+       reversing it allocated the list twice. A match of one character
+       cannot overlap another, so the direction does not change the
+       fields. *)
+    let c = String.unsafe_get delim 0 in
+    let acc = ref [] and stop = ref slen in
+    for i = slen - 1 downto 0 do
+      if String.unsafe_get str i = c then begin
+        acc := VString (String.sub str (i + 1) (!stop - i - 1)) :: !acc;
+        stop := i
+      end
+    done;
+    VString (String.sub str 0 !stop) :: !acc
+  end else begin
+    (* A longer delimiter can overlap itself -- "aa" in "aaa" -- and the
+       match on the left wins, so this one reads forwards. *)
     let result = ref [] in
     let start = ref 0 in
     let i = ref 0 in
-    (* A one-character delimiter is the common case -- every `String.lines`
-       and every split on a space or a comma -- and testing it with
-       `String.sub` allocates a one-byte string per position in the input.
-       Splitting a 17MB log on " " allocated 17MB of them. *)
-    let matches_at =
-      if dlen = 1 then
-        let c = delim.[0] in
-        fun i -> str.[i] = c
-      else fun i -> str_matches_at delim dlen str i
-    in
     while !i <= slen - dlen do
-      if matches_at !i then begin
+      if str_matches_at delim dlen str !i then begin
         result := VString (String.sub str !start (!i - !start)) :: !result;
         i := !i + dlen;
         start := !i
@@ -3743,7 +3751,8 @@ let str_split_impl delim str =
 (* The whitespace `String.words` separates on. Written out rather than
    `Char.is_whitespace` so that what counts is visible and fixed: these are
    the four the wand-level version replaced before it split. *)
-let is_word_space = function ' ' | '\t' | '\n' | '\r' -> true | _ -> false
+let[@inline] is_word_space c =
+  Char.code c <= 32 && (c = ' ' || c = '\t' || c = '\n' || c = '\r')
 
 (* One pass, and it allocates only the words it returns.
 
@@ -3759,30 +3768,36 @@ let is_word_space = function ' ' | '\t' | '\n' | '\r' -> true | _ -> false
    end, and nearly every file ends in a newline. *)
 let str_lines_impl str =
   let slen = String.length str in
-  let result = ref [] and start = ref 0 in
-  for i = 0 to slen - 1 do
-    if str.[i] = '\n' then begin
-      result := VString (String.sub str !start (i - !start)) :: !result;
-      start := i + 1
-    end
-  done;
-  if !start < slen then
-    result := VString (String.sub str !start (slen - !start)) :: !result;
-  List.rev !result
+  if slen = 0 then []
+  else begin
+    (* From the end, for the reason `str_split_impl` gives: each line is
+       made in its final place and nothing is reversed. *)
+    let stop = ref (if String.unsafe_get str (slen - 1) = '\n' then slen - 1 else slen) in
+    let acc = ref [] in
+    for i = !stop - 1 downto 0 do
+      if String.unsafe_get str i = '\n' then begin
+        acc := VString (String.sub str (i + 1) (!stop - i - 1)) :: !acc;
+        stop := i
+      end
+    done;
+    VString (String.sub str 0 !stop) :: !acc
+  end
 
 let str_words_impl str =
-  let slen = String.length str in
-  let result = ref [] in
-  let i = ref 0 in
-  while !i < slen do
-    while !i < slen && is_word_space str.[!i] do incr i done;
-    if !i < slen then begin
-      let start = !i in
-      while !i < slen && not (is_word_space str.[!i]) do incr i done;
-      result := VString (String.sub str start (!i - start)) :: !result
+  (* From the end, so each word goes on the front of the list in its final
+     place: a seven-word line made fourteen list cells and threw half of
+     them away. *)
+  let acc = ref [] in
+  let i = ref (String.length str - 1) in
+  while !i >= 0 do
+    while !i >= 0 && is_word_space (String.unsafe_get str !i) do decr i done;
+    if !i >= 0 then begin
+      let stop = !i + 1 in
+      while !i >= 0 && not (is_word_space (String.unsafe_get str !i)) do decr i done;
+      acc := VString (String.sub str (!i + 1) (stop - !i - 1)) :: !acc
     end
   done;
-  List.rev !result
+  !acc
 
 (* The nth whitespace-separated word, without building the others.
    `List.get! n (String.words s)` allocates a string per word, a cons per
