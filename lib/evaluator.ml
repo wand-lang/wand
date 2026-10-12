@@ -3907,10 +3907,36 @@ let fs_size_impl = function
    `String.sub haystack i nlen = needle`, which allocates a fresh short
    string at every position it looks at -- a 200k-line log answered
    `String.contains?` with about twelve million of them. Reading the bytes
-   costs nothing and stops at the first one that differs. *)
+   costs nothing and stops at the first one that differs.
+
+   A loop and not a local recursive function: the function closed over the
+   two strings and the offset, and that closure was allocated at each call. *)
 let str_matches_at needle nlen haystack i =
-  let rec go j = j = nlen || (haystack.[i + j] = needle.[j] && go (j + 1)) in
-  go 0
+  let j = ref 0 in
+  while !j < nlen
+        && String.unsafe_get haystack (i + !j) = String.unsafe_get needle !j do
+    incr j
+  done;
+  !j = nlen
+
+(* `String.starts_with?`. The Stdlib version is a call to a separate
+   function for each byte; this is one loop with no allocation. *)
+let str_has_prefix prefix s =
+  let plen = String.length prefix in
+  plen <= String.length s
+  && begin
+    let j = ref 0 in
+    while !j < plen && String.unsafe_get s !j = String.unsafe_get prefix !j do
+      incr j
+    done;
+    !j = plen
+  end
+
+(* `String.sub`, except that a range that covers all of [s] gives [s] back.
+   A String does not change, so the copy holds nothing that [s] does not,
+   and a one-word line or a slice to the end of a word then costs nothing. *)
+let[@inline] str_sub s start len =
+  if start = 0 && len = String.length s then s else String.sub s start len
 
 let str_split_impl delim str =
   let dlen = String.length delim in
@@ -3932,7 +3958,7 @@ let str_split_impl delim str =
         stop := i
       end
     done;
-    VString (String.sub str 0 !stop) :: !acc
+    VString (str_sub str 0 !stop) :: !acc
   end else begin
     (* A longer delimiter can overlap itself -- "aa" in "aaa" -- and the
        match on the left wins, so this one reads forwards. *)
@@ -3983,7 +4009,7 @@ let str_lines_impl str =
         stop := i
       end
     done;
-    VString (String.sub str 0 !stop) :: !acc
+    VString (str_sub str 0 !stop) :: !acc
   end
 
 let str_words_impl str =
@@ -3997,7 +4023,7 @@ let str_words_impl str =
     if !i >= 0 then begin
       let stop = !i + 1 in
       while !i >= 0 && not (is_word_space (String.unsafe_get str !i)) do decr i done;
-      acc := VString (String.sub str (!i + 1) (stop - !i - 1)) :: !acc
+      acc := VString (str_sub str (!i + 1) (stop - !i - 1)) :: !acc
     end
   done;
   !acc
@@ -4060,6 +4086,45 @@ let str_contains_impl needle haystack =
       if str_matches_at needle nlen haystack !i then found := true else incr i
     done;
     !found
+  end
+
+(* `Int.of_string`: optional whitespace, an optional `-`, one or more
+   decimal digits, optional whitespace, and nothing else. The whitespace is
+   what `String.trim` removes. One pass over the bytes, with no copy: this
+   used to trim to a new string, cut the sign off to another, and then read
+   the digits again with `int_of_string_opt`.
+
+   The value is built as a negative number, since `min_int` has no positive
+   counterpart, and a number that does not fit is `None`, as it was. *)
+let str_decimal_int s =
+  let is_space c = c = ' ' || c = '\012' || c = '\n' || c = '\r' || c = '\t' in
+  let n = String.length s in
+  let i = ref 0 and stop = ref n in
+  while !i < n && is_space (String.unsafe_get s !i) do incr i done;
+  while !stop > !i && is_space (String.unsafe_get s (!stop - 1)) do decr stop done;
+  let negative = !i < !stop && String.unsafe_get s !i = '-' in
+  if negative then incr i;
+  if !i >= !stop then None
+  else begin
+    let acc = ref 0 and ok = ref true in
+    while !ok && !i < !stop do
+      let c = String.unsafe_get s !i in
+      if c < '0' || c > '9' then ok := false
+      else begin
+        let d = Char.code c - 48 in
+        if !acc < min_int / 10 then ok := false
+        else begin
+          let scaled = !acc * 10 in
+          if scaled < min_int + d then ok := false
+          else acc := scaled - d
+        end
+      end;
+      incr i
+    done;
+    if not !ok then None
+    else if negative then Some !acc
+    else if !acc = min_int then None
+    else Some (- !acc)
   end
 
 let str_trim_left s =
@@ -6366,10 +6431,13 @@ let stdlib_eval_env : env = list_hof_builtins @ [
     | VInt start -> VBuiltin (function
       | VInt end_ -> VBuiltin (function
         | VString s ->
+          (* Clamped with `if` and not with `min` and `max`: those are
+             polymorphic, and each one was a call to the generic compare. *)
           let len = String.length s in
-          let start = max 0 (min start len) in
-          let end_  = max start (min end_ len) in
-          VString (String.sub s start (end_ - start))
+          let start = if start < 0 then 0 else if start > len then len else start in
+          let end_ = if end_ > len then len else end_ in
+          let end_ = if end_ < start then start else end_ in
+          VString (str_sub s start (end_ - start))
         | _ -> raise (EvalError "str_slice: expected String"))
       | _ -> raise (EvalError "str_slice: expected Int"))
     | _ -> raise (EvalError "str_slice: expected Int")));
@@ -6409,7 +6477,7 @@ let stdlib_eval_env : env = list_hof_builtins @ [
   ("str_starts_with", VBuiltin (function
     | VString prefix -> VBuiltin (function
       | VString s ->
-        VBool (String.starts_with ~prefix s)
+        VBool (str_has_prefix prefix s)
       | _ -> raise (EvalError "str_starts_with: expected String"))
     | _ -> raise (EvalError "str_starts_with: expected String")));
   ("str_ends_with", VBuiltin (function
@@ -6552,12 +6620,7 @@ let stdlib_eval_env : env = list_hof_builtins @ [
      read as that number. *)
   ("str_to_int", VBuiltin (function
     | VString s ->
-      let t = String.trim s in
-      let digits = if String.starts_with ~prefix:"-" t
-        then String.sub t 1 (String.length t - 1) else t in
-      let decimal = digits <> ""
-        && String.for_all (fun c -> c >= '0' && c <= '9') digits in
-      (match if decimal then int_of_string_opt t else None with
+      (match str_decimal_int s with
        | Some n -> VConstr (Ctor.Builtin "Ok",    [VInt n])
        | None   -> VConstr (Ctor.Builtin "Error", [VString (Printf.sprintf "cannot parse %S as Int" s)]))
     | _ -> raise (EvalError "str_to_int: expected String")));

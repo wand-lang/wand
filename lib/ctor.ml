@@ -49,14 +49,19 @@ let equal (a : t) (b : t) = a == b || a = b
 
 (* Whether a pattern's constructor name names [c]: its key where the name
    holds a dot, `T.Ctor`, and its bare name otherwise. The same answer as
-   comparing with `key` or `name`, without building the bare name. *)
+   comparing with `key` or `name`, without building the bare name.
+
+   A built-in's key is its name, so both rules give `String.equal b n` for
+   one, and it needs no search for a dot. `Some`, `None`, `Ok` and `Error`
+   are most of the matches a script makes. *)
 let named c n =
-  if String.contains n '.' then String.equal (key c) n
-  else match c with
-    | Builtin b -> String.equal b n
-    | Local k | Owned (_, k) ->
+  match c with
+  | Builtin b -> String.equal b n
+  | Local k | Owned (_, k) ->
+    if String.contains n '.' then String.equal k n
+    else
       let lk = String.length k and ln = String.length n in
-      if lk = ln then String.equal k n && not (String.contains k '.')
+      if lk = ln then String.equal k n (* n holds no dot, so k holds none *)
       else
         let rec same i = i >= ln || (k.[lk - ln + i] = n.[i] && same (i + 1)) in
         lk > ln && k.[lk - ln - 1] = '.' && same 0

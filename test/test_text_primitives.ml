@@ -84,11 +84,47 @@ let test_lines () =
       (lines_ref s) (List.map strings_of (Evaluator.str_lines_impl s))
   done
 
+(* `Int.of_string` as it was written before it became one pass: trim, cut
+   off a minus sign, ask that the rest is decimal digits, and parse. *)
+let decimal_int_ref s =
+  let t = String.trim s in
+  let digits = if String.starts_with ~prefix:"-" t
+    then String.sub t 1 (String.length t - 1) else t in
+  let decimal = digits <> ""
+    && String.for_all (fun c -> c >= '0' && c <= '9') digits in
+  if decimal then int_of_string_opt t else None
+
+let int_alphabet = [| "0"; "1"; "4"; "9"; "-"; "+"; " "; "\t"; "\n"; "\r"; "\x0c";
+                      "\x0b"; "_"; "x"; "a"; "461168601842738790";
+                      "4611686018427387903"; "4611686018427387904";
+                      "-4611686018427387904"; "-4611686018427387905" |]
+
+let test_decimal_int () =
+  let st = Random.State.make [| 4 |] in
+  for _ = 1 to rounds do
+    let n = Random.State.int st 6 in
+    let s = String.concat "" (List.init n (fun _ ->
+      int_alphabet.(Random.State.int st (Array.length int_alphabet)))) in
+    Alcotest.(check (option int)) (Printf.sprintf "of_string %S" s)
+      (decimal_int_ref s) (Evaluator.str_decimal_int s)
+  done
+
+let test_prefix () =
+  let st = Random.State.make [| 5 |] in
+  for _ = 1 to rounds do
+    let prefix = random_text st and s = random_text st in
+    let s = if Random.State.bool st then prefix ^ s else s in
+    Alcotest.(check bool) (Printf.sprintf "starts_with %S %S" prefix s)
+      (String.starts_with ~prefix s) (Evaluator.str_has_prefix prefix s)
+  done
+
 let () =
   Alcotest.run "text_primitives" [
     "against references", [
       Alcotest.test_case "words" `Quick test_words;
       Alcotest.test_case "split" `Quick test_split;
       Alcotest.test_case "lines" `Quick test_lines;
+      Alcotest.test_case "Int.of_string" `Quick test_decimal_int;
+      Alcotest.test_case "starts_with?" `Quick test_prefix;
     ];
   ]
