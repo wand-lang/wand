@@ -108,8 +108,21 @@ let test_script_in_big5 () =
     Alcotest.(check string) "one argument" (Printf.sprintf "[\xa4\\\"; touch %s #]" marker) out
   end
 
+(* ── #175: a Path that starts with - ─────────────────────────────────── *)
+
+let test_dash_path_text () =
+  let t = Evaluator.splice_text in
+  Alcotest.(check string) "a Path that starts with -" "./-rf" (t (Evaluator.VPath "-rf"));
+  Alcotest.(check string) "a Path that starts with ./" "./-rf" (t (Evaluator.VPath "./-rf"));
+  Alcotest.(check string) "an absolute Path" "/-rf" (t (Evaluator.VPath "/-rf"));
+  Alcotest.(check string) "a relative Path" "a/-rf" (t (Evaluator.VPath "a/-rf"));
+  Alcotest.(check string) "a String is not changed" "-rf" (t (Evaluator.VString "-rf"))
+
 let () =
   Alcotest.run "Shell quote" [
+    "a Path that starts with - (#175)", [
+      Alcotest.test_case "splice text" `Quick test_dash_path_text;
+    ];
     "inside the author's quotes (#168)", [
       Alcotest.test_case "double-quote text" `Quick test_double_quote_text;
       Alcotest.test_case "single-quote text" `Quick test_single_quote_text;

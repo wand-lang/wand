@@ -1540,10 +1540,20 @@ $?(grep %{pat} notes.txt)   -- runs: grep '--version' notes.txt
 ```
 
 The quoting is right — `--version` arrived as exactly one argument. It is
-`grep` that reads a leading dash as a flag. Where the value comes from
-outside the script, end the options first: `$(grep -- %{pat} notes.txt)`.
-Most tools take `--`, and the ones that do not take a path instead
-(`./%{name}` rather than `%{name}`).
+`grep` that reads a leading dash as a flag. A `String` value can start with
+`-`, so where the value comes from outside the script, put `--` before the
+operands when the command accepts it: `$(grep -- %{pat} notes.txt)`.
+
+A `Path` has one correct form for this, and wand writes it: a `Path` whose
+text starts with `-` goes in with `./` in front. It names the same file, and
+no command reads it as an option. This applies to a `Path` in `%{...}` in
+every context, and to each `Path` element of a list. A `Path` that is
+absolute or starts with `./` already does not change:
+
+```ocaml
+let p = Path.of_string "-rf"
+$(rm %{p})                  -- runs: rm './-rf'
+```
 
 Write `%{x}` between quotes of your own, and it becomes part of that word.
 It is not an argument of its own. wand quotes it for the quote it sits in.

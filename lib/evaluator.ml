@@ -2602,6 +2602,16 @@ let quote_within q v =
     Buffer.contents buf
   end else "\"" ^ shell_quote v ^ "\""
 
+(* The text of a value that `%{...}` splices into a command. A `Path` whose
+   text starts with `-` gets `./` in front (#175): it names the same file,
+   and no command can read it as an option. A `String` is not changed --
+   it can be an option on purpose, so the author puts `--` before the
+   operands when the command accepts it. *)
+let splice_text v =
+  match v with
+  | VPath s when String.length s > 0 && s.[0] = '-' -> "./" ^ s
+  | v -> to_text v
+
 (* Deriving a decoder needs the decoding machinery, which is defined further
    down the file; `eval` only has to be able to reach it. *)
 let derive_decoder : (string -> value) ref =
@@ -3322,7 +3332,7 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
           | VList _ -> raise (EvalError
               "%{...} takes a list of values, one argument for each, and \
                this list holds a list; flatten it first")
-          | v -> shell_quote (to_text v)) vs))
+          | v -> shell_quote (splice_text v)) vs))
       | VList _, Token.Inside _ -> raise (EvalError
           "a list in %{...} between quotes would be one word; take the \
            quotes away to give one argument for each element")
@@ -3330,16 +3340,15 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
           "a list in %!{...} would be read as shell source; write %{...} to \
            give one quoted argument for each element")
       | v, h ->
-        let v = to_text v in
         Buffer.add_string buf
           (match h with
-           | Token.Source    -> v
-           | Token.Arg       -> shell_quote v
-           | Token.Inside q  -> quote_within q v
+           | Token.Source    -> to_text v
+           | Token.Arg       -> shell_quote (splice_text v)
+           | Token.Inside q  -> quote_within q (splice_text v)
            (* The typechecker holds an arithmetic operand to `Int`, whose
               text is digits and a sign -- nothing a shell reads -- so it
               goes in as itself, where a quote would be a syntax error. *)
-           | Token.Arith     -> v)
+           | Token.Arith     -> to_text v)
     ) parts;
     Buffer.add_string buf tail;
     VString (Buffer.contents buf)

@@ -202,3 +202,31 @@ test "an element that holds a quote stays one argument" (fn t ->
 test "a list between quotes is refused" (fn t -> t.raises (fn () -> in_double! ["a", "b"]))
 
 test "a list in a raw splice is refused" (fn t -> t.raises (fn () -> raw! ["a", "b"]))
+
+-- ── A Path that starts with - ───────────────────────────────────────────
+
+-- A `Path` whose text starts with `-` gets `./` in front, so it names the
+-- same file and no command reads it as an option. A `String` is not
+-- changed: it can be an option on purpose.
+
+let dash = Path.of_string "-rf"
+
+test "a Path that starts with - gets ./ in front" (fn t -> t.eq "[./-rf]" (quoted! dash))
+
+test "and between the author's quotes" (fn t ->
+  t.eq
+    "[pre ./-rf post][pre ./-rf post]"
+    $(printf "[%s]" "pre %{dash} post" 'pre %{dash} post'))
+
+test "and as an element of a list" (fn t ->
+  t.eq
+    "[./-rf][./-a][/-b][./c]"
+    (quoted! [dash, Path.of_string "./-a", Path.of_string "/-b", ./c]))
+
+test "a String that starts with - is not changed" (fn t -> t.eq "[-rf]" (quoted! "-rf"))
+
+test "the file is the same file" (fn t ->
+  with FS.temp_dir "dash_" as dir -> (
+    FS.write_file! (Path.join dir dash) "x";
+    t.eq "x" $(cd %{dir} && cat %{dash})
+  ))
