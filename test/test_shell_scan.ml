@@ -420,8 +420,46 @@ let test_control_bytes () =
        Alcotest.failf "the diagnostic still carries a raw ESC: %S" m
    | Ok v -> Alcotest.failf "expected a refusal, got %s" v)
 
+(* The spawn reads a resolved command line again, with every value in it, so
+   the scan must take a time in proportion to the length of the line (#176).
+   A value of many `'` read the whole word again at each one: 20,000 of them
+   took the scan most of a second, and 100,000 took it minutes. *)
+let test_large_values () =
+  let timed label limit f =
+    let t = Unix.gettimeofday () in
+    let r = f () in
+    let took = Unix.gettimeofday () -. t in
+    if took > limit then
+      Alcotest.failf "%s: the scan took %.2f s, more than %.1f s" label took limit;
+    r
+  in
+  let q = Evaluator.shell_quote in
+  let words text = (scan_string text).words in
+  Alcotest.(check (list word)) "a value of 1 MB of x"
+    [Literal "git"; Literal "wc"]
+    (timed "x" 1.0 (fun () ->
+       words ("git log " ^ q (String.make 1_000_000 'x') ^ " | wc -c")));
+  Alcotest.(check (list word)) "a value of 200,000 quotes"
+    [Literal "git"; Literal "wc"]
+    (timed "quotes" 1.0 (fun () ->
+       words ("git log " ^ q (String.make 200_000 '\'') ^ " | wc -c")));
+  Alcotest.(check (list word)) "an assignment value of 200,000 quotes"
+    [Literal "git"]
+    (timed "assignment" 1.0 (fun () ->
+       words ("X=" ^ q (String.make 200_000 '\'') ^ " git log")));
+  (* The same, end to end, under a narrowed manifest, which is where the
+     spawn scans the line. *)
+  run "a long value of quotes reaches the command whole"
+    "uses {Shell(printf, wc)}\nimport String\n\
+     let v = String.repeat 200000 \"'\"\n\
+     String.trim $(printf %s %{v} | wc -c)"
+    "200000"
+
 let () =
   Alcotest.run "shell scan" [
+    "large values", [
+      Alcotest.test_case "the scan is linear" `Quick test_large_values;
+    ];
     "arithmetic", [
       Alcotest.test_case "closing early is a command" `Quick
         test_arithmetic_that_closes_early_is_checked;

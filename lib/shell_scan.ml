@@ -146,18 +146,26 @@ let settle cmd prev next ctx =
   else ctx
 
 (* One command template's atoms, holes kept apart from the text so look-ahead
-   can step over one without reading into it. *)
-type atom = Ch of char | Hole of int
-
-let atoms_of (segs : seg list) : atom array * bool array =
-  let atoms = ref [] and raws = ref [] and k = ref 0 in
+   can step over one without reading into it. A character is its code, and
+   hole `k` is `-(k + 1)`. An array of unboxed ints, and not a list of boxed
+   atoms, because a resolved command line can hold a value of a megabyte, and
+   the spawn reads it again (#176). *)
+let atoms_of (segs : seg list) : int array * bool array =
+  let len = List.fold_left (fun n seg ->
+      match seg with Lit s -> n + String.length s | _ -> n + 1) 0 segs in
+  let atoms = Array.make len 0 in
+  let nholes = List.fold_left (fun n seg ->
+      match seg with Lit _ -> n | _ -> n + 1) 0 segs in
+  let raws = Array.make nholes false in
+  let j = ref 0 and k = ref 0 in
   List.iter (fun seg ->
     match seg with
-    | Lit s -> String.iter (fun c -> atoms := Ch c :: !atoms) s
-    | QuotedHole -> atoms := Hole !k :: !atoms; raws := false :: !raws; incr k
-    | RawHole    -> atoms := Hole !k :: !atoms; raws := true  :: !raws; incr k)
+    | Lit s ->
+      String.iter (fun c -> atoms.(!j) <- Char.code c; incr j) s
+    | QuotedHole | RawHole ->
+      atoms.(!j) <- -(!k + 1); raws.(!k) <- (seg = RawHole); incr j; incr k)
     segs;
-  (Array.of_list (List.rev !atoms), Array.of_list (List.rev !raws))
+  (atoms, raws)
 
 (* The scan, over the atoms of one command template. `stop_at_raw` is set for
    the word list: after a `%!{...}` the rest of the line is shell source
@@ -165,7 +173,7 @@ let atoms_of (segs : seg list) : atom array * bool array =
    set -- a raw splice is the author's own, and a `%{}` after it is still
    read for the quoting it needs, on the best-effort assumption the raw text
    left the quoting as it found it. *)
-let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
+let run (atoms : int array) (raws : bool array) ~stop_at_raw =
   let n = Array.length atoms in
   let words = ref [] in
   let buf = Buffer.create 16 in
@@ -195,13 +203,20 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
      `av=b`; the buffer holds the text with the quoting gone, and read alone
      it said assignment, which hid that command from the list. *)
   let name_plain = ref true in
+  (* Whether `mark_name` has settled `name_plain` for this word. Once it has,
+     the answer cannot change until the word ends, and asking again read the
+     whole word each time: a value of many `'` made the scan quadratic. *)
+  let name_settled = ref false in
   (* The command contexts open now, innermost first; the base frame is the
      line itself. *)
   let frames = ref [ new_frame () ] in
   let cur () = List.hd !frames in
   let in_arith () = (cur ()).arith in
   let mark_name () =
-    if not (String.contains (Buffer.contents buf) '=') then name_plain := false in
+    if not !name_settled then begin
+      name_settled := true;
+      if not (String.contains (Buffer.contents buf) '=') then name_plain := false
+    end in
   let assignment w = is_assignment w && !name_plain in
   (* The end of a simple command: each hole in it gets its context from the
      command and from the words on each side of it. *)
@@ -221,7 +236,7 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let dynamic = !has_hole in
     has_hole := false;
     let assign = assignment w in
-    name_plain := true;
+    name_plain := true; name_settled := false;
     let f = cur () in
     let counts = not (in_arith ()) && not (w = "" && not dynamic) in
     let text = if dynamic then "\000" else w in
@@ -284,7 +299,8 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let assign =
       value && !expecting && not !skip_target && not (in_arith ())
       && assignment (Buffer.contents buf) in
-    if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
+    if assign then (Buffer.clear buf; has_hole := false; name_plain := true;
+                     name_settled := false)
     else (if value then has_hole := true; finish_word ());
     let group = not bt && not arith && not value in
     frames := new_frame ~bt ~arith ~assign ~group () :: !frames;
@@ -304,7 +320,7 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     else expecting := false;
     at_word_start := true
   in
-  let at j = if j >= 0 && j < n then (match atoms.(j) with Ch c -> c | Hole _ -> '\000') else '\000' in
+  let at j = if j >= 0 && j < n && atoms.(j) >= 0 then Char.unsafe_chr atoms.(j) else '\000' in
   (* `$((...))` vs `$( (...) )`: the shell reads `$((` as arithmetic only
      when it closes with `))`. Look ahead over the atoms, counting parens
      from the two just opened and ignoring holes, to tell them apart before
@@ -314,13 +330,13 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let depth = ref 2 and j = ref start and prev = ref ' ' and prev2 = ref ' '
     and arith = ref false and stop = ref false in
     while not !stop && !j < n do
-      (match atoms.(!j) with
-       | Ch '(' -> incr depth; prev2 := !prev; prev := '('
-       | Ch ')' -> decr depth; prev2 := !prev; prev := ')';
+      (match at !j with
+       | '(' -> incr depth; prev2 := !prev; prev := '('
+       | ')' -> decr depth; prev2 := !prev; prev := ')';
          if !depth = 0 then
            (arith := (!prev = ')' && !prev2 = ')'); stop := true)
-       | Ch c -> prev2 := !prev; prev := c
-       | Hole _ -> prev2 := !prev; prev := 'x');
+       | '\000' -> prev2 := !prev; prev := 'x'
+       | c -> prev2 := !prev; prev := c);
       incr j
     done;
     !arith
@@ -346,8 +362,9 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
   let peek_ch k = at (!i + k) in
   (try
     while !i < n do
-      (match atoms.(!i) with
-       | Hole k ->
+      (let a = atoms.(!i) in
+       if a < 0 then begin
+         let k = -a - 1 in
          if raws.(k) then begin
            raw_tail := true;
            if stop_at_raw then begin
@@ -368,7 +385,8 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
            mark_name (); has_hole := true; at_word_start := false
          end;
          incr i
-       | Ch c ->
+       end else
+         let c = Char.unsafe_chr a in
          (match !hd_active with
           | Some delim ->
             (* In a heredoc body: match the delimiter line, and keep the
