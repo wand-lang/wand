@@ -144,6 +144,13 @@ let seq_discard_types : (Token.loc * typ) list ref = ref []
    the lint that says so needs the type to tell the two apart. *)
 let wild_let_types : (Token.loc * typ) list ref = ref []
 
+(* Every `%{...}` and `%!{...}` in a command, with the type of its value
+   and where the value is written. A list in a bare `%{...}` is one argument
+   for each element; the cases where a list cannot go are read once the
+   whole file is inferred, since a parameter's type is often settled after
+   the command that uses it. *)
+let cmd_holes : (typ * Token.hole * Token.loc option) list ref = ref []
+
 (* `effect_of_operation` and `operation_types` are derived from the
    operations table, which needs `fresh` -- see "Effect operations" below. *)
 
@@ -5620,7 +5627,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
          anything else out of it; the value has to be an Int. *)
       match (h : Token.hole) with
       | Token.Arith -> unify_expected ~expected:TInt ~got:t
-      | _ -> ()) parts;
+      | _ -> cmd_holes := (t, h, loc_of_expr e) :: !cmd_holes) parts;
     TString
   | Seq (a, b) ->
     let ta = infer tenv env a in
@@ -7627,6 +7634,56 @@ and te_holds_shared tenv seen = function
   | Ast.TEQual (_, n) -> named_holds_shared tenv seen n
   | Ast.TEVar _ | Ast.TEFun _ -> false
 
+(* The `%!{` in front of a value written at `l`: the three characters, read
+   back from the source, with any space between the brace and the value. *)
+let source_splice_extent (l : Token.loc) =
+  match Hashtbl.find_opt Lexer.sources l.Token.file with
+  | None -> None
+  | Some src ->
+    let rec back i =
+      if i > 0 && (src.[i - 1] = ' ' || src.[i - 1] = '\t') then back (i - 1)
+      else i
+    in
+    let b = back l.Token.offset in
+    let gap = l.Token.offset - b in
+    if b >= 3 && String.sub src (b - 3) 3 = "%!{" && l.Token.col - gap > 3 then
+      Some { l with Token.col = l.Token.col - gap - 3;
+                    end_line = l.Token.line;
+                    end_col = l.Token.col - gap;
+                    offset = b - 3; end_offset = b }
+    else None
+
+(* A list in a command: a bare `%{xs}` gives one argument for each element,
+   and every other place a list can stand is refused here. A nested list
+   has no one argument for an element; between the author's quotes the
+   value is part of one word; and `%!{...}` would read every element as
+   shell source, which is the reading a list of file names must never get.
+   The last one has one correct form, and the fix writes it. *)
+let check_cmd_lists () =
+  List.iter (fun (t, (h : Token.hole), loc) ->
+    let fail msg =
+      match loc with
+      | Some l -> raise (TypeErrorAt (l, msg))
+      | None -> raise (TypeError msg)
+    in
+    match repr t, h with
+    | TList inner, _ when (match repr inner with TList _ -> true | _ -> false) ->
+      fail (Printf.sprintf
+        "%%{...} gives one argument for each element of a list, and this \
+         list holds lists (%s); flatten it first with List.flatten"
+        (string_of_typ t))
+    | TList _, Token.Inside _ ->
+      fail "a list in %{...} between quotes would be one word: take the \
+            quotes away to give one argument for each element, or join the \
+            list into one String"
+    | TList _, Token.Source ->
+      (match Option.bind loc source_splice_extent with
+       | Some at -> replace_fix at "%!{" "%{"
+       | None -> ());
+      fail "a list in %!{...} would read each element as shell source; \
+            write %{...} to give one quoted argument for each element"
+    | _ -> ()) (List.rev !cmd_holes)
+
 let check_shared_nesting tenv =
   List.iter (fun (t, loc) ->
     match repr t with
@@ -7662,6 +7719,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   current_item := -1;
   seq_discard_types := [];
   wild_let_types := [];
+  cmd_holes := [];
   last_shell_words := [];
   last_shell_static := true;
   last_shell_allow := None;
@@ -8203,6 +8261,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     else (implements_key, Mono (TModule claims)) :: own_env
   in
   check_shared_nesting tenv;
+  check_cmd_lists ();
   check_manifest prog own_env;
   (tenv, env, own_env, last_t)))
 

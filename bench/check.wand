@@ -11,7 +11,7 @@ import String
 
 let {langs, lang_name, extension, wand_exe, run_cases!} = import ./lib
 let {generate!} = import ./speed/gen
-let {disagreements!, tasks!} = import ./speed
+let {disagreements, tasks!} = import ./speed
 let {Truth, items!, sides} = import ./review
 
 -- The check for the benchmark. It runs nothing against a model. It checks
@@ -52,7 +52,7 @@ let author_problems! () =
 let speed_problems! () =
   with FS.temp_dir "bench_speed_" as data -> (
     generate! data 2000;
-    disagreements! data (tasks! None)
+    disagreements data (tasks! None)
     |> List.map (fn (task, outs) ->
       String.join "\n" ("speed/%{task}: the programs disagree" :: outs))
   )

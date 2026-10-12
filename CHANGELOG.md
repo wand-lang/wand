@@ -1,5 +1,26 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `%{xs}` in a command with a `List` gives one quoted argument for each element, as `"$@"` does, and an empty list gives no argument (#113).
+- A list that holds lists in `%{...}` is a type error (#113).
+- A list in `%{...}` between the author's own quotes is a type error (#113).
+- A list in `%!{...}` is a type error, and `wand t --fix` changes the `%!{` to `%{` (#113).
+
+### Changed
+
+- The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
+
+### Removed
+
+### Fixed
+
+### Documentation
+
+- The reference tells how a list goes into a command (#113).
+
 ## [0.105.0] - 2026-10-12
 
 ### Added

@@ -12,8 +12,9 @@
    manifest allows. *)
 
 (* One piece of a command template as written: literal text, a quoted
-   `%{...}` splice (always exactly one argument -- it cannot introduce
-   operators), or a raw `%!{...}` splice (shell source: everything after
+   `%{...}` splice (one argument, or one for each element of a list --
+   either way it cannot introduce operators, and in command position it is
+   a word the run decides), or a raw `%!{...}` splice (shell source: everything after
    it is data, structurally unknowable until the value arrives). *)
 type seg =
   | Lit of string

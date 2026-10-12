@@ -1545,6 +1545,38 @@ value in with `|>` instead). `[[ ... ]]` and `(( ... ))` read a word as a
 number the same way `$(( ))` does; a file that narrows `Shell(...)` cannot
 use `[[`, since no word list can bound what it evaluates.
 
+**A list gives one argument for each element.** `%{xs}` with a `List` puts
+each element in as one quoted argument, as `"$@"` does in a shell. An empty
+list gives no argument. This is how a command takes a number of arguments
+that the run decides:
+
+```ocaml
+let files = ["a b.txt", "c.txt"]
+$(wc -l %{files})           -- runs: wc -l 'a b.txt' 'c.txt'
+
+let none : List String = []
+$(ls %{none})               -- runs: ls
+```
+
+The elements can be of any type that `%{...}` takes as one argument:
+`String`, `Path`, `Int` and the others. Three places refuse a list, and the
+error says why:
+
+- A list that holds lists (`List (List String)`) has no one argument for an
+  element. Flatten it first.
+- A list between your own quotes (`"x %{xs}"`) would become part of one
+  word. Take the quotes away, or join the list into one `String`.
+- A list in `%!{...}` would make the shell read each element as source,
+  which is never right for a list of file names. `wand t --fix` changes the
+  `%!{` to `%{`.
+
+When the type of the value is not known until the run (a parameter that
+takes any type), the same rules are checked when the command is built.
+
+A list splice in the command-word position (`$(%{argv})`) is a command word
+that the run decides, as `%!{cmd}` is: under a narrowed `Shell(...)` it is
+checked when the command starts, and `V-SHELL1` reports it.
+
 **Raw interpolate — `%!{x}`.** wand puts the value into the command as shell
 source, and the shell reads it. Use this form for a value that holds several
 arguments, a pattern to expand, or a whole command:

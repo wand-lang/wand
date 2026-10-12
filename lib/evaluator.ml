@@ -2903,16 +2903,36 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     let buf = Buffer.create 32 in
     List.iter (fun (lit, e, h) ->
       Buffer.add_string buf lit;
-      let v = to_text (eval env e) in
-      Buffer.add_string buf
-        (match (h : Token.hole) with
-         | Token.Source    -> v
-         | Token.Arg       -> shell_quote v
-         | Token.Inside q  -> quote_within q v
-         (* The typechecker holds an arithmetic operand to `Int`, whose text
-            is digits and a sign -- nothing a shell reads -- so it goes in
-            as itself, where a quote would be a syntax error. *)
-         | Token.Arith     -> v)
+      match eval env e, (h : Token.hole) with
+      (* A list in a bare `%{...}` is one quoted argument for each element,
+         as `"$@"` is in a shell, and an empty list is no argument at all.
+         The typechecker refuses the other cases where it knows the type;
+         these are the ones it could not see, as a parameter that takes
+         any type. *)
+      | VList vs, Token.Arg ->
+        Buffer.add_string buf (String.concat " " (List.map (fun v ->
+          match v with
+          | VList _ -> raise (EvalError
+              "%{...} takes a list of values, one argument for each, and \
+               this list holds a list; flatten it first")
+          | v -> shell_quote (to_text v)) vs))
+      | VList _, Token.Inside _ -> raise (EvalError
+          "a list in %{...} between quotes would be one word; take the \
+           quotes away to give one argument for each element")
+      | VList _, Token.Source -> raise (EvalError
+          "a list in %!{...} would be read as shell source; write %{...} to \
+           give one quoted argument for each element")
+      | v, h ->
+        let v = to_text v in
+        Buffer.add_string buf
+          (match h with
+           | Token.Source    -> v
+           | Token.Arg       -> shell_quote v
+           | Token.Inside q  -> quote_within q v
+           (* The typechecker holds an arithmetic operand to `Int`, whose
+              text is digits and a sign -- nothing a shell reads -- so it
+              goes in as itself, where a quote would be a syntax error. *)
+           | Token.Arith     -> v)
     ) parts;
     Buffer.add_string buf tail;
     VString (Buffer.contents buf)

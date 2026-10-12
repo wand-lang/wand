@@ -772,8 +772,22 @@ let test_missing_imports_not_reported () =
   Alcotest.(check (list string)) "a type and a pattern" ["import Digest"]
     (names "let f (x: Digest.Algorithm) =\n  match x with\n  | Digest.Sha256 -> 1\n  | _ -> 2\n")
 
+(* A list in `%!{...}` would read each element as shell source. The one
+   form that gives the elements as arguments is `%{...}`, and the fix
+   writes it -- the space inside the brace is kept. *)
+let test_list_in_a_raw_splice () =
+  let (fixed, applied) =
+    fix "uses {Shell(printf)}\nlet xs = [\"a\"]\nlet r = $(printf \"[%s]\" %!{ xs })\n" in
+  Alcotest.(check string) "%!{ becomes %{"
+    "uses {Shell(printf)}\nlet xs = [\"a\"]\nlet r = $(printf \"[%s]\" %{ xs })\n"
+    fixed;
+  Alcotest.(check (list string)) "via the E-TYPE fix" ["E-TYPE"] (codes applied)
+
 let () =
   Alcotest.run "fix" [
+    "a list in a command", [
+      Alcotest.test_case "raw splice" `Quick test_list_in_a_raw_splice;
+    ];
     "manifest", [
       Alcotest.test_case "created"        `Quick test_manifest_created;
       Alcotest.test_case "after shebang"  `Quick test_manifest_after_shebang;

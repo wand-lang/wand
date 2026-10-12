@@ -171,3 +171,28 @@ test "and try reports what to change" (fn t -> (
   | Ok _ -> t.fail "expected a refusal"
   | Error why -> t.ok (String.contains? "NUL byte" why)
 ))
+
+-- ── A list: one argument for each element ───────────────────────────────
+
+-- `%{xs}` with a List is `"$@"`: each element is quoted as one argument,
+-- and an empty list gives none. Before, the list's display went in as one
+-- argument, brackets and all.
+test "a list gives one argument for each element" (fn t ->
+  let xs = ["a b", "c"];
+  t.eq "[a b][c]" $(printf "[%s]" %{xs}))
+
+test "an empty list gives no argument" (fn t ->
+  let xs : List String = [];
+  t.eq "[x]" $(printf "[%s]" x %{xs}))
+
+test "a list of paths and a list of numbers" (fn t ->
+  t.eq "[./a][/c][1][2]" $(printf "[%s]" %{[./a, /c]} %{[1, 2]}))
+
+test "an element that holds a quote stays one argument" (fn t ->
+  t.eq "[it's][$(id)]" (quoted! ["it's", "$(id)"]))
+
+-- A parameter whose type the run decides is checked when the command is
+-- built: between the author's quotes a list would be one word.
+test "a list between quotes is refused" (fn t -> t.raises (fn () -> in_double! ["a", "b"]))
+
+test "a list in a raw splice is refused" (fn t -> t.raises (fn () -> raw! ["a", "b"]))

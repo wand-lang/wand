@@ -17,7 +17,7 @@ import Random
 import Result
 import String
 
-let {langs, lang_name, extension, wand_exe, start!} = import ./lib
+let {langs, lang_name, extension, wand_exe, start} = import ./lib
 let {generate!} = import ./speed/gen
 
 -- The speed benchmark: the same task in wand, Python and bash, on the same
@@ -61,15 +61,15 @@ let tasks! (prefix: Option String) =
 
 let absolute (p: Path) = if Path.absolute? p then p else Path.join (FS.cwd ()) p
 
-let run! (data: Path) (task: Path) lang =
-  start! lang (program task lang) data [Path.to_string data] ""
+let run (data: Path) (task: Path) lang =
+  start lang (program task lang) data [Path.to_string data] ""
 
 -- The tasks whose three programs disagree, or fail, on `data`, with what
 -- each printed. Empty when every task agrees.
-let disagreements! (data: Path) (ts: List Path) =
+let disagreements (data: Path) (ts: List Path) =
   ts
   |> List.filter_map (fn task ->
-    let outs = List.map (fn lang -> (lang, run! data task lang)) langs;
+    let outs = List.map (fn lang -> (lang, run data task lang)) langs;
     let failed = List.filter (fn (_, r) -> r.code != 0) outs;
     let answers = outs |> List.map (fn (_, r) -> r.stdout) |> List.unique;
     if List.empty? failed && List.length answers == 1 then None
@@ -82,14 +82,14 @@ let disagreements! (data: Path) (ts: List Path) =
 
 let ms d = Duration.to_ms d
 
-let timings! (data: Path) (ts: List Path) rounds =
+let timings (data: Path) (ts: List Path) rounds =
   let jobs = ts |> List.map (fn t -> List.map (fn l -> (t, l)) langs) |> List.flatten;
   List.range 1 rounds
   |> List.map (fn round -> (
     IO.println_err "round %{round} of %{rounds}";
     Random.shuffle jobs
     |> List.map (fn (task, lang) ->
-      let (took, _) = Clock.timed (fn () -> run! data task lang);
+      let (took, _) = Clock.timed (fn () -> run data task lang);
       ("%{task_name task} %{lang_name lang}", ms took))
   ))
   |> List.flatten
@@ -130,9 +130,9 @@ let main! () = (
   let ts = tasks! (Env.get "TASKS");
   IO.println_err "generating %{lines} lines in %{data}";
   generate! data lines;
-  match disagreements! data ts with
+  match disagreements data ts with
   | [] -> (
-    let best = timings! data ts rounds;
+    let best = timings data ts rounds;
     let date = DateTime.date_string (Clock.now ());
     let text = report date $(%{wand_exe} v) lines rounds ts best;
     FS.mkdir! ./bench/results;
