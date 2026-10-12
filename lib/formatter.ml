@@ -382,12 +382,12 @@ let rec emit_pat (p : pat) : string = match p with
   | PConstrNamed (c, kvs) ->
     (* Punned whenever the field already names its variable, the same rule a
        map pattern is printed under -- except where the pun would be the
-       only thing inside the parentheses. `M(a)` is the payload under that
-       name, not the field `a`: one identifier is the one shape the
-       declaration does not get to settle, so `M(a = a)` written that way
-       came back as a pattern of another kind and stopped typechecking. A
-       pun beside anything else is safe, because the `=` on its neighbour is
-       what says these are fields. *)
+       only thing inside the parentheses. `M(a)` is the field `a` only where
+       `M` has a field of that name (#115); where it does not, and `M` has
+       one field, it is that field under the name `a`. So `M(a = a)` in a
+       file that does not typecheck could come back as one that does, and
+       it is given back as written. A pun beside anything else is safe,
+       because the `=` on its neighbour is what says these are fields. *)
     let entry (k, p) =
       match p with PVar v when v = k -> k | _ -> k ^ " = " ^ emit_pat p
     in
@@ -419,7 +419,7 @@ let rec emit_pat (p : pat) : string = match p with
    `let a t.A = c` and `fn (e.T) -> s` as `fn e.T -> s`, neither of which
    parses. Unlike the binder case this holds in every position, because a
    parameter is never the head of anything. Found by test/fuzz. *)
-and emit_pat_atom (p : pat) : string = match p with
+and emit_pat_atom (p : pat) : string = match strip_pat p with
   | PConstr (_, _ :: _) | PConstrNamed _ | PConstrBare _ | PQualified _ ->
     "(" ^ emit_pat p ^ ")"
   | _ -> emit_pat p
@@ -439,7 +439,7 @@ and emit_pat_atom (p : pat) : string = match p with
    rewrote four lines of test/wand/test_typedef.wand, which is what said so.
    A tuple, a list and a map carry brackets of their own in either position
    and take no second pair. Found by test/fuzz, under three signatures. *)
-and emit_pat_binder (p : pat) : string = match p with
+and emit_pat_binder (p : pat) : string = match strip_pat p with
   | PQualified _ | PConstrNamed _ | PConstrBare _ | PConstr _ ->
     "(" ^ emit_pat p ^ ")"
   | _ -> emit_pat p
@@ -1698,9 +1698,13 @@ and emit_field indent e l =
     | Path _ | Glob _ | URL _ | EnvVar _ | Version _ -> true
     | _ -> false
   in
+  (* `B(x)` before a `.` reads as `B` applied to `(x).n`, so a single
+     bare name keeps the bracket around the construction (#115). *)
+  let one_bare_name = match e' with ConstrBare (_, [_]) -> true | _ -> false in
   let target =
     let t = emit_atom indent e' in
-    if lexeme_eats_the_dot || (numeric_literal && ends_in_a_digit t) then
+    if lexeme_eats_the_dot || one_bare_name
+       || (numeric_literal && ends_in_a_digit t) then
       bracket t
     else t
   in

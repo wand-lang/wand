@@ -4007,12 +4007,12 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     with_visible (List.map fst own) (fun () -> infer_pat tenv' inner t env)
   | PConstrBare (name, ids) ->
     let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
-    let named_fields =
+    let fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
-      | Some (_, ctor) -> List.exists (fun (dn, _) -> dn <> None) ctor.fields
-      | None -> false
+      | Some (_, ctor) -> List.map fst ctor.fields
+      | None -> []
     in
-    infer_pat tenv (Ast.constr_bare_reading ~named_fields name ids) t env
+    infer_pat tenv (Ast.constr_bare_reading ~fields name ids) t env
   | PConstrNamed (name, bindings) ->
     let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     (match find_ctor_in_tenv tenv name with
@@ -4949,12 +4949,12 @@ let rec infer tenv (env : env) (e : expr) : typ =
     end
   | ConstrBare (name, ids) ->
     let name = expr_ctor_name tenv name in
-    let named_fields =
+    let fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
-      | Some (_, ctor) -> List.exists (fun (dn, _) -> dn <> None) ctor.fields
-      | None -> false
+      | Some (_, ctor) -> List.map fst ctor.fields
+      | None -> []
     in
-    infer tenv env (Ast.constr_bare_construction ~named_fields name ids)
+    infer tenv env (Ast.constr_bare_construction ~fields name ids)
   | ConstrApp (name, fields, _) ->
     let name = expr_ctor_name tenv (ctor_name_for tenv name) in
     (match find_ctor_in_tenv tenv name with

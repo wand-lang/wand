@@ -26,6 +26,44 @@ let ok label src =
   | Ok _ -> ()
   | Error msg -> Alcotest.failf "%s: expected success, got: %s" label msg
 
+let value label src expected =
+  match Runner.run_string src with
+  | Ok v -> Alcotest.(check string) label expected v
+  | Error msg -> Alcotest.failf "%s: expected %s, got: %s" label expected msg
+
+(* ── One name alone puns (#115) ───────────────────────────────────────────── *)
+
+(* `Run(a, b)` punned and `Run(a)` did not: removing one field gave an
+   arity error with no line or column. One name alone is now the field of
+   that name, in a pattern, a parameter, a `let` and a construction. *)
+let run_t = "type Run(a: Int, b: Int, c: Int)\n"
+
+let test_one_name_puns () =
+  value "a parameter" (run_t ^ "let f (Run(a)) = a\nf (Run(a = 1, b = 2, c = 3))") "1";
+  value "a match arm" (run_t ^ "match Run(a = 1, b = 2, c = 3) with\n| Run(b) -> b") "2";
+  value "a let" (run_t ^ "let (Run(c)) = Run(a = 1, b = 2, c = 3)\nc") "3";
+  value "a construction"
+    "type R(a: Int, b: Int = 5)\nlet a = 1\nlet r = R(a)\nr.a + r.b" "6";
+  (* A record of one field gives that field to any one name. *)
+  value "one field, another name, in a pattern"
+    "type B(n: Int)\nmatch B(n = 4) with\n| B(x) -> x" "4";
+  value "one field, another name, in a construction"
+    "type B(n: Int)\nlet x = 4\n(B(x)).n" "4";
+  (* A constructor that does not name its fields keeps its payload. *)
+  value "Some" "match Some 3 with\n| Some(x) -> x\n| None -> 0" "3";
+  value "a payload" "type Box = Box String | Empty\nmatch Box \"s\" with\n| Box(s) -> s\n| Empty -> \"\"" "s";
+  (* A name that is none of the fields of a larger record is an error that
+     says so, at the pattern. *)
+  expect_error "another name, in a parameter"
+    (run_t ^ "let f (Run(x)) = x\nf (Run(a = 1, b = 2, c = 3))")
+    "2:8: constructor 'Run' has no field 'x'";
+  expect_error "another name, in a let"
+    (run_t ^ "let (Run(x)) = Run(a = 1, b = 2, c = 3)\nx")
+    "2:6: constructor 'Run' has no field 'x'";
+  expect_error "too few values, in a parameter"
+    (run_t ^ "let f (Run x) = x\nf (Run(a = 1, b = 2, c = 3))")
+    "2:8: constructor 'Run' expects 3 argument(s), got 1"
+
 (* ── OCaml ────────────────────────────────────────────────────────────────── *)
 
 (* `::` is cons. It used to be corrected to `:`, which is the drift rule
@@ -242,7 +280,8 @@ let test_foreign_members () =
 (* A constructor spelled as another language spells it. `Err` was the error
    met most often in the authoring benchmark (#129). The arm form is checked
    for where it points as well: it used to name 1:1, the start of the
-   `match`, and not the line the constructor is on. *)
+   `match`, and not the line the constructor is on. A constructor inside
+   another is placed at its own column. *)
 let test_foreign_constructors () =
   let result = "the constructors of Result are Ok and Error" in
   let option = "the constructors of Option are Some and None" in
@@ -253,7 +292,7 @@ let test_foreign_constructors () =
     ("3:3: unknown constructor 'Err' -- " ^ result);
   expect_error "Err in a nested pattern"
     "match Some (Ok 1) with\n| Some (Ok n) -> n\n| Some (Err _) -> 0\n| None -> 0"
-    "3:3: unknown constructor 'Err'";
+    "3:9: unknown constructor 'Err'";
   expect_error "Just" "let x = 1\nJust x"
     ("2:1: unknown constructor 'Just' -- " ^ option);
   expect_error "Nothing in a pattern"
@@ -349,6 +388,9 @@ let () =
       Alcotest.test_case "bash"          `Quick test_bash_interpolation;
       Alcotest.test_case "ruby"          `Quick test_ruby_interpolation;
       Alcotest.test_case "backtick %{"   `Quick test_backtick_literal_percent_brace;
+    ];
+    "issues", [
+      Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
     ];
     "wand's own past", [
       Alcotest.test_case "bracket maps" `Quick test_bracket_maps;

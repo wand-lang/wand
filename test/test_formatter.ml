@@ -532,6 +532,16 @@ let test_a_constructor_and_its_bracket_are_kept () =
       "let h = Ok (Some true)";
       "let k = Ok Some (true)" ]
 
+(* One name alone in a constructor's brackets is kept, since it can be the
+   field of that name (#115). *)
+let test_one_name_is_kept () =
+  List.iter (fun src -> fmt_eq src src src)
+    [ "let r = Run(a)";
+      "let f (Run(a)) = a";
+      "let v =\n  match r with\n  | Some(x) -> x\n  | None -> 0" ];
+  fmt_eq "a construction of one name before a field keeps its bracket"
+    "let n = (B(x)).n" "let n = (B(x)).n"
+
 (* The lines under a backtick are the string's own content. A value given a
    line of its own moves them one line down the page, and the backtick left
    above them says nothing the `=` did not. So a multi-line backtick string
@@ -2389,6 +2399,7 @@ let () =
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
       Alcotest.test_case "a constructor and its bracket are kept" `Quick
         test_a_constructor_and_its_bracket_are_kept;
+      Alcotest.test_case "one name is kept" `Quick test_one_name_is_kept;
       Alcotest.test_case "a guard is written with if" `Quick
         test_a_guard_is_written_with_if;
       Alcotest.test_case "a map literal pun is kept" `Quick

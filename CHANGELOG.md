@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
+
+### Changed
+
+- In a construction of a record of one field, one name that is not the field fills that field: `B(x)` is `B(n = x)` (#115).
+- `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
+
+### Removed
+
+### Fixed
+
+- An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
+- An error in a constructor pattern inside another pattern points at the inner constructor (#115).
+
+### Documentation
+
+- The reference says that one name alone puns (#115).
+
 ## [0.105.0] - 2026-10-12
 
 ### Added

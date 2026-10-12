@@ -877,10 +877,13 @@ let test_constr_named_pats () =
     (Match (Var "p", [
       (PConstrBare ("Point", ["x"; "y"]), None, Var "x")
     ]));
-  e "one identifier binds the payload either way"
+  (* One identifier is left to the declaration too (#115): `Circle(r)` is
+     the field `r` where `Circle` has one, and the payload where it has
+     not. *)
+  e "one identifier stays undecided"
     "match c with\n| Circle (r) -> r"
     (Match (Var "c", [
-      (PConstr ("Circle", [PVar "r"]), None, Var "r")
+      (PConstrBare ("Circle", ["r"]), None, Var "r")
     ]));
   e "a pun beside a named field"
     "match p with\n| Point(x, y = b) -> x"
