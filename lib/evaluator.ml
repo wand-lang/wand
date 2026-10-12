@@ -2,6 +2,14 @@ open Ast
 
 module StrMap = Map.Make (String)
 
+(* A hash table keyed by text, which hashes and compares the bytes directly
+   rather than through the generic functions every value goes through. *)
+module StrTbl = Hashtbl.Make (struct
+  type t = string
+  let equal = String.equal
+  let hash (s : string) = Hashtbl.hash s
+end)
+
 
 (* ── Constructor field name registry ─────────────────────────────────────── *)
 
@@ -5345,8 +5353,14 @@ type live_stage =
      equal, `wand_equal` decides among them. This was a `value list ref`
      scanned end to end for every item, so a stream of n distinct elements
      cost n^2/2 comparisons -- 20,000 unique lines took six seconds and
-     200,000 would have taken about ten minutes. *)
-  | LUnique    of (value, value list) Hashtbl.t
+     200,000 would have taken about ten minutes.
+
+     A stream holds one type, so when that type is String the second table
+     is the one in use: a String is its own key and `wand_equal` on two of
+     them is the equality of their bytes, so the table can hash and compare
+     the text directly instead of going through the generic hash and
+     comparison of a `value`. *)
+  | LUnique    of (value, value list) Hashtbl.t * unit StrTbl.t
 
 let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
   let (pull, close) = stream_provider desc.s_source in
@@ -5362,7 +5376,7 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     | StIndexed     -> LIndexed (ref 0)
     | StScan (f, init) -> LScan (f, ref init)
     | StChunks n    -> LChunks (n, ref [])
-    | StUnique      -> LUnique (Hashtbl.create 64)) desc.s_stages
+    | StUnique      -> LUnique (Hashtbl.create 64, StrTbl.create 64)) desc.s_stages
   in
   (* A gate that closes ends the read: nothing later can pass it, so there is
      nothing left to pull for. `take 100` of a 10GB file reads 100 lines. *)
@@ -5403,7 +5417,10 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
       if List.length !held >= n then
         (let full = List.rev !held in held := []; [VList full])
       else []
-    | LUnique seen ->
+    | LUnique (_, seen_text) when (match x with VString _ -> true | _ -> false) ->
+      let k = match x with VString k -> k | _ -> assert false in
+      if StrTbl.mem seen_text k then [] else (StrTbl.replace seen_text k (); [x])
+    | LUnique (seen, _) ->
       let k = eq_key x in
       let bucket = match Hashtbl.find seen k with
         | b -> b
@@ -5426,6 +5443,36 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     | [] -> List.iter on_item vs
     | st :: rest -> push rest (List.concat_map (step st) vs)
   in
+  (* One item through the stages, without a list around it. Every stage
+     but `flat_map` and `chunks` passes on at most the one item it is given,
+     and for those `push` built a list of one at every stage of every item
+     to carry it, then took it apart again. This hands the item straight to
+     the next stage, so an item that goes through three stages allocates
+     nothing of its own here.
+
+     It runs the same calls in the same order as `push`: with one item in
+     hand, `push` does exactly this. Where a stage can give back more than
+     one, the rest of the way is `push`, so the stages after a `flat_map`
+     still see what it gave back as one list, as they did before. *)
+  let rec push_one stages x =
+    match stages with
+    | [] -> on_item x
+    | st :: rest ->
+      (match st with
+       | LMap f -> push_one rest (apply f x)
+       | LFilter f -> if bool_of "filter" (apply f x) then push_one rest x
+       | LFilterMap f ->
+         (match apply f x with
+          | VConstr (c, [v]) when Ctor.name c = "Some" -> push_one rest v
+          | VConstr (c, []) when Ctor.name c = "None" -> ()
+          | _ -> raise (EvalError "Stream.filter_map: the function must return an Option"))
+       | LFlatMap _ | LChunks _ -> push rest (step st x)
+       | _ ->
+         (match step st x with
+          | [] -> ()
+          | [y] -> push_one rest y
+          | ys -> push rest ys))
+  in
   (* Innermost first: what one stage lets go still has the stages after it to
      pass through, and they may be holding something of their own. *)
   let rec flush_from stages =
@@ -5447,7 +5494,7 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     while not !stop do
       match pull () with
       | None -> stop := true; exhausted := true
-      | Some v -> push stages [v]
+      | Some v -> push_one stages v
     done;
     (* A stream that stopped early is not owed its buffers: `take 3` asked
        for three items, not for three and a part-filled chunk. *)

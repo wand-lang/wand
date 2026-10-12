@@ -22,6 +22,8 @@
 - `String.words` is faster (#122).
 - `String.split` with a delimiter of one character is faster (#122).
 - `String.lines` is faster (#122).
+- `Stream.unique` over a stream of `String` is faster (#122).
+- A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
 
 ### Fixed
 
