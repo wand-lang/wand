@@ -2,6 +2,14 @@ open Ast
 
 module StrMap = Map.Make (String)
 
+(* A hash table keyed by text, which hashes and compares the bytes directly
+   rather than through the generic functions every value goes through. *)
+module StrTbl = Hashtbl.Make (struct
+  type t = string
+  let equal = String.equal
+  let hash (s : string) = Hashtbl.hash s
+end)
+
 
 (* ── Constructor field name registry ─────────────────────────────────────── *)
 
@@ -231,7 +239,13 @@ let map_put kvs key v =
    `get_object` hands back -- so a document cannot say different things to
    two readers of the same program. *)
 let assoc_last key kvs =
-  List.fold_left (fun found (k, v) -> if String.equal k key then Some v else found) None kvs
+  (* A loop of its own rather than `List.fold_left`, which called a closure
+     for every key of every object a decoder read. *)
+  let rec go found = function
+    | [] -> found
+    | (k, v) :: rest -> go (if String.equal k key then Some v else found) rest
+  in
+  go None kvs
 
 let find_field_index names label =
   let rec go i = function
@@ -3714,22 +3728,30 @@ let str_split_impl delim str =
   let slen = String.length str in
   if dlen = 0 then
     List.init slen (fun i -> VString (String.make 1 str.[i]))
-  else begin
+  else if dlen = 1 then begin
+    (* A one-character delimiter is the common case -- every split on a
+       space or a comma. Read from the end, so that each field goes on the
+       front of the list in its final place: building it forwards and then
+       reversing it allocated the list twice. A match of one character
+       cannot overlap another, so the direction does not change the
+       fields. *)
+    let c = String.unsafe_get delim 0 in
+    let acc = ref [] and stop = ref slen in
+    for i = slen - 1 downto 0 do
+      if String.unsafe_get str i = c then begin
+        acc := VString (String.sub str (i + 1) (!stop - i - 1)) :: !acc;
+        stop := i
+      end
+    done;
+    VString (String.sub str 0 !stop) :: !acc
+  end else begin
+    (* A longer delimiter can overlap itself -- "aa" in "aaa" -- and the
+       match on the left wins, so this one reads forwards. *)
     let result = ref [] in
     let start = ref 0 in
     let i = ref 0 in
-    (* A one-character delimiter is the common case -- every `String.lines`
-       and every split on a space or a comma -- and testing it with
-       `String.sub` allocates a one-byte string per position in the input.
-       Splitting a 17MB log on " " allocated 17MB of them. *)
-    let matches_at =
-      if dlen = 1 then
-        let c = delim.[0] in
-        fun i -> str.[i] = c
-      else fun i -> str_matches_at delim dlen str i
-    in
     while !i <= slen - dlen do
-      if matches_at !i then begin
+      if str_matches_at delim dlen str !i then begin
         result := VString (String.sub str !start (!i - !start)) :: !result;
         i := !i + dlen;
         start := !i
@@ -3743,7 +3765,8 @@ let str_split_impl delim str =
 (* The whitespace `String.words` separates on. Written out rather than
    `Char.is_whitespace` so that what counts is visible and fixed: these are
    the four the wand-level version replaced before it split. *)
-let is_word_space = function ' ' | '\t' | '\n' | '\r' -> true | _ -> false
+let[@inline] is_word_space c =
+  Char.code c <= 32 && (c = ' ' || c = '\t' || c = '\n' || c = '\r')
 
 (* One pass, and it allocates only the words it returns.
 
@@ -3759,30 +3782,36 @@ let is_word_space = function ' ' | '\t' | '\n' | '\r' -> true | _ -> false
    end, and nearly every file ends in a newline. *)
 let str_lines_impl str =
   let slen = String.length str in
-  let result = ref [] and start = ref 0 in
-  for i = 0 to slen - 1 do
-    if str.[i] = '\n' then begin
-      result := VString (String.sub str !start (i - !start)) :: !result;
-      start := i + 1
-    end
-  done;
-  if !start < slen then
-    result := VString (String.sub str !start (slen - !start)) :: !result;
-  List.rev !result
+  if slen = 0 then []
+  else begin
+    (* From the end, for the reason `str_split_impl` gives: each line is
+       made in its final place and nothing is reversed. *)
+    let stop = ref (if String.unsafe_get str (slen - 1) = '\n' then slen - 1 else slen) in
+    let acc = ref [] in
+    for i = !stop - 1 downto 0 do
+      if String.unsafe_get str i = '\n' then begin
+        acc := VString (String.sub str (i + 1) (!stop - i - 1)) :: !acc;
+        stop := i
+      end
+    done;
+    VString (String.sub str 0 !stop) :: !acc
+  end
 
 let str_words_impl str =
-  let slen = String.length str in
-  let result = ref [] in
-  let i = ref 0 in
-  while !i < slen do
-    while !i < slen && is_word_space str.[!i] do incr i done;
-    if !i < slen then begin
-      let start = !i in
-      while !i < slen && not (is_word_space str.[!i]) do incr i done;
-      result := VString (String.sub str start (!i - start)) :: !result
+  (* From the end, so each word goes on the front of the list in its final
+     place: a seven-word line made fourteen list cells and threw half of
+     them away. *)
+  let acc = ref [] in
+  let i = ref (String.length str - 1) in
+  while !i >= 0 do
+    while !i >= 0 && is_word_space (String.unsafe_get str !i) do decr i done;
+    if !i >= 0 then begin
+      let stop = !i + 1 in
+      while !i >= 0 && not (is_word_space (String.unsafe_get str !i)) do decr i done;
+      acc := VString (String.sub str (!i + 1) (stop - !i - 1)) :: !acc
     end
   done;
-  List.rev !result
+  !acc
 
 (* The nth whitespace-separated word, without building the others.
    `List.get! n (String.words s)` allocates a string per word, a cons per
@@ -5330,8 +5359,14 @@ type live_stage =
      equal, `wand_equal` decides among them. This was a `value list ref`
      scanned end to end for every item, so a stream of n distinct elements
      cost n^2/2 comparisons -- 20,000 unique lines took six seconds and
-     200,000 would have taken about ten minutes. *)
-  | LUnique    of (value, value list) Hashtbl.t
+     200,000 would have taken about ten minutes.
+
+     A stream holds one type, so when that type is String the second table
+     is the one in use: a String is its own key and `wand_equal` on two of
+     them is the equality of their bytes, so the table can hash and compare
+     the text directly instead of going through the generic hash and
+     comparison of a `value`. *)
+  | LUnique    of (value, value list) Hashtbl.t * unit StrTbl.t
 
 let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
   let (pull, close) = stream_provider desc.s_source in
@@ -5347,7 +5382,7 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     | StIndexed     -> LIndexed (ref 0)
     | StScan (f, init) -> LScan (f, ref init)
     | StChunks n    -> LChunks (n, ref [])
-    | StUnique      -> LUnique (Hashtbl.create 64)) desc.s_stages
+    | StUnique      -> LUnique (Hashtbl.create 64, StrTbl.create 64)) desc.s_stages
   in
   (* A gate that closes ends the read: nothing later can pass it, so there is
      nothing left to pull for. `take 100` of a 10GB file reads 100 lines. *)
@@ -5388,7 +5423,10 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
       if List.length !held >= n then
         (let full = List.rev !held in held := []; [VList full])
       else []
-    | LUnique seen ->
+    | LUnique (_, seen_text) when (match x with VString _ -> true | _ -> false) ->
+      let k = match x with VString k -> k | _ -> assert false in
+      if StrTbl.mem seen_text k then [] else (StrTbl.replace seen_text k (); [x])
+    | LUnique (seen, _) ->
       let k = eq_key x in
       let bucket = match Hashtbl.find seen k with
         | b -> b
@@ -5411,6 +5449,36 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     | [] -> List.iter on_item vs
     | st :: rest -> push rest (List.concat_map (step st) vs)
   in
+  (* One item through the stages, without a list around it. Every stage
+     but `flat_map` and `chunks` passes on at most the one item it is given,
+     and for those `push` built a list of one at every stage of every item
+     to carry it, then took it apart again. This hands the item straight to
+     the next stage, so an item that goes through three stages allocates
+     nothing of its own here.
+
+     It runs the same calls in the same order as `push`: with one item in
+     hand, `push` does exactly this. Where a stage can give back more than
+     one, the rest of the way is `push`, so the stages after a `flat_map`
+     still see what it gave back as one list, as they did before. *)
+  let rec push_one stages x =
+    match stages with
+    | [] -> on_item x
+    | st :: rest ->
+      (match st with
+       | LMap f -> push_one rest (apply f x)
+       | LFilter f -> if bool_of "filter" (apply f x) then push_one rest x
+       | LFilterMap f ->
+         (match apply f x with
+          | VConstr (c, [v]) when Ctor.name c = "Some" -> push_one rest v
+          | VConstr (c, []) when Ctor.name c = "None" -> ()
+          | _ -> raise (EvalError "Stream.filter_map: the function must return an Option"))
+       | LFlatMap _ | LChunks _ -> push rest (step st x)
+       | _ ->
+         (match step st x with
+          | [] -> ()
+          | [y] -> push_one rest y
+          | ys -> push rest ys))
+  in
   (* Innermost first: what one stage lets go still has the stages after it to
      pass through, and they may be holding something of their own. *)
   let rec flush_from stages =
@@ -5432,7 +5500,7 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     while not !stop do
       match pull () with
       | None -> stop := true; exhausted := true
-      | Some v -> push stages [v]
+      | Some v -> push_one stages v
     done;
     (* A stream that stopped early is not owed its buffers: `take 3` asked
        for three items, not for three and a part-filled chunk. *)
@@ -8100,10 +8168,13 @@ and type_json_kind (te : type_expr) =
   | _ -> None
 
 (* A builtin decoder, by the name it is registered under. *)
-and scalar_decoder name j path =
-  match List.assoc_opt name !decode_registry with
-  | Some (VDecoder d) -> d j path
-  | _ -> raise (EvalError ("derive: no builtin decoder " ^ name))
+and scalar_decoder name =
+  (* By the table, which compares the text directly: `List.assoc_opt` over
+     the registry compared each name with the generic comparison, once for
+     every field of every record a derived decoder read. *)
+  match StrTbl.find_opt decode_index name with
+  | Some d -> d
+  | None -> (fun _ _ -> raise (EvalError ("derive: no builtin decoder " ^ name)))
 
 (* `by_name` reads each field by its name rather than by its key in a
    document: a command line's flags are the fields' names. *)
@@ -8119,12 +8190,20 @@ and derived_decoder ?(by_name = false) tname arg_decoders j path =
           "'%s' takes %d type argument(s)" tname (List.length params)))
     in
     let defaults = defaults_of ctor in
+    (* The keys are looked up once for the record, and the scope a default
+       is read in only when a field is absent: it was made again for every
+       field of every record. *)
+    let keys = if by_name then None else Hashtbl.find_opt constr_keys ctor in
+    let scope () = default_scope ctor in
     let rec go acc = function
       | [] -> Ok (VConstr (ctor, List.rev acc))
       | (fname, te) :: rest ->
         let name = match fname with Some n -> n | None -> "" in
-        let key = if by_name then name else doc_key ctor name in
-        (match read_field venv ~defaults ~scope:(default_scope ctor) ~name key te j path with
+        let key = match keys with
+          | Some ks -> Option.value (List.assoc_opt name ks) ~default:name
+          | None -> name
+        in
+        (match read_field venv ~defaults ~scope ~name key te j path with
          | Ok v      -> go (v :: acc) rest
          | Error msg -> Error msg)
     in
@@ -8147,7 +8226,7 @@ and read_field venv ?(defaults = []) ?scope ?name key te j path =
   let absent () =
     match List.assoc_opt name defaults with
     | Some d ->
-      Some (eval (match scope with Some s -> s | None -> ctor_env ()) d)
+      Some (eval (match scope with Some s -> s () | None -> ctor_env ()) d)
     | None -> None
   in
   match te with
@@ -8409,6 +8488,11 @@ and decoder_value tname =
     collect (List.length params) []
 
 and decode_registry : env ref = ref []
+
+(* The decoders of `decode_registry` by name, the first of each name. Filled
+   once, where the registry is. *)
+and decode_index : (Yojson.Basic.t -> string list -> (value, string) result) StrTbl.t =
+  StrTbl.create 32
 
 let as_decoder who = function
   | VDecoder d -> d
@@ -8733,7 +8817,12 @@ let decode_builtins : env = [
 
 (* Derivation reaches the builtin decoders by name, so it needs them after
    they are defined rather than while they are being defined. *)
-let () = decode_registry := decode_builtins
+let () =
+  decode_registry := decode_builtins;
+  List.iter (fun (name, v) ->
+    match v with
+    | VDecoder d when not (StrTbl.mem decode_index name) -> StrTbl.add decode_index name d
+    | _ -> ()) decode_builtins
 let () = derive_decoder := decoder_value
 let () = derive_encoder := encoder_value
 

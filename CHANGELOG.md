@@ -25,6 +25,12 @@
 - The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
 - The benchmark harness writes its long `claude -p` command over several lines (#114).
 - The speed benchmark task `03-slowest` uses `Stream.smallest_by` and does not sort all the lines (#121).
+- `String.words` is faster (#122).
+- `String.split` with a delimiter of one character is faster (#122).
+- `String.lines` is faster (#122).
+- `Stream.unique` over a stream of `String` is faster (#122).
+- A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
+- A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
 
 ### Fixed
 

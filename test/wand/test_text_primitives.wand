@@ -1,0 +1,238 @@
+uses {FS.Read, FS.Write}
+
+import FS
+import Int
+import Map
+import Path
+import Stream
+import String
+
+let {test} = import Test
+
+-- These pin what the text and stream primitives answer at their edges, so
+-- that a faster implementation is held to the same answers as the one it
+-- replaced.
+
+-- ── words ───────────────────────────────────────────────────────────────
+
+test "words: a single word" (fn t -> t.eq ["a"] (String.words "a"))
+
+test "words: empty text" (fn t -> t.eq [] (String.words ""))
+
+test "words: carriage returns separate" (fn t -> t.eq ["a", "b"] (String.words "a\r\nb\r"))
+
+-- Only space, tab, newline and carriage return separate. A no-break space,
+-- a vertical tab and a form feed are part of a word.
+test "words: other whitespace is part of a word" (fn t ->
+  t.eq ["a b\x0bc\x0cd"] (String.words "a b\x0bc\x0cd"))
+
+test "words: multi-byte characters stay whole" (fn t ->
+  t.eq ["café", "naïve"] (String.words " café\tnaïve "))
+
+test "words: a log line" (fn t ->
+  t.eq
+    ["2026-10-01T15:08:04Z", "WARN", "billing:", "disk", "91%", "full", "ip=10.3.15.15"]
+    (String.words "2026-10-01T15:08:04Z WARN billing: disk 91% full ip=10.3.15.15"))
+
+-- ── split ───────────────────────────────────────────────────────────────
+
+test "split: empty fields at both ends and between" (fn t ->
+  t.eq ["", "a", "", "b", ""] (String.split "," ",a,,b,"))
+
+test "split: empty text is one empty field" (fn t -> t.eq [""] (String.split "," ""))
+
+test "split: the delimiter alone is two empty fields" (fn t ->
+  t.eq ["", ""] (String.split "," ","))
+
+test "split: a longer delimiter matches from the left" (fn t ->
+  t.eq ["", "ax", ""] (String.split "aa" "aaaxaa"))
+
+test "split: a delimiter longer than the text" (fn t ->
+  t.eq ["ab"] (String.split "abc" "ab"))
+
+test "split: an empty delimiter gives each byte" (fn t ->
+  t.eq ["a", "b", "c"] (String.split "" "abc"))
+
+test "split: an empty delimiter on empty text" (fn t -> t.eq [] (String.split "" ""))
+
+-- ── lines ───────────────────────────────────────────────────────────────
+
+test "lines: a carriage return stays on its line" (fn t ->
+  t.eq ["a\r", "b\r"] (String.lines "a\r\nb\r"))
+
+test "lines: two newlines are two empty lines" (fn t -> t.eq ["", ""] (String.lines "\n\n"))
+
+-- ── starts_with? / contains? ────────────────────────────────────────────
+
+test "starts_with?: an empty prefix" (fn t -> t.ok (String.starts_with? "" "abc"))
+
+test "starts_with?: a prefix longer than the text" (fn t ->
+  t.eq false (String.starts_with? "abcd" "abc"))
+
+test "starts_with?: the whole text" (fn t -> t.ok (String.starts_with? "abc" "abc"))
+
+test "contains?: an empty needle" (fn t -> t.ok (String.contains? "" ""))
+
+test "contains?: at the end" (fn t -> t.ok (String.contains? "ERROR" "a b ERROR"))
+
+test "contains?: a near miss at the end" (fn t -> t.eq false (String.contains? "ab" "xxa"))
+
+-- ── slice ───────────────────────────────────────────────────────────────
+
+test "slice: bounds are clamped" (fn t -> t.eq "abc" (String.slice (0 - 2) 100 "abc"))
+
+test "slice: an end before the start is empty" (fn t -> t.eq "" (String.slice 3 1 "abc"))
+
+test "slice: a start past the end is empty" (fn t -> t.eq "" (String.slice 9 12 "abc"))
+
+test "slice: by byte" (fn t -> t.eq "\xa9" (String.slice 1 2 "é"))
+
+-- ── trim ────────────────────────────────────────────────────────────────
+
+test "trim: a form feed is trimmed and a vertical tab is not" (fn t ->
+  t.eq "\x0b a" (String.trim "\x0b a \x0c"))
+
+test "trim: nothing to trim" (fn t -> t.eq "a b" (String.trim "a b"))
+
+test "trim: only whitespace" (fn t -> t.eq "" (String.trim " \t\r\n "))
+
+-- ── Int.of_string ───────────────────────────────────────────────────────
+
+test "of_string: whitespace around is trimmed" (fn t ->
+  t.eq [Ok 42, Ok 7] [Int.of_string " 42\n", Int.of_string "\x0c7\t"])
+
+test "of_string: leading zeros and minus zero" (fn t ->
+  t.eq [Ok 7, Ok 0, Ok (0 - 12)] [
+    Int.of_string "007",
+    Int.of_string "-0",
+    Int.of_string "-12"
+  ])
+
+test "of_string: the smallest Int" (fn t ->
+  t.eq (Ok Int.min_value) (Int.of_string "-4611686018427387904"))
+
+test "of_string: the largest Int" (fn t ->
+  t.eq (Ok Int.max_value) (Int.of_string "4611686018427387903"))
+
+test "of_string: one past the largest Int" (fn t ->
+  t.eq
+    (Error `cannot parse "4611686018427387904" as Int`)
+    (Int.of_string "4611686018427387904"))
+
+test "of_string: one past the smallest Int" (fn t ->
+  t.eq
+    (Error `cannot parse "-4611686018427387905" as Int`)
+    (Int.of_string "-4611686018427387905"))
+
+test "of_string: far too many digits" (fn t ->
+  t.eq
+    (Error `cannot parse "99999999999999999999999" as Int`)
+    (Int.of_string "99999999999999999999999"))
+
+test "of_string: what is not a decimal Int" (fn t ->
+  t.eq [
+    Error `cannot parse "+5" as Int`,
+    Error `cannot parse "-" as Int`,
+    Error `cannot parse "" as Int`,
+    Error `cannot parse "1_000" as Int`,
+    Error `cannot parse "--1" as Int`,
+    Error `cannot parse "- 1" as Int`,
+    Error `cannot parse "0x1F" as Int`,
+    Error `cannot parse "1 2" as Int`,
+    Error `cannot parse "\0111" as Int`
+  ] [
+    Int.of_string "+5",
+    Int.of_string "-",
+    Int.of_string "",
+    Int.of_string "1_000",
+    Int.of_string "--1",
+    Int.of_string "- 1",
+    Int.of_string "0x1F",
+    Int.of_string "1 2",
+    Int.of_string "\x0b1"
+  ])
+
+-- ── streams ─────────────────────────────────────────────────────────────
+
+test "unique: strings, the first of each in order" (fn t ->
+  t.eq
+    ["b", "a", "", "c"]
+    (Stream.of_list ["b", "a", "b", "", "c", "", "a"] |> Stream.unique |> Stream.to_list))
+
+test "unique: before a take, the take counts distinct values" (fn t ->
+  t.eq
+    ["x", "y"]
+    (Stream.of_list ["x", "x", "y", "y", "z"]
+    |> Stream.unique
+    |> Stream.take 2
+    |> Stream.to_list))
+
+test "unique: after a map, and counted" (fn t ->
+  t.eq
+    3
+    (Stream.of_list ["a1", "b2", "a3", "c4"]
+    |> Stream.map (String.slice 0 1)
+    |> Stream.unique
+    |> Stream.count))
+
+test "filter_map: keeps the Somes" (fn t ->
+  t.eq
+    [1, 3]
+    (Stream.of_list ["1", "x", "3"]
+    |> Stream.filter_map (fn s ->
+      match Int.of_string s with
+      | Ok n -> Some n
+      | Error _ -> None)
+    |> Stream.to_list))
+
+test "a stage after flat_map sees each element in order" (fn t ->
+  t.eq
+    [(0, "a"), (1, "b"), (2, "c")]
+    (Stream.of_list ["a b", "", "c"]
+    |> Stream.flat_map String.words
+    |> Stream.indexed
+    |> Stream.to_list))
+
+test "take after flat_map stops in the middle of an element" (fn t ->
+  t.eq
+    ["a", "b", "c"]
+    (Stream.of_list ["a b", "c d", "e"]
+    |> Stream.flat_map String.words
+    |> Stream.take 3
+    |> Stream.to_list))
+
+test "take 0 passes nothing" (fn t ->
+  t.eq [] (Stream.of_list [1, 2] |> Stream.take 0 |> Stream.to_list))
+
+test "chunks after flat_map flush the last group" (fn t ->
+  t.eq
+    [["a", "b"], ["c"]]
+    (Stream.of_list ["a b c"]
+    |> Stream.flat_map String.words
+    |> Stream.chunks 2
+    |> Stream.to_list))
+
+test "tally counts strings in the order first seen" (fn t ->
+  t.eq [("b", 2), ("a", 1)] (Stream.of_list ["b", "a", "b"] |> Stream.tally |> Map.to_list))
+
+test "stream_lines: empty lines, carriage returns and a last line with no newline" (fn t ->
+  with FS.temp_dir "tp_" as d -> (
+    let f = Path.join d ./a.txt;
+    FS.write_file! f "a\r\n\nb\n\nc";
+    t.eq ["a\r", "", "b", "", "c"] (FS.stream_lines f |> Stream.to_list)
+  ))
+
+test "stream_lines: an empty file has no lines" (fn t ->
+  with FS.temp_dir "tp_" as d -> (
+    let f = Path.join d ./a.txt;
+    FS.write_file! f "";
+    t.eq [] (FS.stream_lines f |> Stream.to_list)
+  ))
+
+test "stream_lines: a line longer than any buffer" (fn t ->
+  with FS.temp_dir "tp_" as d -> (
+    let f = Path.join d ./a.txt;
+    let long = String.repeat 200000 "x";
+    FS.write_file! f "%{long}\nend\n";
+    t.eq [200000, 3] (FS.stream_lines f |> Stream.map String.length |> Stream.to_list)
+  ))
