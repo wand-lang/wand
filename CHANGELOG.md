@@ -11,6 +11,8 @@
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
 - A `Command` in `%{...}` or `%!{...}`, also as a list element, is a type error. Before, it gave its source text (#174).
+- `Regex.capture` gives an `Option (List String)`: `None` when the pattern does not match. Before, it gave `[]` (#126).
+- When an old use of `Regex.capture` is a type error, the error says that the value can be `None`, and `wand t --fix` adds `|> Option.default []` after the call. This keeps what the old use did (#126).
 
 ### Fixed
 

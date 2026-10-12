@@ -8007,10 +8007,11 @@ let stdlib_eval_env : env = list_hof_builtins @ [
     | VRegex re -> VBuiltin (function
       | VString s ->
         (match Re.exec_opt re s with
-         | None   -> VList []
+         | None   -> v_none
          | Some g ->
            let all = Re.Group.all g in
-           VList (Array.to_list (Array.map (fun s -> VString s) all)))
+           VConstr (Ctor.Builtin "Some",
+             [VList (Array.to_list (Array.map (fun s -> VString s) all))]))
       | _ -> raise (EvalError "regex_capture: expected String"))
     | _ -> raise (EvalError "regex_capture: expected Regex")));
   ("regex_replace", VBuiltin (function

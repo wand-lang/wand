@@ -9,7 +9,7 @@ import String
 -- The host a line names, or `None` when the line is not a valid URL.
 let host line =
   match Regex.capture r/^https?:\/\/([^\/?#]*)/ line with
-  | [_, authority] -> (
+  | Some [_, authority] -> (
     match String.split ":" authority with
     | [name :: _] if !(String.empty? name) -> Some (String.lower name)
     | _ -> None

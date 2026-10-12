@@ -27,15 +27,16 @@ let compile! pattern = Result.get! (compile pattern)
 -- true : Bool
 let match? re s = regex_match re s
 
--- Return the full match and capture groups, or [] if no match.
+-- Return the full match and capture groups, or None if no match.
 --
--- The whole match first, then one element per group.
+-- The whole match first, then one element per group. A group that
+-- matches nothing is an empty string.
 --
 -- >> Regex.capture r/(\w+)@(\w+)/ "a@b"
--- ["a@b", "a", "b"] : List String
+-- Some(["a@b", "a", "b"]) : Option (List String)
 --
 -- >> Regex.capture r/(\w+)@(\w+)/ "nope"
--- [] : List String
+-- None : Option (List String)
 let capture re s = regex_capture re s
 
 -- Replace the first match with a plain string.
