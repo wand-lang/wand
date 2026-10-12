@@ -239,7 +239,13 @@ let map_put kvs key v =
    `get_object` hands back -- so a document cannot say different things to
    two readers of the same program. *)
 let assoc_last key kvs =
-  List.fold_left (fun found (k, v) -> if String.equal k key then Some v else found) None kvs
+  (* A loop of its own rather than `List.fold_left`, which called a closure
+     for every key of every object a decoder read. *)
+  let rec go found = function
+    | [] -> found
+    | (k, v) :: rest -> go (if String.equal k key then Some v else found) rest
+  in
+  go None kvs
 
 let find_field_index names label =
   let rec go i = function
@@ -8075,10 +8081,13 @@ and type_json_kind (te : type_expr) =
   | _ -> None
 
 (* A builtin decoder, by the name it is registered under. *)
-and scalar_decoder name j path =
-  match List.assoc_opt name !decode_registry with
-  | Some (VDecoder d) -> d j path
-  | _ -> raise (EvalError ("derive: no builtin decoder " ^ name))
+and scalar_decoder name =
+  (* By the table, which compares the text directly: `List.assoc_opt` over
+     the registry compared each name with the generic comparison, once for
+     every field of every record a derived decoder read. *)
+  match StrTbl.find_opt decode_index name with
+  | Some d -> d
+  | None -> (fun _ _ -> raise (EvalError ("derive: no builtin decoder " ^ name)))
 
 (* `by_name` reads each field by its name rather than by its key in a
    document: a command line's flags are the fields' names. *)
@@ -8094,12 +8103,20 @@ and derived_decoder ?(by_name = false) tname arg_decoders j path =
           "'%s' takes %d type argument(s)" tname (List.length params)))
     in
     let defaults = defaults_of ctor in
+    (* The keys are looked up once for the record, and the scope a default
+       is read in only when a field is absent: it was made again for every
+       field of every record. *)
+    let keys = if by_name then None else Hashtbl.find_opt constr_keys ctor in
+    let scope () = default_scope ctor in
     let rec go acc = function
       | [] -> Ok (VConstr (ctor, List.rev acc))
       | (fname, te) :: rest ->
         let name = match fname with Some n -> n | None -> "" in
-        let key = if by_name then name else doc_key ctor name in
-        (match read_field venv ~defaults ~scope:(default_scope ctor) ~name key te j path with
+        let key = match keys with
+          | Some ks -> Option.value (List.assoc_opt name ks) ~default:name
+          | None -> name
+        in
+        (match read_field venv ~defaults ~scope ~name key te j path with
          | Ok v      -> go (v :: acc) rest
          | Error msg -> Error msg)
     in
@@ -8122,7 +8139,7 @@ and read_field venv ?(defaults = []) ?scope ?name key te j path =
   let absent () =
     match List.assoc_opt name defaults with
     | Some d ->
-      Some (eval (match scope with Some s -> s | None -> ctor_env ()) d)
+      Some (eval (match scope with Some s -> s () | None -> ctor_env ()) d)
     | None -> None
   in
   match te with
@@ -8384,6 +8401,11 @@ and decoder_value tname =
     collect (List.length params) []
 
 and decode_registry : env ref = ref []
+
+(* The decoders of `decode_registry` by name, the first of each name. Filled
+   once, where the registry is. *)
+and decode_index : (Yojson.Basic.t -> string list -> (value, string) result) StrTbl.t =
+  StrTbl.create 32
 
 let as_decoder who = function
   | VDecoder d -> d
@@ -8708,7 +8730,12 @@ let decode_builtins : env = [
 
 (* Derivation reaches the builtin decoders by name, so it needs them after
    they are defined rather than while they are being defined. *)
-let () = decode_registry := decode_builtins
+let () =
+  decode_registry := decode_builtins;
+  List.iter (fun (name, v) ->
+    match v with
+    | VDecoder d when not (StrTbl.mem decode_index name) -> StrTbl.add decode_index name d
+    | _ -> ()) decode_builtins
 let () = derive_decoder := decoder_value
 let () = derive_encoder := encoder_value
 

@@ -24,6 +24,7 @@
 - `String.lines` is faster (#122).
 - `Stream.unique` over a stream of `String` is faster (#122).
 - A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
+- A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
 
 ### Fixed
 
