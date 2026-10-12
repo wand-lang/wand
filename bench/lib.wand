@@ -62,25 +62,17 @@ let read_cases! task = Result.get! (read_cases task)
 
 -- Run `prog` in `dir` with `args` and `stdin`.
 --
--- wand has no way to splice a list into a command as several arguments,
--- so each length is written out. The interpreter is a word decided at run
--- time (`WAND` names the build under test), which `V-SHELL1` reports. Four is more than any task takes; a case
--- with more is refused rather than cut short.
-let start! lang (prog: Path) (dir: Path) args stdin = (
+-- The interpreter is a word decided at run time (`WAND` names the build
+-- under test), which `V-SHELL1` reports.
+let start lang (prog: Path) (dir: Path) args stdin =
   let prog = if Path.absolute? prog then prog else Path.join (FS.cwd ()) prog;
   let interp =
-    (match lang with
-     | Wand -> wand_exe
-     | Python -> "python3"
-     | Bash -> "bash");
-  match args with
-  | [] -> stdin |> $?(cd %{dir} && %{interp} %{prog})
-  | [a] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a})
-  | [a, b] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b})
-  | [a, b, c] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b} %{c})
-  | [a, b, c, d] -> stdin |> $?(cd %{dir} && %{interp} %{prog} %{a} %{b} %{c} %{d})
-  | _ -> Result.get! (Error "a case takes at most four arguments")
-)
+    match lang with
+    | Wand -> wand_exe
+    | Python -> "python3"
+    | Bash -> "bash"
+  in
+  stdin |> $?(cd %{dir} && %{interp} %{prog} %{args})
 
 -- What went wrong with one case, or `None` when it passed.
 let run_case! lang (task: Path) (prog: Path) (Case(name, args, stdin, files, stdout, code)) =
@@ -94,7 +86,7 @@ let run_case! lang (task: Path) (prog: Path) (Case(name, args, stdin, files, std
         FS.write_file! file text
       ))
       files;
-    let r = start! lang prog dir args stdin;
+    let r = start lang prog dir args stdin;
     if r.stdout == stdout && r.code == code then None
     else
       Some

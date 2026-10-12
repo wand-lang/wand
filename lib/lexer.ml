@@ -329,10 +329,26 @@ let read_raw_string s =
 
 (* ── Run-command literals: $(cmd %{var}) ────────────────────────────────── *)
 
+(* The `\` line continuations of each command lexed since the table was
+   last emptied, keyed by the command's literal pieces (the text between
+   its splices, and the text after the last one). The value gives each
+   continuation as (piece, offset): the place in that piece where the `\`
+   and its newline were. Only `wand f` reads it, to write a long command
+   back on the lines its author gave it; it empties the table before it
+   lexes a file. A key is the text the command runs, so two commands that
+   share one are the same command, and either layout is a correct way to
+   write it. *)
+let continuations : (string list, (int * int) list) Hashtbl.t =
+  Hashtbl.create 8
+
 let read_run_cmd ?(form = "$()") s =
   let parts = ref [] in
   let buf = Buffer.create 16 in
   let depth = ref 1 in
+  (* Where each `\` line continuation was, as (literal piece, offset in
+     it). The command text does not hold them -- the shell would only
+     remove them again -- so they are kept to one side for `wand f`. *)
+  let conts = ref [] in
   (* The shell's own quoting, tracked because the command ends at a `)` and
      a quoted one is not the end of anything: `$(echo "a)b")` is one
      command, and counting parens blind cut it in half -- taking the rest of
@@ -353,8 +369,14 @@ let read_run_cmd ?(form = "$()") s =
     | ')' when !quote = ' ' ->
       decr depth;
       if !depth > 0 then (Buffer.add_char buf ')'; loop ())
-      else (* closing paren — done *)
-        RunCmdRaw (!parts, Buffer.contents buf)
+      else begin (* closing paren — done *)
+        let tail = Buffer.contents buf in
+        if !conts <> [] then
+          Hashtbl.replace continuations
+            (List.map (fun (lit, _, _, _) -> lit) !parts @ [tail])
+            (List.rev !conts);
+        RunCmdRaw (!parts, tail)
+      end
     (* `%{x}` quotes, `%!{x}` splices. Both read the same expression source;
        they differ only in what the evaluator does with the value.
 
@@ -385,7 +407,9 @@ let read_run_cmd ?(form = "$()") s =
       in
       parts := !parts @ [(lit, expr_buf_contents, hole, at)];
       loop ()
-    | '\\' when peek s = '\n' -> ignore (advance s); loop ()
+    | '\\' when peek s = '\n' ->
+      conts := (List.length !parts, Buffer.length buf) :: !conts;
+      ignore (advance s); loop ()
     (* A backslash spends the next character wherever the shell would let it
        -- everywhere but inside single quotes, where it is itself. *)
     | '\\' when !quote <> '\'' && not (is_at_end s) ->

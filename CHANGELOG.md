@@ -6,12 +6,18 @@
 
 - One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
 - `Ok ()`, `Some ()`, `Error ()` and a constructor of your own whose payload is `Unit` match `()` as the payload: `| Ok () -> ...` (#116).
+- `%{xs}` in a command with a `List` gives one quoted argument for each element, as `"$@"` does, and an empty list gives no argument (#113).
+- A list that holds lists in `%{...}` is a type error (#113).
+- A list in `%{...}` between the author's own quotes is a type error (#113).
+- A list in `%!{...}` is a type error, and `wand t --fix` changes the `%!{` to `%{` (#113).
 
 ### Changed
 
 - A `;` at the end of a line inside a `( ... )` block continues an arm or branch body when the next line is at the body's column, as a newline does (#119).
 - In a construction of a record of one field, one name that is not the field fills that field: `B(x)` is `B(n = x)` (#115).
 - `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
+- The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
+- The benchmark harness writes its long `claude -p` command over several lines (#114).
 
 ### Fixed
 
@@ -21,11 +27,16 @@
 - An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
 - An error in a constructor pattern inside another pattern points at the inner constructor (#115).
 - `wand f` keeps `Ok ()` with its space, and puts it in brackets where it is an argument: `f (Ok ()) x` (#116).
+- `wand f` keeps each `\` line continuation in a command and its line break, and indents the continued lines (#114).
+- `wand f` writes a command that opens on the line under `$?(` with the `)` under the line that opens it, not to the left of the command (#114).
+- V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).
 
 ### Documentation
 
 - The reference says that one name alone puns (#115).
 - The reference shows `| Ok () ->` as a pattern (#116).
+- The reference tells how a list goes into a command (#113).
+- The reference tells how `wand f` writes a command that continues over lines (#114).
 
 ## [0.105.0] - 2026-10-12
 

@@ -382,6 +382,51 @@ let test_a_bracket_is_kept_off_a_glob () =
   Alcotest.(check string) "nor does a map"
     "let m = {a = *.wa}\n" (fmt "let m = {a = *.wa}")
 
+(* `wand f` keeps each `\` line continuation in a command, and its line
+   break, and indents the continued lines one step past the line that
+   opens the command; a `)` after a break goes back to that line's
+   indentation. It used to drop the continuations and leave their spaces
+   in one long line (#114). The text the shell gets keeps its words: only
+   the white space between them changes. *)
+let command_words src =
+  List.filter_map (fun (t, _) ->
+    match t with
+    | Token.RunCmdRaw (parts, tail) | Token.RunQueryRaw (parts, tail)
+    | Token.CommandRaw (parts, tail) ->
+      let text = String.concat " %{} "
+          (List.map (fun (l, _, _, _) -> l) parts @ [tail]) in
+      Some (String.split_on_char ' '
+              (String.map (fun c -> if c = '\n' || c = '\t' then ' ' else c) text)
+            |> List.filter (( <> ) ""))
+    | _ -> None) (Lexer.tokenize src)
+
+let test_a_command_keeps_its_continuations () =
+  let check label src want =
+    let got = fmt src in
+    Alcotest.(check string) label want got;
+    Alcotest.(check string) (label ^ ", a fixed point") got (fmt got);
+    Alcotest.(check (list (list string))) (label ^ ", the same words")
+      (command_words src) (command_words got)
+  in
+  check "the issue's command"
+    "let r = $?(\\\n  cd /tmp && \\\n  echo hi \\\n)\n"
+    "let r = $?(\\\n  cd /tmp && \\\n  echo hi \\\n)\n";
+  check "the indentation is set"
+    "let r = $(printf %s \\\n        a \\\n b)\n"
+    "let r = $(printf %s \\\n  a \\\n  b)\n";
+  check "inside a body"
+    "let f x =\n  let r = $(printf %s %{x} \\\n      b)\n  r\n"
+    "let f x =\n  let r = $(printf %s %{x} \\\n    b);\n  r\n";
+  check "a command opened on the next line"
+    "let r =\n  $?(\n  echo hi\n)\n"
+    "let r = $?(\n  echo hi\n)\n";
+  (* Inside quotes the break is part of the text, so it stays as written;
+     and a continuation inside a word joins two halves of it, which spaces
+     would split. *)
+  check "in quotes and inside a word"
+    "let r = $(printf \"a \\\n   b\" ab\\\ncd)\n"
+    "let r = $(printf \"a \\\n   b\" ab\\\ncd)\n"
+
 (* A bracket written straight onto the `$` is literal command text; one
    written a space away is an expression that answers with the command.
    `$(i)` runs the command `i`; `$ (i)` runs whatever the value `i` holds.
@@ -2347,6 +2392,8 @@ let () =
     ];
     "formerly verbatim", [
       Alcotest.test_case "command text"     `Quick test_command_text_is_not_quoted;
+      Alcotest.test_case "command continuations" `Quick
+        test_a_command_keeps_its_continuations;
       Alcotest.test_case "try as operand"   `Quick test_try_is_parenthesised_as_an_operand;
       Alcotest.test_case "contract indent"  `Quick test_contract_clauses_keep_their_indent;
       Alcotest.test_case "a lambda's contract" `Quick

@@ -965,6 +965,31 @@ let rejects label src =
 
 (* A Shared holds state that one update changes in one step, so it cannot
    hold another Shared: through its own argument, a list, or a field. *)
+(* `%{xs}` with a List is one quoted argument for each element, as `"$@"`
+   is; it used to be one argument holding the list's display. The places
+   a list cannot go are refused, each with its position. *)
+let test_a_list_in_a_command () =
+  ok "one argument for each element"
+    {|let xs = ["a b", "c"]
+$(printf "[%s]" %{xs})|}
+    "[a b][c]";
+  ok "an empty list gives no argument"
+    {|let xs : List String = []
+$(printf "[%s]" x %{xs})|}
+    "[x]";
+  ok "the type settled after the command"
+    {|let f xs = $(printf "[%s]" %{xs})
+f [1, 2]|}
+    "[1][2]";
+  err_contains "a list of lists"
+    {|$(printf "[%s]" %{[["a"]]})|} "1:19: %{...} gives one argument for each element";
+  err_contains "a list between quotes"
+    {|let xs = ["a"]
+$(printf "[%s]" "x %{xs}")|} "2:22: a list in %{...} between quotes";
+  err_contains "a list in a raw splice"
+    {|let xs = ["a"]
+$(printf "[%s]" %!{xs})|} "2:20: a list in %!{...} would read each element"
+
 let test_a_shared_holds_no_shared () =
   let nests = "a Shared cannot hold another Shared" in
   err_contains "directly"
@@ -2791,6 +2816,7 @@ let () =
     ];
     "shared", [
       Alcotest.test_case "a Shared holds no Shared" `Quick test_a_shared_holds_no_shared;
+      Alcotest.test_case "a list in a command" `Quick test_a_list_in_a_command;
       Alcotest.test_case "an update performs nothing" `Quick test_an_update_performs_nothing;
       Alcotest.test_case "state is declared" `Quick test_state_is_declared;
     ];

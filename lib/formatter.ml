@@ -565,6 +565,114 @@ let is_multiline_raw_string e = match strip_located e with
     || String.contains tail '\n'
   | _ -> false
 
+(* The literal pieces of a command written as text: the text between its
+   splices, and the text after the last one. *)
+let command_lits e = match strip_located e with
+  | String s -> Some [s]
+  | CmdInterp (parts, tail) -> Some (List.map (fun (l, _, _) -> l) parts @ [tail])
+  | _ -> None
+
+(* A command's literal pieces as `wand f` writes them back: each `\` line
+   continuation the author wrote is put back where it was, with its line
+   break, and the lines it continues onto start one step past `indent`.
+   The closing `)` goes on a line of its own at `indent` when the text ends
+   on a break. A plain newline at the start or the end of the text -- a
+   command that opens on the line under `$(` -- takes the same indentation.
+
+   The text the shell receives must not change in any way the shell can
+   see, so the indentation is set only where it is only white space to the
+   shell: outside every quote, where the break already stands between two
+   words. A continuation between two characters of one word (`ab\`, then
+   `cd` at the start of the next line) joins them, and spaces there would
+   split the word; a break inside quotes is part of the quoted text; and a
+   heredoc body keeps its lines as they are. Those are written back as they
+   were. *)
+let command_layout indent (lits : string list) : string list =
+  let conts =
+    Option.value ~default:[] (Hashtbl.find_opt Lexer.continuations lits) in
+  let heredoc = List.exists (fun l -> contains_sub l "<<") lits in
+  let n_pieces = List.length lits in
+  let quote = ref ' ' in
+  (* The last character written, across pieces: a splice is a word's worth
+     of text, so the start of a piece after one is not a word boundary. *)
+  let last = ref (Some ' ') in
+  List.mapi (fun k lit ->
+    if k > 0 then last := Some 'x';
+    let n = String.length lit in
+    let here =
+      ref (List.filter_map (fun (p, o) -> if p = k then Some o else None) conts)
+    in
+    let buf = Buffer.create (n + 16) in
+    let is_blank c = c = ' ' || c = '\t' in
+    let run_end i =
+      let j = ref i in
+      while !j < n && is_blank lit.[!j] do incr j done;
+      !j
+    in
+    (* Write the break, then the indentation of the line it opens, and
+       return where the text goes on. *)
+    let break ~cont i =
+      let j = run_end i in
+      let at_end = j = n && k = n_pieces - 1 in
+      let boundary =
+        (match !last with
+         | None -> true
+         | Some c -> is_blank c || c = '\n')
+        || j > i || at_end || not cont
+      in
+      Buffer.add_string buf (if cont then "\\\n" else "\n");
+      if !quote = ' ' && not heredoc && boundary then begin
+        (* A line with nothing on it gets no indentation. *)
+        if not (j < n && lit.[j] = '\n' || List.mem j !here) then
+          Buffer.add_string buf
+            (String.make (if at_end then indent else indent + 2) ' ');
+        last := Some ' ';
+        j
+      end else begin
+        last := Some '\n';
+        i
+      end
+    in
+    let rec go i =
+      if List.mem i !here then begin
+        (* Each is written once, and two can stand together. *)
+        let rec drop = function
+          | [] -> []
+          | o :: rest -> if o = i then rest else o :: drop rest
+        in
+        here := drop !here;
+        go (break ~cont:true i)
+      end
+      else if i >= n then ()
+      else begin
+        let c = lit.[i] in
+        if c = '\n' && !quote = ' ' then go (break ~cont:false (i + 1))
+        else if c = '\\' && !quote <> '\'' && i + 1 < n then begin
+          Buffer.add_char buf c; Buffer.add_char buf lit.[i + 1];
+          last := Some lit.[i + 1];
+          go (i + 2)
+        end else begin
+          (if !quote = ' ' && (c = '\'' || c = '"' || c = '`') then quote := c
+           else if c = !quote then quote := ' ');
+          Buffer.add_char buf c;
+          last := Some c;
+          go (i + 1)
+        end
+      end
+    in
+    go 0;
+    Buffer.contents buf) lits
+
+(* A command that `wand f` writes over more than one line. *)
+let is_multiline_command e = match strip_located e with
+  | RunCmd (body, _) | RunQuery (body, _) | MkCommand (body, _) ->
+    (match command_lits body with
+     | Some lits ->
+       List.exists (fun l -> String.contains l '\n') lits
+       || Hashtbl.mem Lexer.continuations lits
+     | None -> false)
+  | _ -> false
+
 let opens_a_bracket e = match strip_located e with
   | Seq _ | List _ | Tuple _ | MapLit _ -> true
   | Let (_, _, _, LetBlock) | LetRec (_, _, LetBlock) -> true
@@ -572,7 +680,9 @@ let opens_a_bracket e = match strip_located e with
      opening backtick leaves its line as unfinished as a bare `[` does, and
      the text carries the break. Given a line of its own it says nothing,
      and it pushes the author's layout down the page to say it. *)
-  | e' -> is_multiline_raw_string e'
+  (* A command written over lines is the same: `$?(` and the text after it
+     open on the binding's line, and the continued lines carry the break. *)
+  | e' -> is_multiline_raw_string e' || is_multiline_command e'
 
 
 (* Where a bracket carries the break, the value can start on the line that
@@ -1656,7 +1766,7 @@ and command_body indent e =
 (* A command's text, with interpolations left as %{...} and nothing quoted. *)
 and emit_command indent e =
   match strip_located e with
-  | String s -> Doc.text s
+  | String s -> Doc.text (List.hd (command_layout indent [s]))
   | Interp (parts, tail) ->
     let buf = Buffer.create 32 in
     List.iter (fun (lit, ex) ->
@@ -1670,9 +1780,12 @@ and emit_command indent e =
      `%!{x}` as `%{x}` would quietly quote a splice that was meant to be
      shell source, and the script would stop working. *)
   | CmdInterp (parts, tail) ->
+    let lits =
+      command_layout indent (List.map (fun (l, _, _) -> l) parts @ [tail]) in
+    let tail = List.nth lits (List.length parts) in
     let buf = Buffer.create 32 in
-    List.iter (fun (lit, ex, h) ->
-      Buffer.add_string buf lit;
+    List.iteri (fun i (_, ex, h) ->
+      Buffer.add_string buf (List.nth lits i);
       Buffer.add_string buf
         (match (h : Token.hole) with Token.Source -> "%!{" | _ -> "%{");
       Buffer.add_string buf (Doc.to_string (emit_splice indent ex));
@@ -2123,11 +2236,13 @@ and emit_binding ?col ?(in_terminated = false) indent p e1 =
   | Annot (te, body) ->
     Doc.text ("let " ^ emit_pat p ^ " : " ^ emit_type_expr te ^ " = ")
     ^^ value indent body
-  | _ when is_multiline_raw_string e1 ->
+  | _ when is_multiline_raw_string e1 || is_multiline_command e1 ->
     (* On the `=` line here as at the top level. A block binding gives every other
        wrapped value a line of its own, and that is the shape the corpus is
        written in -- but a line of its own is exactly what this one cannot
-       have without indenting text that is content. *)
+       have without indenting text that is content. A command written over
+       lines opens on the `=` line too, so its continued lines indent one
+       step past the binding and its `)` lines up under the `let`. *)
     let head = Doc.text ("let " ^ emit_pat p ^ " = ") in
     head ^^ emit_expr ~col:(col + Doc.width head) indent e1
   | _ ->
@@ -3125,6 +3240,9 @@ let shebang_of src =
   else None
 
 let format_source src =
+  (* Emptied first, so the layout of a command is the one this file gave
+     it and never one left by a file lexed before. *)
+  Hashtbl.reset Lexer.continuations;
   let tokens = Lexer.tokenize src in
   let (prog, item_locs) = Parser.parse_program_with_locs tokens in
   let comments = all_comments src tokens in

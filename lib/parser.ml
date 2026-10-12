@@ -1460,7 +1460,12 @@ and resolve_cmd_holes s loc parts tail =
   List.mapi (fun k (lit, src, (hole : Token.hole), (at : Token.pos)) ->
     let toks = interp_tokens loc src at in
     let s2 = sub_parser s toks in
-    let e = expr_ 0 s2 in
+    (* Located, so a check of the value's type -- a list where a list
+       cannot go -- can say where the value is. *)
+    let e = match locate s2 (fun () -> expr_ 0 s2) with
+      | Located (_, (Located _ as inner)) -> inner
+      | e -> e
+    in
     let hole' =
       match hole with
       | Token.Source -> Token.Source
