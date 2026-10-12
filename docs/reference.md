@@ -1100,6 +1100,63 @@ match FS.write_file /tmp/x "1" with
 | Error e -> e
 ```
 
+### Several patterns in one arm
+
+An arm can give more than one pattern, each after a `|`. The arm matches when
+one of its patterns matches, and wand tries them in the order you write them:
+
+```ocaml
+match part with
+| Some "major" | Some "minor" | Some "patch" -> bump part
+| _ -> usage ()
+```
+
+An arm ends at its `->`. So a `|` before the `->` gives one more pattern to
+the same arm, on the same line or on the line below:
+
+```ocaml
+match code with
+| 0 -> "ok"
+| 1
+| 2 -> "warning"
+| _ -> "error"
+```
+
+Each pattern of an arm must bind the same names, with the same types. The
+body uses those names, and it must find them whichever pattern matched. If a
+name is missing, or it has two types, that is a type error that names it:
+
+```ocaml
+match r with
+| Ok n | Error n -> n            -- correct when both sides are the same type
+| Ok n | Error e -> n            -- type error: `Ok n` binds 'n' and `Error e` does not
+```
+
+A guard applies to the whole arm, whichever pattern matched:
+`| Ok n | Error n if n > 0 -> ...`.
+
+Inside another pattern, put the patterns in brackets:
+
+```ocaml
+match x with
+| Some (1 | 2) -> "small"
+| Some _ -> "large"
+| None -> "none"
+```
+
+The exhaustiveness check reads each pattern of an arm separately. A pattern
+that the arms above it, or the patterns before it in the same arm, already
+match can never run the arm. `wand t` reports it as `V-ARM1`:
+
+```ocaml
+match x with
+| Some _ -> 1
+| Some 1 | None -> 0             -- V-ARM1: `Some 1` matches nothing new
+```
+
+`wand f` writes the patterns of an arm on one line when they fit, and one
+on each line, each with its `|`, when they do not.
+
 ### A match inside an arm
 
 A `match` in an arm needs no parentheses. Its arms are the lines level with
@@ -2469,6 +2526,18 @@ may substitute another:
 It resumes with a `String`, not a `Command`: wrapping the answer is the
 literal's own job, which is what keeps a `Command` something only a command
 form can build.
+
+Operations that get the same answer can share one case. Write each
+operation after a `|` before the `->`. Each one names the continuation with
+the same name, and binds the same names with the same types, as the patterns
+of a `match` arm do:
+
+```ocaml
+handle thunk () with
+| FS!write_file _ k | FS!append _ k | FS!create_file _ k -> k ()
+```
+
+A `return` case cannot share a case with an operation.
 
 A `return` case transforms the result when the body finishes normally:
 
@@ -8477,6 +8546,7 @@ punish the safer choice.
 | `A-SHELL2` | `Shell.inspect` runs a command whose words are decided at run time, so nothing checked that it only reads |
 | `V-CTOR1` | a `match` arm names bare a constructor that another type in scope shares — write the type, as in `PullPolicy.Always`; `wand t --fix` writes it |
 | `A-IF1` | a `match` has only the arms `true` and `false` — write `if`, or `unless` where the `true` arm is `()` |
+| `V-ARM1` | one of the patterns of a `match` arm matches nothing that the patterns before it leave, so it never runs the arm — take it out |
 | `V-BIDI1` | a bidirectional control character is in a string or comment — it reorders the glyphs around it, so the source reads one way and runs another; take it out, or write it as an escape where the text needs it |
 | `A-BIND1` | a `let _ =` binds a value that is `Unit`, so the binder dismisses a failure that is not there — write the statement on its own, sequenced with `;` where it sits in a body |
 | `A-USES1` | a manifest permits an effect the file does not use, or a binary no command runs |

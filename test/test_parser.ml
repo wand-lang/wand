@@ -527,6 +527,62 @@ let test_constr_positional_patterns () =
       (PConstr ("R", [PVar "a"; PVar "b"]), None, Var "a");
     ]))
 
+(* ── Or-patterns (#141) ─────────────────────────────────────────────────── *)
+
+(* An arm runs to its `->`, so a `|` before the arrow gives the arm one more
+   pattern, on its line or on the next. *)
+let test_or_patterns () =
+  e "two alternatives on one line"
+    "match v with\n| Some 1 | Some 2 -> a\n| _ -> b"
+    (Match (Var "v", [
+      (POr [PConstr ("Some", [Int 1]); PConstr ("Some", [Int 2])], None, Var "a");
+      (Wild, None, Var "b");
+    ]));
+  e "an alternative on the next line, with its own `|`"
+    "match v with\n| 1\n| 2 -> a\n| _ -> b"
+    (Match (Var "v", [
+      (POr [Int 1; Int 2], None, Var "a");
+      (Wild, None, Var "b");
+    ]));
+  e "a guard follows the last alternative and covers them all"
+    "match v with\n| Ok x | Error x if x > 0 -> x\n| _ -> 0"
+    (Match (Var "v", [
+      (POr [PConstr ("Ok", [PVar "x"]); PConstr ("Error", [PVar "x"])],
+       Some (BinOp (">", Var "x", Int 0)), Var "x");
+      (Wild, None, Int 0);
+    ]));
+  e "inside brackets, in a pattern"
+    "match v with\n| Some (1 | 2) -> a\n| _ -> b"
+    (Match (Var "v", [
+      (PConstr ("Some", [POr [Int 1; Int 2]]), None, Var "a");
+      (Wild, None, Var "b");
+    ]));
+  e "inside a tuple"
+    "match v with\n| (1 | 2, x) -> x\n| _ -> b"
+    (Match (Var "v", [
+      (PTuple [POr [Int 1; Int 2]; PVar "x"], None, Var "x");
+      (Wild, None, Var "b");
+    ]));
+  (* The column rule still ends a nested match: the outer arm below holds
+     two alternatives of its own. *)
+  e "a nested match keeps its arms"
+    "match v with\n| [n] ->\n  match n with\n  | 1 | 2 -> a\n  | _ -> b\n| [] | [_, _] -> c\n| _ -> d"
+    (Match (Var "v", [
+      (PList [PVar "n"], None,
+       Match (Var "n", [
+         (POr [Int 1; Int 2], None, Var "a");
+         (Wild, None, Var "b");
+       ]));
+      (POr [PList []; PList [Wild; Wild]], None, Var "c");
+      (Wild, None, Var "d");
+    ]));
+  runs "the first alternative that matches binds"
+    "match [1, 2, 3] with | [a, b] | [b, a, _] -> a - b | _ -> 0" "1";
+  runs "an alternative inside a pattern"
+    "match Some 3 with | Some (1 | 3) -> \"yes\" | _ -> \"no\"" "yes";
+  runs "a guard over every alternative"
+    "match Error 5 with | Ok x | Error x if x > 9 -> x | _ -> 0" "0"
+
 (* ── Handler cases ────────────────────────────────────────────────────────── *)
 
 (* An operation is the call it stands for with a `!` where its dot goes. The
@@ -537,14 +593,34 @@ let test_handler_arm_operations () =
   e "a family-qualified operation"
     "handle body with\n| FS!read_file p k -> p"
     (Handle (Var "body", [
-      Ast.EffectCase ("FS!read_file", PVar "p", "k", Var "p");
+      Ast.EffectCase ([("FS!read_file", PVar "p")], "k", Var "p");
     ]));
   e "several cases, including a return"
     "handle body with\n| Shell!run c k -> c\n| return r -> r"
     (Handle (Var "body", [
-      Ast.EffectCase ("Shell!run", PVar "c", "k", Var "c");
+      Ast.EffectCase ([("Shell!run", PVar "c")], "k", Var "c");
       Ast.ReturnCase (PVar "r", Var "r");
     ]))
+  ;
+  e "several operations share one arm"
+    "handle body with\n| FS!append p k | FS!write_file p k -> k ()"
+    (Handle (Var "body", [
+      Ast.EffectCase ([("FS!append", PVar "p"); ("FS!write_file", PVar "p")], "k",
+        App (Var "k", Unit));
+    ]));
+  e "one operation on each line"
+    "handle body with\n| FS!append p k\n| FS!write_file p k -> k ()\n| return r -> r"
+    (Handle (Var "body", [
+      Ast.EffectCase ([("FS!append", PVar "p"); ("FS!write_file", PVar "p")], "k",
+        App (Var "k", Unit));
+      Ast.ReturnCase (PVar "r", Var "r");
+    ]));
+  refuses "the operations of an arm name one continuation"
+    "let f b = handle b () with\n| FS!append p k | FS!write_file p j -> k ()"
+    "names its continuation 'j'";
+  refuses "a return case has an arm of its own"
+    "let f b = handle b () with\n| FS!append p k | return r -> r"
+    "a `return` case cannot share an arm"
 
 
 (* ── Field access ────────────────────────────────────────────────────────── *)
@@ -831,7 +907,7 @@ let test_match () =
   e "an if guard on a match inside a handle arm"
     "handle body with\n| FS!read_file p k ->\n  match p with\n  | q if q == p -> k q\n  | _ -> k p"
     (Handle (Var "body", [
-      Ast.EffectCase ("FS!read_file", PVar "p", "k",
+      Ast.EffectCase ([("FS!read_file", PVar "p")], "k",
         Match (Var "p", [
           (PVar "q", Some (BinOp ("==", Var "q", Var "p")), App (Var "k", Var "q"));
           (Wild, None, App (Var "k", Var "p"));
@@ -1772,6 +1848,7 @@ let () =
       Alcotest.test_case "constr bracket holds a block" `Quick
         test_constr_bracket_holds_a_block;
       Alcotest.test_case "constr positional patterns" `Quick test_constr_positional_patterns;
+      Alcotest.test_case "or-patterns" `Quick test_or_patterns;
       Alcotest.test_case "handler cases"  `Quick test_handler_arm_operations;
       Alcotest.test_case "field"        `Quick test_field;
     ];

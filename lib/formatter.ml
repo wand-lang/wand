@@ -431,6 +431,9 @@ let rec emit_pat (p : pat) : string = match p with
   (* The parentheses are the syntax, not decoration: `p : Pod` on its own
      is a cons expression. *)
   | PAnnot (p, te) -> "(" ^ emit_pat p ^ ": " ^ emit_type_expr te ^ ")"
+  (* Inside another pattern the brackets say where the alternatives end.
+     At the top of an arm they need none; `arm_alternatives` writes those. *)
+  | POr ps -> "(" ^ String.concat " | " (List.map emit_pat ps) ^ ")"
 
 (* A parameter. `PQualified` belongs here for the same reason it belongs in
    `emit_pat_binder`: a parameter list is read as names until the `->` or the
@@ -1591,9 +1594,11 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        argument is followed by the continuation name, and `return`'s by the
        `->`. Found by test/fuzz. *)
     let emit_arm = function
-      | EffectCase (op, p, k, b) ->
-        let head = Printf.sprintf "| %s %s %s" op (emit_pat_atom p) k in
-        Doc.text head ^^ emit_arm_rest ~col:(arm_indent + String.length head) arm_indent b
+      | EffectCase (alts, k, b) ->
+        let alts = List.map (fun (op, p) ->
+          Printf.sprintf "%s %s %s" op (emit_pat_atom p) k) alts in
+        let head = arm_alternatives arm_indent alts Doc.empty in
+        head ^^ emit_arm_rest ~col:(column_after arm_indent head) arm_indent b
       | ReturnCase (p, b) ->
         let head = Printf.sprintf "| return %s" (emit_pat_atom p) in
         Doc.text head ^^ emit_arm_rest ~col:(arm_indent + String.length head) arm_indent b
@@ -2629,6 +2634,22 @@ and emit_scrutinee indent scr =
      argument below expecting the keyword. *)
   | _ -> bracket_if_wrapped_app_at ~anchor:indent scr (emit_expr indent scr)
 
+(* The head of an arm: its `|`, its alternatives and its guard, for an arm
+   at [indent]. The first line starts at the `|`, since the caller has put
+   it at the indent already. The alternatives go on one line when that line,
+   with the guard and the arrow, fits; otherwise each takes a line of its own
+   with its own `|`, and the guard follows the last (#141). *)
+and arm_alternatives indent alts guard =
+  let flat = "| " ^ String.concat " | " alts in
+  match alts with
+  | [_] -> Doc.text flat ^^ guard
+  | _ when indent + String.length flat + Doc.width guard + 3 <= !max_width
+           && not (Doc.has_newline guard) ->
+    Doc.text flat ^^ guard
+  | _ ->
+    Doc.concat (Doc.text "\n" ^^ Doc.spaces indent)
+      (List.map (fun a -> Doc.text ("| " ^ a)) alts)
+    ^^ guard
 and emit_match ?col indent scr cases =
   let col = match col with Some c -> c | None -> indent in
   (* Arms of a `match` that starts mid-line step in, as an `if`'s else
@@ -2671,8 +2692,13 @@ and emit_match ?col indent scr cases =
     in
     (* The body starts after the pattern and the arrow, not at the case's
        indent -- which is the whole of this bug. *)
-    let prefix = ind ^^ Doc.text ("| " ^ emit_pat p) ^^ guard_s in
-    let text = prefix ^^ emit_arm_rest ~col:(Doc.width prefix) arm_indent body in
+    let alts = match strip_pat p with
+      | POr ps -> List.map emit_pat ps
+      | _ -> [emit_pat p]
+    in
+    let head = arm_alternatives arm_indent alts guard_s in
+    let text = ind ^^ head
+               ^^ emit_arm_rest ~col:(column_after arm_indent head) arm_indent body in
     Doc.concat Doc.empty lead ^^ text
   in
   Doc.text "match " ^^ emit_scrutinee indent scr ^^ Doc.text " with\n"

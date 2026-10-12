@@ -51,6 +51,9 @@ let rec pattern_names (p : pat) =
   | PConstrBare (_, ids) -> ids
   | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) ->
     pattern_names p
+  (* The evaluator puts whichever alternative matched in this order. *)
+  | POr (p :: _) -> pattern_names p
+  | POr [] -> []
   | Int _ | Float _ | String _ | Bool _ | Unit | Path _ | DateTime _
   | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _ | Size _
   | Wild -> []
@@ -109,6 +112,10 @@ let rec pat_in scope (p : pat) : pat * string list =
   | PLocated (l, inner) -> let inner, after = pat_in scope inner in (PLocated (l, inner), after)
   (* Already resolved: resolved again, for the place it is in now. *)
   | PCtor (_, inner, _) -> pat_in scope inner
+  (* Each alternative from the same scope, since only one of them binds;
+     after it, the names in the first one's order, which is the order the
+     evaluator leaves them in whichever matched. *)
+  | POr ps -> (POr (List.map (pat scope) ps), push_pat scope p)
   | PQualified _ | Int _ | Float _ | String _ | Bool _ | Unit | Path _
   | DateTime _ | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _
   | Size _ | Wild -> (p, push_pat scope p)
@@ -127,7 +134,7 @@ and pat_ctor_name = function
   | PConstr (n, _) | PConstrNamed (n, _) | PConstrBare (n, _) -> n
   | _ -> ""
 
-let pat scope p = fst (pat_in scope p)
+and pat scope p = fst (pat_in scope p)
 
 (* Parameters, each resolved past the ones before it. *)
 let params scope ps = fst (pats_in scope ps)
@@ -208,7 +215,11 @@ let rec expr scope (e : expr) : expr =
     CmdInterp (List.map (fun (s, e, h) -> (s, r e, h)) parts, tail)
   | Handle (body, cases) ->
     Handle (r body, List.map (function
-      | EffectCase (op, p, k, b) -> EffectCase (op, p, k, expr (k :: push_pat scope p) b)
+      (* The body is resolved for the first operation's names, and the
+         evaluator puts the names of whichever matched in that order. *)
+      | EffectCase (((_, p) :: _ as alts), k, b) ->
+        EffectCase (alts, k, expr (k :: push_pat scope p) b)
+      | EffectCase ([], k, b) -> EffectCase ([], k, expr (k :: scope) b)
       | ReturnCase (p, b) -> ReturnCase (p, expr (push_pat scope p) b)) cases)
   | Try a -> Try (r a)
   | With (res, p, body) -> With (r res, p, expr (push_pat scope p) body)

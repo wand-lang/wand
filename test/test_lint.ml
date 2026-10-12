@@ -477,6 +477,27 @@ let test_bidi1 () =
     "-- a\xe2\x80\xae comment\nlet x = 1\nx" "V-BIDI1";
   silent "a string with no control" "let x = \"plain\"\nx"
 
+(* An alternative of an arm that the patterns before it already match never
+   runs the arm (#141). A whole arm is left alone: a last `| _ ->` can be
+   there on purpose. *)
+let test_arm1 () =
+  fires "an arm above covers it"
+    "let f o = match o with | Some _ -> 1 | Some 1 | None -> 0\nf None" "V-ARM1";
+  fires "an alternative before it in the arm covers it"
+    "let f o = match o with | Some _ | Some 2 -> 1 | None -> 0\nf None" "V-ARM1";
+  fires "a literal named twice"
+    "let f n = match n with | 1 | 2 | 1 -> 1 | _ -> 0\nf 3" "V-ARM1";
+  fires "an inner pattern the arm above covers"
+    "let f o = match o with | Some (Ok _) -> 1 | Some (Ok 1) | None -> 0 | _ -> 2\nf None" "V-ARM1";
+  not_fired "each alternative adds a case"
+    "let f o = match o with | Some 1 -> 1 | Some 2 | None -> 0 | _ -> 2\nf None" "V-ARM1";
+  not_fired "a guarded arm above covers nothing"
+    "let f o = match o with | Some x if x > 0 -> 1 | Some 1 | None -> 0 | _ -> 2\nf None" "V-ARM1";
+  not_fired "a list of another length"
+    "let f xs = match xs with | [a] -> a | [a, _] | [_, _, a] -> a | _ -> 0\nf []" "V-ARM1";
+  not_fired "a whole arm that is covered"
+    "let f o = match o with | Some _ -> 1 | None -> 0 | _ -> 2\nf None" "V-ARM1"
+
 (* ── V-SHELL3 and A-SHELL2: what Shell.inspect promises ─────────────────── *)
 
 (* `Shell.inspect` runs its command in a rehearsal, on the script's word
@@ -1006,6 +1027,7 @@ let () =
     "catalog", [
       Alcotest.test_case "V-SHELL2"     `Quick test_shell2;
       Alcotest.test_case "V-BIDI1"      `Quick test_bidi1;
+      Alcotest.test_case "V-ARM1"       `Quick test_arm1;
       Alcotest.test_case "kinds"        `Quick test_kinds;
       Alcotest.test_case "unique codes" `Quick test_registry_codes_unique;
     ];

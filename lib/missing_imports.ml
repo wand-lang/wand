@@ -39,6 +39,7 @@ let rec pat_names acc (p : pat) =
   | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) ->
     pat_names acc p
   | PMap fs -> List.fold_left (fun acc (k, p) -> pat_names (k :: acc) p) acc fs
+  | POr ps -> List.fold_left pat_names acc ps
   | Int _ | Float _ | String _ | Bool _ | Unit | Path _ | DateTime _
   | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _ | Size _
   | Wild -> acc
@@ -97,6 +98,7 @@ let uses (prog : program) item_locs =
     | PConstr (_, ps) -> List.iter (pat at) ps
     | PConstrNamed (_, fs) -> List.iter (fun (_, p) -> pat at p) fs
     | PMap fs -> List.iter (fun (_, p) -> pat at p) fs
+    | POr ps -> List.iter (pat at) ps
     | PConstrBare _ | PVar _ | Wild | Int _ | Float _ | String _ | Bool _
     | Unit | Path _ | DateTime _ | Duration _ | URL _ | IPv4 _ | CIDR _
     | Port _ | Version _ | Size _ -> ()
@@ -141,7 +143,7 @@ let uses (prog : program) item_locs =
     | Handle (e, cases) ->
       go e;
       List.iter (function
-        | EffectCase (_, p, _, b) -> pat at p; go b
+        | EffectCase (alts, _, b) -> List.iter (fun (_, p) -> pat at p) alts; go b
         | ReturnCase (p, b) -> pat at p; go b) cases
     | With (r, p, b) -> go r; pat at p; go b
     | Annot (t, e) -> ty at t; go e

@@ -1069,6 +1069,39 @@ let rec pat_ s =
     PCons (p, pat_ s)
   end else p
 
+(* `p1 | p2 | ...` inside brackets, `Some (1 | 2)`: the bracket says where
+   the alternatives end, so a `|` in it can only continue the pattern. *)
+and or_pat_ s =
+  let p = pat_ s in
+  if peek s <> Token.Pipe then p
+  else begin
+    let ps = ref [p] in
+    while peek s = Token.Pipe do
+      ignore (advance s);
+      ps := !ps @ [pat_ s]
+    done;
+    POr !ps
+  end
+
+(* The pattern of a `match` arm, and its alternatives (#141). An arm runs to
+   its `->`, so a `|` before the arrow continues the pattern rather than
+   starting an arm, on the same line or the next: `| Some 1 | Some 2 -> a`.
+   Each alternative is wrapped in where it was written, so a finding about
+   one of them points there. [at] is where the first one starts. *)
+and arm_pat_ s at =
+  let p = pat_ s in
+  if peek s <> Token.Pipe then p
+  else begin
+    let ps = ref [PLocated (span_to_here s at, p)] in
+    while peek s = Token.Pipe do
+      ignore (advance s);
+      let at = peek_loc s in
+      let p = pat_ s in
+      ps := !ps @ [PLocated (span_to_here s at, p)]
+    done;
+    POr !ps
+  end
+
 and pat_base_ s =
   match peek s with
   | Token.Int n      -> ignore (advance s); (Int n : pat)
@@ -1091,11 +1124,11 @@ and pat_base_ s =
     ignore (advance s);
     if peek s = Token.RParen then (ignore (advance s); Unit)
     else begin
-      let p = pat_ s in
+      let p = or_pat_ s in
       if peek s = Token.Comma then begin
         let ps = ref [p] in
         while peek s = Token.Comma do
-          ignore (advance s); ps := !ps @ [pat_ s]
+          ignore (advance s); ps := !ps @ [or_pat_ s]
         done;
         expect s Token.RParen; PTuple !ps
       end else if peek s = Token.Colon
@@ -1172,7 +1205,7 @@ and pconstr_body_ s name =
         let fname = expect_field_name ~puns:true s in
         if peek s = Token.Eq then begin
           ignore (advance s);
-          fields := !fields @ [(fname, pat_ s)]
+          fields := !fields @ [(fname, or_pat_ s)]
         end else fields := !fields @ [(fname, (PVar fname : pat))]
       in
       parse_field ();
@@ -1204,7 +1237,7 @@ and pconstr_body_ s name =
          single-token test the grouped pattern uses -- so `Ok (x : xs)`
          still meets the message written for it. *)
       let pat_item () =
-        let p = pat_ s in
+        let p = or_pat_ s in
         if peek s = Token.Colon
               && (is_type_atom_start (peek2 s) || qualified_type_after_colon s) then begin
           ignore (advance s);
@@ -1250,11 +1283,11 @@ and pat_atom_ s =
     ignore (advance s);
     if peek s = Token.RParen then (ignore (advance s); Unit)
     else begin
-      let p = pat_ s in
+      let p = or_pat_ s in
       if peek s = Token.Comma then begin
         let ps = ref [p] in
         while peek s = Token.Comma do
-          ignore (advance s); ps := !ps @ [pat_ s]
+          ignore (advance s); ps := !ps @ [or_pat_ s]
         done;
         expect s Token.RParen; PTuple !ps
       end else if peek s = Token.Colon
@@ -1353,16 +1386,16 @@ and brace_map_pat_ s =
     let parse_entry () =
       match advance s with
       | Token.Ident k ->
-        if peek s = Token.Eq then (ignore (advance s); (k, pat_ s))
+        if peek s = Token.Eq then (ignore (advance s); (k, or_pat_ s))
         else (k, (PVar k : pat))
       (* An uppercase key is how an import names a type or a constructor:
          `let {TestOutcome, Pass} = import Test`. A map may have such a key
          too, and reads the same way. *)
       | Token.Upper k ->
-        if peek s = Token.Eq then (ignore (advance s); (k, pat_ s))
+        if peek s = Token.Eq then (ignore (advance s); (k, or_pat_ s))
         else (k, (PVar k : pat))
       | Token.String k ->
-        expect s Token.Eq; (k, pat_ s)
+        expect s Token.Eq; (k, or_pat_ s)
       | t -> fail (Format.asprintf "expected map key, got %a" Token.pp t)
     in
     let entries = ref [parse_entry ()] in
@@ -2204,7 +2237,7 @@ and match_ s =
        are evaluated right to left, so written inline this was the
        position after it. *)
     let at = peek_loc s in
-    let p = PLocated (at, pat_ s) in
+    let p = PLocated (at, arm_pat_ s at) in
     (* A guard starts with `if` (#142). A pattern never holds `if`, so an
        `if` before the arrow can only start a guard. `when` is the earlier
        spelling and has the same meaning; `wand f` writes it as `if`. A
@@ -2392,6 +2425,36 @@ and parse_handle_ s =
   let body = expr_ 0 s in
   expect s Token.With;
   s.with_owners <- s.with_owners - 1;
+  (* One operation of an arm: its name, the pattern its argument is
+     matched with, and the continuation's name.
+
+     `FS!read_file` reaches here as the Upper token "FS!" followed by an
+     identifier, since `!` is a suffix character. Joining them gives the
+     operation name, which is the public call with a `!` where its dot
+     would be: you call FS.read_file, you intercept FS!read_file. *)
+  let operation () =
+    match peek s with
+    | Token.Upper family
+      when String.length family > 1
+        && family.[String.length family - 1] = '!' ->
+      ignore (advance s);
+      let verb = expect_ident s in
+      let arg_pat = pat_atom_ s in
+      let cont_at = peek_loc s in
+      (family ^ verb, arg_pat, expect_cont_name s, cont_at)
+    | Token.Ident op_name ->
+      ignore (advance s);
+      let arg_pat = pat_atom_ s in
+      let cont_at = peek_loc s in
+      (op_name, arg_pat, expect_ident s, cont_at)
+    | Token.Return ->
+      fail_at (peek_loc s)
+        "a `return` case cannot share an arm with an operation; give it an \
+         arm of its own"
+    | t ->
+      fail_at (peek_loc s) (Format.asprintf "unexpected token in handler case: %a"
+        Token.pp t)
+  in
   let cases = arms_ s (fun () ->
     match peek s with
       | Token.Return ->
@@ -2400,31 +2463,26 @@ and parse_handle_ s =
         expect s Token.Arrow;
         let b = locate s (fun () -> statements_ s) in
         Ast.ReturnCase (p, b)
-      (* `FS!read_file` reaches here as the Upper token "FS!" followed by an
-         identifier, since `!` is a suffix character. Joining them gives the
-         operation name, which is the public call with a `!` where its dot
-         would be: you call FS.read_file, you intercept FS!read_file. *)
-      | Token.Upper family
-        when String.length family > 1
-          && family.[String.length family - 1] = '!' ->
-        ignore (advance s);
-        let verb = expect_ident s in
-        let op_name = family ^ verb in
-        let arg_pat = pat_atom_ s in
-        let cont_name = expect_cont_name s in
+      | _ ->
+        (* Several operations share one arm as the alternatives of a `match`
+           arm do (#141): `| FS!append p k | FS!write_file p k -> ...`. One
+           continuation serves them all, so each names it the same. *)
+        let (op_name, arg_pat, cont_name, _) = operation () in
+        let alts = ref [(op_name, arg_pat)] in
+        while peek s = Token.Pipe do
+          ignore (advance s);
+          let (op, p, k, k_at) = operation () in
+          if k <> cont_name then
+            fail_at k_at (Printf.sprintf
+              "the alternatives of an arm bind the same names: '%s' names \
+               its continuation '%s', and '%s' names it '%s'. Give them one \
+               name"
+              op k op_name cont_name);
+          alts := !alts @ [(op, p)]
+        done;
         expect s Token.Arrow;
         let b = locate s (fun () -> statements_ s) in
-        Ast.EffectCase (op_name, arg_pat, cont_name, b)
-      | Token.Ident op_name ->
-        ignore (advance s);
-        let arg_pat = pat_atom_ s in
-        let cont_name = expect_ident s in
-        expect s Token.Arrow;
-        let b = locate s (fun () -> statements_ s) in
-        Ast.EffectCase (op_name, arg_pat, cont_name, b)
-      | t ->
-        fail_at (peek_loc s) (Format.asprintf "unexpected token in handler case: %a"
-          Token.pp t))
+        Ast.EffectCase (!alts, cont_name, b))
   in
   Ast.Handle (body, cases)
 

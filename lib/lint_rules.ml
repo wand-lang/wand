@@ -36,6 +36,7 @@ type id =
   | V_MOD1     (* a module is bound to a name in lower case *)
   | A_IF1      (* a `match` over a Bool says what an `if` or `unless` says *)
   | V_BIDI1    (* a bidi control in a string or comment hides how the source reads *)
+  | V_ARM1     (* an alternative of an arm that the arms above it already match *)
 
 (* The prefix says what a finding will do to you, so a rule ID printed in a
    terminal answers that on its own -- the same reason a raising function is
@@ -212,6 +213,14 @@ let all = [
   { id = V_BIDI1;  code = "V-BIDI1";
     summary = "a bidirectional control character hides how the source reads";
     kind = Advisory };
+  (* An alternative of an or-pattern that the arms above it, or the
+     alternatives before it in its own arm, already match. Nothing can reach
+     it, and nothing about the arm says so. A whole arm that cannot be
+     reached is left alone, since a last `| _ ->` can be there on purpose;
+     an alternative has no such use. (#141) *)
+  { id = V_ARM1;  code = "V-ARM1";
+    summary = "an alternative of an arm matches nothing the arms above it leave";
+    kind = Violation };
 ]
 
 let rule id = List.find (fun r -> r.id = id) all
@@ -416,6 +425,11 @@ let shell4 ~typ =
      run as a command -- a file name like `x;rm -rf ~.log` runs `rm`. Write \
      %%{...}, which passes the value as one argument"
     typ
+
+let arm1 ~alternative =
+  Printf.sprintf
+    "the alternative `%s` matches nothing that the patterns before it do \
+     not already match, so it never runs its arm; take it out" alternative
 
 let ctor1 ~name ~type_name =
   Printf.sprintf

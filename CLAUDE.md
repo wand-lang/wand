@@ -265,6 +265,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `type Pod(name: String, tries: Int = 3)` field default | a second constructor, an `Option` for "not given" |
 | `type D(port "Port": Int)` a field's key in a document | a hand-written decoder for one odd key |
 | `type Shape = Circle Int \| Rect Int Int` | `Circle of Int` |
+| `\| Some 1 \| Some 2 -> e` one arm, several patterns (each binds the same names); `Some (1 \| 2)` inside a pattern | the arm written again for each pattern |
 | `try e` yields a `Result` | `try ... with`, `raise` |
 | `Ok x`, `Error e` | `Err e` |
 | `IO.println_err` to stderr | `eprintln`, `prerr_endline` |

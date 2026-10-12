@@ -1987,8 +1987,9 @@ let binders_within (e : expr) : (string * int) list =
     | Handle (b, cases) ->
       go line b;
       List.iter (function
-        | EffectCase (_, p, k, body) ->
-          add line p; add line (PVar k); go line body
+        | EffectCase (alts, k, body) ->
+          List.iter (fun (_, p) -> add line p) alts;
+          add line (PVar k); go line body
         | ReturnCase (p, body) -> add line p; go line body) cases
     | With (r, p, body) -> go line r; add line p; go line body
     | App (a, b) | BinOp (_, a, b) | Seq (a, b) -> go line a; go line b
@@ -3526,6 +3527,8 @@ let rec pat_is_refutable tenv (p : pat) =
   (* An annotation constrains the type, and a type cannot fail to match. *)
   | PAnnot (p, _)  -> pat_is_refutable tenv p
   | PLocated (_, p) -> pat_is_refutable tenv p
+  (* One alternative that cannot fail is enough. *)
+  | POr ps -> List.for_all (pat_is_refutable tenv) ps
   | _              -> true
 
 (* ── The shape of a command line ──────────────────────────────────────────
@@ -4007,8 +4010,60 @@ let check_module_destructure ~top tenv env pat e =
      | _ -> ())
   | _ -> ()
 
+(* What a pattern bound: the front of [after] that [before] does not have. *)
+let new_bindings (before : env) (after : env) : env =
+  let n = List.length after - List.length before in
+  List.filteri (fun i _ -> i < n) after
+
+(* The alternatives of an or-pattern, or the operations of one `handle` arm:
+   each as it is written, where it is, and what it binds. Every one binds
+   the names the first binds, with the same types, so the body sees one set
+   of names whichever alternative matched (#141). *)
+let check_alternatives (alts : (string * Token.loc option * env) list) =
+  match alts with
+  | [] | [_] -> ()
+  | (first_text, _, first) :: rest ->
+    let names (bs : env) = List.sort_uniq compare (List.map fst bs) in
+    List.iter (fun (text, loc, (bs : env)) ->
+      let fail msg =
+        match loc with
+        | Some l -> raise (TypeErrorAt (l, msg))
+        | None -> raise (TypeError msg)
+      in
+      let unbound one other n =
+        fail (Printf.sprintf
+          "the alternatives of a pattern bind the same names: `%s` binds '%s' \
+           and `%s` does not" one n other)
+      in
+      List.iter (fun n -> if not (List.mem_assoc n bs) then unbound first_text text n)
+        (names first);
+      List.iter (fun n -> if not (List.mem_assoc n first) then unbound text first_text n)
+        (names bs);
+      List.iter (fun n ->
+        match List.assoc n first, List.assoc n bs with
+        | Mono t0, Mono t ->
+          (try unify t0 t with TypeError _ | TypeErrorAt _ ->
+            fail (Printf.sprintf
+              "'%s' is %s in `%s` and %s in `%s`; the alternatives of a \
+               pattern bind each name with one type"
+              n (string_of_typ t0) first_text (string_of_typ t) text))
+        | _ -> ()) (names bs)) rest
+
 let rec infer_pat tenv (p : pat) t (env : env) : env =
   match p with
+  (* Each alternative against the same type and from the same scope; the
+     body sees what the first binds, and the others bind the same. *)
+  | POr ps ->
+    let alternative p =
+      let loc = match p with PLocated (l, _) -> Some l | _ -> !cur_loc in
+      let env' = infer_pat tenv p t env in
+      (Formatter.emit_pat p, loc, new_bindings env env', env')
+    in
+    let alts = List.map alternative ps in
+    check_alternatives (List.map (fun (text, loc, bs, _) -> (text, loc, bs)) alts);
+    (match alts with
+     | (_, _, _, env') :: _ -> env'
+     | [] -> env)
   (* Where the arm's pattern is, so what is found in it -- a bare
      constructor read as the matched type's, an error -- is placed there. *)
   | PLocated (loc, inner) ->
@@ -4448,6 +4503,24 @@ let is_equation_group (scrutinee : expr) (arity : int) =
   | _ -> false
 
 (* Returns None if exhaustive, or Some witness naming one uncovered case. *)
+(* The pattern under its position and its annotation, which say nothing
+   about which values it matches. *)
+let rec bare_pat (p : pat) =
+  match p with
+  | PLocated (_, p) | PAnnot (p, _) -> bare_pat p
+  | p -> p
+
+(* A row whose first pattern is an or-pattern, as one row for each of its
+   alternatives: a value the row matches is one some alternative matches
+   (#141). *)
+let rec expand_or (row : pat list) : pat list list =
+  match row with
+  | h :: tl ->
+    (match bare_pat h with
+     | POr ps -> List.concat_map (fun p -> expand_or (p :: tl)) ps
+     | _ -> [row])
+  | [] -> [row]
+
 let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : witness option =
   let ctor_env = tenv_to_ctor_env tenv in
   (* go types matrix: None if `matrix` covers every value of `types`,
@@ -4457,6 +4530,7 @@ let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : witness option
     match types with
     | [] -> if matrix = [] then Some [] else None
     | t :: rest_types ->
+      let matrix = List.concat_map expand_or matrix in
       if matrix <> [] && List.for_all (fun row -> is_wild_pat (List.hd row)) matrix then begin
         let default = List.map (fun row -> List.tl row) matrix in
         match go rest_types default with
@@ -4509,6 +4583,111 @@ let check_exhaustive tenv (scrutinee_t : typ) (pats : pat list) : witness option
   | None -> None
   | Some [] -> None
   | Some (w :: _) -> Some w
+
+(* Whether some value of [t] matches [q] and none of [earlier]: the
+   usefulness question of the algorithm `check_exhaustive` uses. Where it
+   cannot say -- a type still unresolved, a map, a field pattern it does not
+   look into -- it answers yes, so an alternative is never called redundant
+   when it is not. To that end [q] is read as matching at least what it
+   does, and each earlier pattern as matching at most what it does. *)
+let pat_useful tenv (t : typ) (earlier : pat list) (q : pat) : bool =
+  let ctor_env = tenv_to_ctor_env tenv in
+  (* An earlier pattern that names fields with patterns of their own matches
+     less than its constructor, and is not looked into. *)
+  let rec narrower h =
+    match bare_pat h with
+    | PQualified (_, p) -> narrower p
+    | PConstrNamed (_, kvs) -> List.exists (fun (_, p) -> not (is_wild_pat p)) kvs
+    | PMap _ -> true
+    | _ -> false
+  in
+  let rec useful (types : typ list) (matrix : pat list list) (q : pat list) =
+    match types, q with
+    | [], _ | _, [] -> matrix = []
+    | t :: rest_types, qh :: qt ->
+      let matrix = List.concat_map expand_or matrix in
+      let default () =
+        List.filter_map (fun row ->
+          match row with
+          | h :: tl when is_wild_pat h -> Some tl
+          | _ -> None) matrix
+      in
+      let specialize cname arity =
+        List.filter_map (fun row ->
+          match row with
+          | [] -> None
+          | h :: tl ->
+            if narrower h then None
+            else match match_against_ctor ~tenv cname arity h with
+              | `Match subs -> Some (subs @ tl)
+              | `Wildcard -> Some (List.init arity (fun _ -> Wild) @ tl)
+              | `NoMatch -> None) matrix
+      in
+      match bare_pat qh with
+      | POr ps -> List.exists (fun p -> useful types matrix (p :: qt)) ps
+      | _ when is_wild_pat qh ->
+        let ctors = if is_infinite_domain t then [] else ctors_of_type tenv ctor_env t in
+        let heads_name (c, arg_ts) =
+          List.exists (fun row ->
+            match row with
+            | h :: _ when not (is_wild_pat h) && not (narrower h) ->
+              (match match_against_ctor ~tenv c (List.length arg_ts) h with
+               | `Match _ -> true | _ -> false)
+            | _ -> false) matrix
+        in
+        if is_infinite_domain t then useful rest_types (default ()) qt
+        else (match ctors with
+          | [] -> true
+          | _ when List.for_all heads_name ctors ->
+            List.exists (fun (c, arg_ts) ->
+              let arity = List.length arg_ts in
+              useful (arg_ts @ rest_types) (specialize c arity)
+                (List.init arity (fun _ -> Wild) @ qt)) ctors
+          | _ -> useful rest_types (default ()) qt)
+      | qb when is_infinite_domain t ->
+        (* A literal: the earlier rows that hold the same one, or nothing. *)
+        let same =
+          List.filter_map (fun row ->
+            match row with
+            | h :: tl when is_wild_pat h || bare_pat h = qb -> Some tl
+            | _ -> None) matrix
+        in
+        useful rest_types same qt
+      | _ ->
+        let ctors = ctors_of_type tenv ctor_env t in
+        let own =
+          List.find_map (fun (c, arg_ts) ->
+            let arity = List.length arg_ts in
+            match match_against_ctor ~tenv c arity qh with
+            | `Match subs when List.length subs = arity -> Some (c, arg_ts, subs)
+            | _ -> None) ctors
+        in
+        (match own with
+         | None -> true
+         | Some (c, arg_ts, subs) ->
+           useful (arg_ts @ rest_types) (specialize c (List.length arg_ts)) (subs @ qt))
+  in
+  useful [t] (List.map (fun p -> [p]) earlier) [q]
+
+(* The alternatives of an arm that the arms above it, and the alternatives
+   before it in the same arm, already match: where each is, and how it is
+   written. A guarded arm above may not answer, so it covers nothing (#141). *)
+let redundant_alternatives : (Token.loc option * string) list ref = ref []
+
+let note_redundant_alternatives tenv (t : typ) (cases : case list) =
+  ignore (List.fold_left (fun above (p, guard, _) ->
+    let covered =
+      match bare_pat p with
+      | POr alts ->
+        List.fold_left (fun covered alt ->
+          (if not (pat_useful tenv t covered alt) then
+             let loc = match alt with PLocated (l, _) -> Some l | _ -> None in
+             redundant_alternatives :=
+               (loc, Formatter.emit_pat alt) :: !redundant_alternatives);
+          covered @ [alt]) above alts
+      | _ -> above @ [p]
+    in
+    match guard with None -> covered | Some _ -> above) [] cases)
 
 (* ── Expression inference ─────────────────────────────────────────────────── *)
 
@@ -4948,6 +5127,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
        | Some g -> unify_expected ~expected:TBool ~got:(infer tenv env' g));
       unify_expected ~expected:result_t ~got:(infer tenv env' body)
     ) cases;
+    (try note_redundant_alternatives tenv ts cases
+     with TypeError _ | TypeErrorAt _ -> ());
     let unguarded = List.filter_map (fun (p, guard, body) ->
       match guard with None -> Some (p, body) | Some _ -> None) cases in
     let unguarded_pats = List.map fst unguarded in
@@ -5681,9 +5862,9 @@ let rec infer tenv (env : env) (e : expr) : typ =
   | Handle (body_expr, cases) ->
     let (body_t, body_effects) = scoped_eff (fun () -> infer tenv env body_expr) in
     let handled =
-      List.filter_map (function
-        | Ast.EffectCase (op, _, _, _) -> Some op
-        | Ast.ReturnCase _ -> None) cases
+      List.concat_map (function
+        | Ast.EffectCase (alts, _, _) -> List.map fst alts
+        | Ast.ReturnCase _ -> []) cases
     in
     (* A case for an operation that does not exist used to be accepted in
        silence, and since nothing intercepted it the real effect ran. A
@@ -5729,16 +5910,28 @@ let rec infer tenv (env : env) (e : expr) : typ =
       | Ast.ReturnCase (p, b) ->
         let env' = infer_pat tenv p body_t env in
         unify_expected ~expected:result_t ~got:(infer tenv env' b)
-      | Ast.EffectCase (op, arg_pat, cont_name, case_body) ->
+      | Ast.EffectCase (alts, cont_name, case_body) ->
         (* The operation says what it carries and what resuming it supplies.
            An operation with no single payload shape says neither, and those
            two stay open, as every case used to be. *)
-        let (arg_t, cont_arg_t) =
-          match operation_types op with
-          | Some (a, r) -> (a, r)
-          | None -> (fresh (), fresh ())
+        let operation (op, arg_pat) =
+          let (arg_t, cont_arg_t) =
+            match operation_types op with
+            | Some (a, r) -> (a, r)
+            | None -> (fresh (), fresh ())
+          in
+          (op, arg_pat, infer_pat tenv arg_pat arg_t env, cont_arg_t)
         in
-        let env' = infer_pat tenv arg_pat arg_t env in
+        let typed = List.map operation alts in
+        (* Several operations in one arm bind the same names, the
+           continuation's among them, with one type each (#141). *)
+        let alternative (op, p, env', cont_arg_t) =
+          let text = op ^ " " ^ Formatter.emit_pat_atom p ^ " " ^ cont_name in
+          let cont = (cont_name, Mono (TFun (cont_arg_t, result_t, Effect_set.unknown ()))) in
+          (text, None, cont :: new_bindings env env')
+        in
+        check_alternatives (List.map alternative typed);
+        let (_, _, env', cont_arg_t) = List.hd typed in
         (* Resuming a handler's continuation runs the rest of the handled
            expression, whose effects the handler is in the middle of
            deciding, so its effects are left to inference. *)
@@ -7531,7 +7724,7 @@ let shell_sites (prog : program) : (Token.loc * Ast.expr) list =
     | Handle (b, cases) ->
       go loc b;
       List.iter (function
-        | Ast.EffectCase (_, _, _, x) -> go loc x
+        | Ast.EffectCase (_, _, x) -> go loc x
         | Ast.ReturnCase (_, x) -> go loc x) cases
     | With (r, _, b) -> go loc r; go loc b
     | Contract (rs, es, b) ->
@@ -7988,6 +8181,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   hole_locs := [];
   pending_elements := [];
   relaxed_ctors := [];
+  redundant_alternatives := [];
   let prog = settle_aliases ~init_tenv prog in
   (* Read before the items are walked, so an implementation can precede the
      interface it answers to, the way a function may call one defined below
@@ -8206,7 +8400,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
           | PMap kvs | PConstrNamed (_, kvs) ->
             List.concat_map (fun (_, p) -> names p) kvs
           | PConstr (_, ps) -> List.concat_map names ps
-          | PAnnot (p, _) | PLocated (_, p) -> names p
+          | PAnnot (p, _) | PLocated (_, p) | POr (p :: _) -> names p
           | _ -> []
         in
         List.map (fun n -> (n, loc)) (names pat)

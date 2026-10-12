@@ -1,0 +1,68 @@
+uses {FS.Read, FS.Write}
+
+-- Several patterns in one arm (#141).
+
+import FS
+import List
+import String
+
+let {test, group} = import Test
+
+type Level = Debug | Info | Warn | Failure | Fatal
+
+let loud? level =
+  match level with
+  | Debug | Info -> false
+  | Warn | Failure | Fatal -> true
+
+let bump part =
+  match part with
+  | Some "major" | Some "minor" | Some "patch" -> "bump"
+  | _ -> "usage"
+
+let swap xs =
+  match xs with
+  | [a, b] | [b, a, _] -> "%{a}-%{b}"
+  | _ -> "none"
+
+let size n =
+  match n with
+  | Some (1 | 2 | 3) -> "small"
+  | Some _ -> "large"
+  | None -> "none"
+
+let value r =
+  match r with
+  | Ok n | Error n if n > 0 -> n
+  | _ -> 0
+
+let code c =
+  match c with
+  | 0 -> "ok"
+  | 1 | 2 -> "warning"
+  | _ -> "error"
+
+group "or-patterns" (fn () -> [
+  test "an arm matches each of its patterns" (fn t ->
+    t.eq
+      [false, false, true, true, true]
+      (List.map loud? [Debug, Info, Warn, Failure, Fatal])),
+  test "string literals under a constructor" (fn t ->
+    t.eq
+      ["bump", "bump", "usage", "usage"]
+      (List.map bump [Some "minor", Some "patch", Some "x", None])),
+  test "the pattern that matches binds the names" (fn t ->
+    t.eq ["1-2", "2-1", "none"] (List.map swap [[1, 2], [1, 2, 3], [1]])),
+  test "patterns inside a pattern" (fn t ->
+    t.eq ["small", "large", "none"] (List.map size [Some 2, Some 9, None])),
+  test "a guard covers every pattern of its arm" (fn t ->
+    t.eq [4, 5, 0, 0] (List.map value [Ok 4, Error 5, Ok (-1), Error 0])),
+  test "an arm of two literals" (fn t ->
+    t.eq ["ok", "warning", "warning", "error"] (List.map code [0, 1, 2, 3])),
+  test "operations share a handle arm" (fn t ->
+    let held =
+      handle (FS.write_file! ./or-a.txt "x"; FS.append! ./or-b.txt "y"; "done") with
+      | FS!write_file _ k | FS!append _ k -> k ()
+    in
+    t.eq ("done", false) (held, FS.exists? ./or-a.txt || FS.exists? ./or-b.txt))
+])
