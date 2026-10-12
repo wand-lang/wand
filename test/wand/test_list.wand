@@ -258,3 +258,19 @@ group "take and drop with a count below 1" (fn () -> [
     let xs = [1, 2, 3];
     t.eq [1, 2, 3] (List.drop (List.length xs - 20) xs))
 ])
+
+-- ── ++ ──────────────────────────────────────────────────────────────────
+-- `++` joins two lists as it joins two strings (#151).
+
+group "++" (fn () ->
+  let join a b = a ++ b;
+  [
+    test "joins two lists" (fn t -> t.eq [1, 2, 3] ([1] ++ [2, 3])),
+    test "an empty side" (fn t -> t.eq [1] ([] ++ [1] ++ [])),
+    test "the same list as List.concat" (fn t ->
+      t.eq (List.concat ["a"] ["b"]) (["a"] ++ ["b"])),
+    test "one function at both types" (fn t ->
+      t.eq ([1, 2], "ab") (join [1] [2], join "a" "b")),
+    test "a long list" (fn t ->
+      t.eq 200000 (List.length (List.range 1 100000 ++ List.range 1 100000)))
+  ])

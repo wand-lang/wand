@@ -140,6 +140,32 @@ A sum of sizes is written in bytes, because a `Size` holds one unit and
 Neither type has a value below zero, so a subtraction that would go under
 floors there: `5s - 10s` is `0s`.
 
+### Joining and `Concat`
+
+`++` joins two strings or two lists. The two sides and the result are one
+type, decided at the use site, as for `+`:
+
+```ocaml
+"foo" ++ "bar"          -- "foobar"
+[1, 2] ++ [3]           -- [1, 2, 3]
+let join a b = a ++ b   -- join : 'a: Concat -> 'a -> 'a
+(join "a" "b", join [1] [2])   -- ("ab", [1, 2])
+```
+
+`Concat` is `String` or `List 'a`. A string and a list do not join, and
+neither does any other type:
+
+```ocaml
+"a" ++ [1]
+-- type error: '++' joins two strings or two lists, not a String and a List Int
+1 ++ 2
+-- type error: '++' joins two strings or two lists, and this is Int
+```
+
+Joining two lists copies the left list once and shares the right one, so
+`xs ++ ys` takes time in the length of `xs`. [`List.concat`](#list) is the
+same join as a function.
+
 ### Comparison and `Ord`
 
 `==` and `!=` compare any two values of one type. `<`, `>`, `<=` and `>=`
@@ -196,6 +222,9 @@ spelling. For the largest of a list rather than of two values,
 
 The constraints nest: every `Num` is an `Add`, and every `Add` is an `Ord`.
 A variable that is more than one of them is the narrowest.
+[`Concat`](#joining-and-concat) is not in that line. A variable that is
+both `Concat` and `Ord` is a `String`, the one type in both. A variable
+that is both `Concat` and `Add` is a type error.
 
 **`List.sort` orders more than `<` does.** It takes a list of any type, so
 sorting is available where the operator is not:
@@ -325,7 +354,8 @@ valid UTF-8 character as itself:
 "caf\xc3\xa9"            -- "café", which wand f writes as such
 ```
 
-String concatenation with `++`:
+String concatenation with `++`, which also joins two lists
+([Joining and `Concat`](#joining-and-concat)):
 
 ```ocaml
 "foo" ++ "bar"           -- "foobar"
@@ -2265,7 +2295,7 @@ and it cannot resume a read with an `Int`:
 
 ```ocaml
 | FS!write_file (path, _) k -> path ++ "!" ++ k ()
--- expected String, got Path; Path.to_string gives its text
+-- '++' joins two strings or two lists, and this is Path; Path.to_string gives its text
 
 | FS!read_file _ k -> k 42
 -- expected String, got Int; Int.to_string gives its text
@@ -2592,11 +2622,11 @@ no room for a third thing — so the constraint is what an operator checks, and
 the interface is what a caller passes. They cannot be confused when written
 either, since a constraint is only ever written after `'a:`.
 
-`Num` and `Add` cannot become interfaces for the same reason. Resolving an
+`Num`, `Add` and `Concat` cannot become interfaces for the same reason. Resolving an
 operator would mean finding the implementation from the type of its operands,
 which is a lookup keyed by interface and type — a registry, and with it the
 orphan, the duplicate and the visibility rule. So the constraints stay a
-closed set of three, and a user type still cannot be compared with `<`:
+closed set of four, and a user type still cannot be compared with `<`:
 
 ```ocaml
 type S = Zulu | Alpha
@@ -3939,7 +3969,7 @@ let m : Map (List Int) = {a = [1, 2], b = [3]}   -- parens needed for a compound
 ```
 
 `:t` prints a type in this syntax. So you can paste what you see into an
-annotation. This includes the constraints `Num`, `Add` and `Ord`, which are
+annotation. This includes the constraints `Num`, `Add`, `Ord` and `Concat`, which are
 written on a type variable: `let square : 'a: Num -> 'a = fn x -> x * x`
 rebuilds what `:t square` printed. A constraint written bare, without a
 variable, is a new one each time, so `Num -> Num` is two variables that the
