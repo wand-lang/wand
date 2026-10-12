@@ -148,6 +148,27 @@ let test_wrong_edge_falls_back () =
   Alcotest.(check string) "another list past the edge" "9"
     (Evaluator.show_value (eval_with env'' (Global g)))
 
+(* `m.f` keeps the list past the edge, the module and the member. Another
+   list, another module, or an edge that is not the resolver's gives the
+   member of the module that is there. *)
+let test_module_field_cache () =
+  let edge = "a" in
+  let g = { g_name = "M"; g_depth = 1; g_edge = edge; g_cache = Resolve.new_cache () } in
+  let e = ModField (g, "f", Resolve.new_cache (), 0) in
+  let modul n = Evaluator.VRecord (Evaluator.vrecord_make [("f", Evaluator.VInt n)]) in
+  let one = modul 1 and two = modul 2 in
+  let show env = Evaluator.show_value (eval_with env e) in
+  let past = [ ("M", one) ] in
+  Alcotest.(check string) "the first read" "1" (show ((edge, Evaluator.VInt 0) :: past));
+  Alcotest.(check string) "the same list past the edge" "1"
+    (show ((edge, Evaluator.VInt 5) :: past));
+  Alcotest.(check string) "another module" "2"
+    (show [ (edge, Evaluator.VInt 0); ("M", two) ]);
+  Alcotest.(check string) "the edge is not the resolver's binder" "1"
+    (show [ ("b", Evaluator.VInt 0); ("M", one) ]);
+  Alcotest.(check string) "the first module again" "1"
+    (show ((edge, Evaluator.VInt 0) :: past))
+
 (* A function value bound by `let` is not made recursive unless a `fn` is
    written there. `add 1` was made where `inc` meant the outer one, and
    binding the new `inc` inside it took that from it. *)
@@ -230,6 +251,7 @@ let () =
     "a wrong place", [
       Alcotest.test_case "a slot" `Quick test_wrong_place_falls_back;
       Alcotest.test_case "a global" `Quick test_wrong_edge_falls_back;
+      Alcotest.test_case "a module's member" `Quick test_module_field_cache;
     ];
     "programs", [
       Alcotest.test_case "a function value keeps its scope" `Quick

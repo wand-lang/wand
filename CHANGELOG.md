@@ -5,6 +5,7 @@
 ### Changed
 
 - A pattern finds its constructor one time and keeps it, which makes pattern matching faster (#166).
+- The evaluator reads a variable or a module member with less work (#165).
 
 ## [0.106.0] - 2026-10-12
 

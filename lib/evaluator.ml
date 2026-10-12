@@ -741,6 +741,17 @@ let rec lookup_name name (e : env) : value =
     then v
     else lookup_name name rest
 
+(* The list past the first [d] bindings of [l], when the last of them is
+   [edge]'s; otherwise [e]. A function of its own, and not one inside
+   `lookup_global`: a local function that uses the names around it is a
+   closure, and was made again at each lookup. *)
+let rec past_edge d edge (e : env) (l : env) : env =
+  match l with
+  | (k, _) :: rest ->
+    if d = 1 then (if k == edge then rest else e)
+    else past_edge (d - 1) edge e rest
+  | [] -> e
+
 (* A name bound outside the definition that uses it. The definition's own
    bindings are stepped past without a compare -- the resolver has said
    none of them is this name -- and the binder at the edge is checked to be
@@ -752,40 +763,37 @@ let rec lookup_name name (e : env) : value =
    merged a function's equations, say -- the name is looked up by its text
    from the front. *)
 let lookup_global (g : Ast.global) (e : env) : value =
-  let rec past d l =
-    match l with
-    | (k, _) :: rest -> if d = 1 then (if k == g.Ast.g_edge then rest else e) else past (d - 1) rest
-    | [] -> e
-  in
-  let from = if g.Ast.g_depth = 0 then e else past g.Ast.g_depth e in
-  if from == e && g.Ast.g_depth <> 0 then lookup_name g.Ast.g_name e
+  let d = g.Ast.g_depth in
+  let from = if d = 0 then e else past_edge d g.Ast.g_edge e e in
+  if from == e && d <> 0 then lookup_name g.Ast.g_name e
   else begin
-    let cache = g.Ast.g_cache in
-    let hit = cache.Ast.hit in
+    let hit = g.Ast.g_cache.Ast.hit in
     if Obj.is_block hit && (Obj.obj (Obj.field hit 0) : env) == from
     then (Obj.obj (Obj.field hit 1) : value)
     else begin
       let v = lookup_name g.Ast.g_name from in
-      if v != absent then cache.Ast.hit <- Obj.repr (from, v);
+      if v != absent then g.Ast.g_cache.Ast.hit <- Obj.repr (from, v);
       v
     end
   end
+
+(* The binding [d] steps into [l], if it is the binder's own; otherwise
+   the lookup of [name] by its text in [e]. *)
+let rec slot_in name d (e : env) (l : env) : value =
+  match l with
+  | (k, v) :: rest ->
+    if d = 0 then (if k == name then v else lookup_name name e)
+    else slot_in name (d - 1) e rest
+  | [] -> lookup_name name e
 
 (* The binding `d` steps in, if it is the binder's own; otherwise the
    lookup by name. The binder's string is the one the pattern holds, and
    binding a name pushes that string, so one pointer compare says whether
    this is the binding the resolver meant. *)
 let lookup_slot name d (e : env) : value =
-  let by_name () =
-    match lookup_var name e with Some v -> v | None -> absent in
-  let rec go d l =
-    match l with
-    | (k, v) :: rest ->
-      if d = 0 then (if k == name then v else by_name ())
-      else go (d - 1) rest
-    | [] -> by_name ()
-  in
-  go d e
+  match e with
+  | (k, v) :: _ when d = 0 && k == name -> v
+  | _ -> slot_in name d e e
 
 (* Set `WAND_CHECK_SLOTS` to have every resolved lookup also made by name,
    and a difference raised. The tests run with it, so a place where the
@@ -2767,18 +2775,36 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     (* The steps the positions around `m` took, as they took them. *)
     for _ = 1 to positions do take_step c done;
     let m = g.Ast.g_name in
-    let mv = lookup_global g env in
-    if check_slots then check_slot m env mv;
-    (match mv with
-     | VRecord r ->
-       let hit = cf.Ast.hit in
-       if Obj.is_block hit && (Obj.obj (Obj.field hit 0) : vrecord) == r
-       then (Obj.obj (Obj.field hit 1) : value)
-       else
-         (match vrecord_get label r with
-          | Some v -> cf.Ast.hit <- Obj.repr (r, v); v
-          | None -> eval_in c tail env (Field (Constr m, label)))
-     | _ -> eval_in c tail env (Field (Constr m, label)))
+    (* `cf` keeps the list past the edge, the module found from it and the
+       member, so a second read from the same list is one compare, as for
+       a `Global`. *)
+    let d = g.Ast.g_depth in
+    let from = if d = 0 then env else past_edge d g.Ast.g_edge env env in
+    let hit = cf.Ast.hit in
+    if (d = 0 || from != env) && Obj.is_block hit
+       && (Obj.obj (Obj.field hit 0) : env) == from
+    then begin
+      if check_slots then check_slot m env (Obj.obj (Obj.field hit 1) : value);
+      (Obj.obj (Obj.field hit 2) : value)
+    end else begin
+      let mv = lookup_global g env in
+      if check_slots then check_slot m env mv;
+      match mv with
+      | VRecord r ->
+        if Obj.is_block hit
+           && (match (Obj.obj (Obj.field hit 1) : value) with
+               | VRecord r' -> r' == r
+               | _ -> false)
+        then begin
+          let v = (Obj.obj (Obj.field hit 2) : value) in
+          cf.Ast.hit <- Obj.repr (from, mv, v);
+          v
+        end else
+          (match vrecord_get label r with
+           | Some v -> cf.Ast.hit <- Obj.repr (from, mv, v); v
+           | None -> eval_in c tail env (Field (Constr m, label)))
+      | _ -> eval_in c tail env (Field (Constr m, label))
+    end
   | GlobalCtor g ->
     let v = lookup_global g env in
     if check_slots then check_slot g.Ast.g_name env v;
