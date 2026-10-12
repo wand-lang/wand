@@ -5726,7 +5726,172 @@ let stream_builtins : env = [
     | _ -> raise (EvalError "Stream.to_list: expected Stream")));
 ]
 
-let stdlib_eval_env : env = [
+(* ── List functions that take a function ───────────────────────────────── *)
+
+(* `List.find`, `map`, `filter` and their kin were written in wand, and each
+   element cost a wand call to the loop as well as the call to the function
+   it was given: about 400ns an element, which was most of the time in a
+   script that looks for one word in the words of every line (#122).
+
+   Each one below calls the function it is given with `apply`, once for each
+   element the wand definition called it on, in the same order, and stops
+   where the wand definition stopped. So an effect the function performs
+   reaches the same handler, a raise passes out through the same `try`, and
+   the call depth is what it was.
+
+   The loop itself takes one step for each element, as an evaluated
+   expression does: a step limit still bounds it, an interrupt still stops
+   it, and a fiber still yields, when the function it calls is a builtin
+   that takes no steps of its own. *)
+let list_step () =
+  check_interrupt ();
+  let c = loc_cell () in
+  c.budget <- c.budget - 1;
+  if c.budget <= 0 then fiber_turn c;
+  let f = c.fuel in
+  if f != unlimited then begin
+    f.left <- f.left - 1;
+    if f.left < 0 then out_of_steps f
+  end
+
+let list_of name = function
+  | VList xs -> xs
+  | _ -> raise (EvalError (name ^ ": expected List"))
+
+let bool_of name = function
+  | VBool b -> b
+  | _ -> raise (EvalError (name ^ ": the function must return a Bool"))
+
+(* A builtin of a function and a list. *)
+let list_hof name (go : value -> value list -> value) =
+  VBuiltin (fun f -> VBuiltin (fun xs -> go f (list_of name xs)))
+
+let list_hof_builtins : env = [
+  ("list_map", list_hof "List.map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t -> list_step (); let v = apply f h in go (v :: acc) t
+    in
+    go [] xs));
+  ("list_filter", list_hof "List.filter" (fun p xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        if bool_of "List.filter" (apply p h) then go (h :: acc) t else go acc t
+    in
+    go [] xs));
+  ("list_filter_map", list_hof "List.filter_map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        (match apply f h with
+         | VConstr (Ctor.Builtin "Some", [v]) -> go (v :: acc) t
+         | VConstr (Ctor.Builtin "None", []) -> go acc t
+         | _ -> raise (EvalError "List.filter_map: the function must return an Option"))
+    in
+    go [] xs));
+  ("list_flat_map", list_hof "List.flat_map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        let ys = list_of "List.flat_map" (apply f h) in
+        charge (List.length ys);
+        go (List.rev_append ys acc) t
+    in
+    go [] xs));
+  ("list_fold_left", VBuiltin (fun f -> VBuiltin (fun init -> VBuiltin (fun xs ->
+    let rec go acc = function
+      | [] -> acc
+      | h :: t -> list_step (); go (apply (apply f acc) h) t
+    in
+    go init (list_of "List.fold_left" xs)))));
+  (* The wand definition folds left over the list turned round, so the list
+     is turned round here too: a right fold that recursed on the tail first
+     ran out of stack on a long list. *)
+  ("list_fold_right", VBuiltin (fun f -> VBuiltin (fun xs -> VBuiltin (fun init ->
+    let rec go acc = function
+      | [] -> acc
+      | h :: t -> list_step (); go (apply (apply f h) acc) t
+    in
+    go init (List.rev (list_of "List.fold_right" xs))))));
+  ("list_any", list_hof "List.any?" (fun p xs ->
+    let rec go = function
+      | [] -> VBool false
+      | h :: t -> list_step (); if bool_of "List.any?" (apply p h) then VBool true else go t
+    in
+    go xs));
+  ("list_all", list_hof "List.all?" (fun p xs ->
+    let rec go = function
+      | [] -> VBool true
+      | h :: t -> list_step (); if bool_of "List.all?" (apply p h) then go t else VBool false
+    in
+    go xs));
+  ("list_find", list_hof "List.find" (fun p xs ->
+    let rec go = function
+      | [] -> v_none
+      | h :: t ->
+        list_step ();
+        if bool_of "List.find" (apply p h) then VConstr (Ctor.Builtin "Some", [h])
+        else go t
+    in
+    go xs));
+  ("list_take_while", list_hof "List.take_while" (fun p xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        if bool_of "List.take_while" (apply p h) then go (h :: acc) t
+        else VList (List.rev acc)
+    in
+    go [] xs));
+  ("list_drop_while", list_hof "List.drop_while" (fun p xs ->
+    let rec go = function
+      | [] -> VList []
+      | h :: t as l ->
+        list_step ();
+        if bool_of "List.drop_while" (apply p h) then go t else VList l
+    in
+    go xs));
+  ("list_each", list_hof "List.each" (fun f xs ->
+    let rec go = function
+      | [] -> VUnit
+      | h :: t -> list_step (); ignore (apply f h); go t
+    in
+    go xs));
+  (* No function to call, but each was a wand loop all the same. *)
+  ("list_contains", VBuiltin (fun x -> VBuiltin (fun xs ->
+    let rec go = function
+      | [] -> VBool false
+      | h :: t -> list_step (); if wand_equal h x then VBool true else go t
+    in
+    go (list_of "List.contains?" xs))));
+  ("list_indexed", VBuiltin (fun xs ->
+    let rec go i acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t -> list_step (); go (i + 1) (VTuple [VInt i; h] :: acc) t
+    in
+    go 0 [] (list_of "List.indexed" xs)));
+  ("list_zip", VBuiltin (fun xs -> VBuiltin (fun ys ->
+    let rec go acc xs ys =
+      match xs, ys with
+      | a :: t, b :: u -> list_step (); go (VTuple [a; b] :: acc) t u
+      | _ -> VList (List.rev acc)
+    in
+    go [] (list_of "List.zip" xs) (list_of "List.zip" ys))));
+  ("list_take", VBuiltin (function
+    | VInt n -> VBuiltin (fun xs ->
+      let rec go n acc = function
+        | h :: t when n > 0 -> list_step (); go (n - 1) (h :: acc) t
+        | _ -> VList (List.rev acc)
+      in
+      go n [] (list_of "List.take" xs))
+    | _ -> raise (EvalError "List.take: expected Int")));
+]
+
+let stdlib_eval_env : env = list_hof_builtins @ [
   ("io_print",   VBuiltin (fun v -> perform_wand ("IO!print",   v)));
   ("io_println", VBuiltin (fun v -> perform_wand ("IO!println", v)));
   ("proc_exit",  performing "Proc!exit" (function VInt n -> raise (Interrupted n) | _ -> raise (EvalError "exit: expected Int")));

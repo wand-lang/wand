@@ -19,6 +19,7 @@
 - `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
 - The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
 - The benchmark harness writes its long `claude -p` command over several lines (#114).
+- `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
 
 ### Fixed
 
@@ -28,6 +29,7 @@
 - An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
 - An error in a constructor pattern inside another pattern points at the inner constructor (#115).
 - `wand f` keeps `Ok ()` with its space, and puts it in brackets where it is an argument: `f (Ok ()) x` (#116).
+- `List.contains?` on a list of more than 1,000,000 elements no longer stops with "too many nested calls" (#122).
 - `wand f` keeps each `\` line continuation in a command and its line break, and indents the continued lines (#114).
 - `wand f` writes a command that opens on the line under `$?(` with the `)` under the line that opens it, not to the left of the command (#114).
 - V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).

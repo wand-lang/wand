@@ -1,62 +1,48 @@
--- `acc` reversed onto the front of `rest`. Each function below that builds
--- a list builds it backwards in an accumulator and turns it round once at
--- the end, so the call that does the work is always in tail position: a
--- call that waits on the next one ran out of depth on a list of a million
--- lines, and `String.lines` makes those from any large log.
+-- `acc` reversed onto the front of `rest`.
+--
+-- The functions below that walk a list and call a function on each element
+-- -- `map`, `filter`, `find` and their kin -- are builtins. Written in wand,
+-- each element cost a wand call to the loop as well as the call to the
+-- function, and that was most of the time in a script that looks for one
+-- word in the words of each line. The builtins call the function on the
+-- same elements, in the same order, and stop where these definitions did.
 let _onto acc rest = list_rev_onto acc rest
 
 -- Apply a function to every element of a list, returning a new list.
 --
 -- >> List.map (fn x -> x * 2) [1, 2, 3]
 -- [2, 4, 6] : List Int
-let map f xs =
-  let go [] acc = _onto acc []
-  let go [h :: t] acc = go t (f h :: acc);
-  go xs []
+let map f xs = list_map f xs
 
 -- Keep only elements satisfying a predicate.
 --
 -- >> List.filter (fn x -> x >= 2) [1, 2, 3]
 -- [2, 3] : List Int
-let filter p xs =
-  let go [] acc = _onto acc []
-  let go [h :: t] acc = go t (if p h then h :: acc else acc);
-  go xs []
+let filter p xs = list_filter p xs
 
 -- Apply a function to every element, keeping each Some value and dropping each None.
 --
 -- >> List.filter_map (fn x -> if x > 1 then Some (x * 10) else None) [1, 2, 3]
 -- [20, 30] : List Int
-let filter_map f xs =
-  let go [] acc = _onto acc []
-  let go [h :: t] acc =
-    match f h with
-    | Some v -> go t (v :: acc)
-    | None -> go t acc
-  in
-  go xs []
+let filter_map f xs = list_filter_map f xs
 
 -- Apply a function that gives a list to every element, and join the lists in order.
 --
 -- >> List.flat_map (fn x -> [x, x * 10]) [1, 2]
 -- [1, 10, 2, 20] : List Int
-let flat_map f xs =
-  let go [] acc = _onto acc []
-  let go [h :: t] acc = go t (_onto (f h) acc);
-  go xs []
+let flat_map f xs = list_flat_map f xs
 
 -- Reduce a list left to right with an accumulator.
 --
 -- >> List.fold_left (fn x y -> x + y) 0 [1, 2, 3]
 -- 6 : Int
-let fold_left f acc [] = acc
-let fold_left f acc [h :: t] = fold_left f (f acc h) t
+let fold_left f acc xs = list_fold_left f acc xs
 
 -- Reduce a list right to left with an accumulator.
 --
 -- >> List.fold_right (fn x acc -> x - acc) [1, 2, 3] 0
 -- 2 : Int
-let fold_right f xs acc = fold_left (fn a x -> f x a) acc (_onto xs [])
+let fold_right f xs acc = list_fold_right f xs acc
 
 -- Return the number of elements in a list.
 --
@@ -113,15 +99,13 @@ let empty? _ = false
 --
 -- >> List.any? (fn x -> x > 2) [1, 2, 3]
 -- true : Bool
-let any? _ [] = false
-let any? p [h :: t] = if p h then true else any? p t
+let any? p xs = list_any p xs
 
 -- Return true if all elements satisfy the predicate.
 --
 -- >> List.all? (fn x -> x > 0) [1, 2, 3]
 -- true : Bool
-let all? _ [] = true
-let all? p [h :: t] = if p h then all? p t else false
+let all? p xs = list_all p xs
 
 -- Return true if the list holds an element equal to the value.
 --
@@ -130,26 +114,19 @@ let all? p [h :: t] = if p h then all? p t else false
 --
 -- >> [1, 2, 3] |> List.contains? 5
 -- false : Bool
-let contains? x xs =
-  let go [] = false
-  let go [h :: t] = h == x || go t;
-  go xs
+let contains? x xs = list_contains x xs
 
 -- Return the first element satisfying the predicate, or None.
 --
 -- >> List.find (fn x -> x > 1) [1, 2, 3]
 -- Some(2) : Option Int
-let find _ [] = None
-let find p [h :: t] = if p h then Some h else find p t
+let find p xs = list_find p xs
 
 -- Pair up elements from two lists. Stops at the shorter list.
 --
 -- >> List.zip [1, 2] ["a", "b"]
 -- [(1, "a"), (2, "b")] : List (Int, String)
-let zip xs ys =
-  let go [a :: t] [b :: u] acc = go t u ((a, b) :: acc)
-  let go _ _ acc = _onto acc [];
-  go xs ys []
+let zip xs ys = list_zip xs ys
 
 -- Take the first n elements. A count of 0 or less takes none, as
 -- `Stream.take` does.
@@ -159,13 +136,7 @@ let zip xs ys =
 --
 -- >> List.take (-1) [1, 2, 3]
 -- [] : List Int
-let take n xs =
-  let go n xs acc =
-    match xs with
-    | [h :: t] if n > 0 -> go (n - 1) t (h :: acc)
-    | _ -> _onto acc []
-  in
-  go n xs []
+let take n xs = list_take n xs
 
 -- Drop the first n elements. A count of 0 or less drops none, as
 -- `Stream.drop` does.
@@ -184,17 +155,13 @@ let drop n xs =
 --
 -- >> List.take_while (fn x -> x < 3) [1, 2, 3, 1]
 -- [1, 2] : List Int
-let take_while p xs =
-  let go [] acc = _onto acc []
-  let go [h :: t] acc = if p h then go t (h :: acc) else _onto acc [];
-  go xs []
+let take_while p xs = list_take_while p xs
 
 -- Drop elements while the predicate holds, returning the remainder.
 --
 -- >> List.drop_while (fn x -> x < 3) [1, 2, 3, 1]
 -- [3, 1] : List Int
-let drop_while _ [] = []
-let drop_while p [h :: t] = if p h then drop_while p t else h :: t
+let drop_while p xs = list_drop_while p xs
 
 -- Call f on each element, for side effects. Takes the element, as `map`
 -- and `filter` do; pair it with `indexed` when the position is wanted.
@@ -207,19 +174,13 @@ let drop_while p [h :: t] = if p h then drop_while p t else h :: t
 -- >> List.each (fn x -> IO.println "%{x}") [1, 2]
 -- 1
 -- 2
-let each _ [] = ()
-let each f [h :: t] =
-  let _ = f h;
-  each f t
+let each f xs = list_each f xs
 
 -- Pair each element with its position, counting from zero.
 --
 -- >> List.indexed ["a", "b"]
 -- [(0, "a"), (1, "b")] : List (Int, String)
-let indexed xs =
-  let go _ [] acc = _onto acc []
-  let go i [h :: t] acc = go (i + 1) t ((i, h) :: acc);
-  go 0 xs []
+let indexed xs = list_indexed xs
 
 -- Return the element at index n, or None if out of bounds.
 --

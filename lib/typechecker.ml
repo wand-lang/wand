@@ -7110,6 +7110,61 @@ let stdlib_type_env : env = [
   ("list_concat",  let a = fresh () in generalize [] ((TList a @-> (TList a @-> TList a))));
   ("list_rev_onto", let a = fresh () in generalize [] ((TList a @-> (TList a @-> TList a))));
   ("list_length", let a = fresh () in generalize [] (TList a @-> TInt));
+  (* The list functions that call a function they are given. Each performs
+     what the function performs, when the list arrives, as the wand
+     definitions they replace did. *)
+  ("list_map",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, b, e), TFun (TList a, TList b, e), Effect_set.pure)));
+  ("list_filter",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TBool, e), TFun (TList a, TList a, e), Effect_set.pure)));
+  ("list_filter_map",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize []
+     (TFun (TFun (a, TApp (TName "Option", b), e), TFun (TList a, TList b, e),
+            Effect_set.pure)));
+  ("list_flat_map",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TList b, e), TFun (TList a, TList b, e), Effect_set.pure)));
+  ("list_fold_left",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize []
+     (TFun (TFun (a, TFun (b, a, e), e),
+            TFun (a, TFun (TList b, a, e), Effect_set.pure),
+            Effect_set.pure)));
+  ("list_fold_right",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize []
+     (TFun (TFun (a, TFun (b, b, e), e),
+            TFun (TList a, TFun (b, b, e), Effect_set.pure),
+            Effect_set.pure)));
+  ("list_any",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TBool, e), TFun (TList a, TBool, e), Effect_set.pure)));
+  ("list_all",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TBool, e), TFun (TList a, TBool, e), Effect_set.pure)));
+  ("list_find",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize []
+     (TFun (TFun (a, TBool, e), TFun (TList a, TApp (TName "Option", a), e),
+            Effect_set.pure)));
+  ("list_take_while",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TBool, e), TFun (TList a, TList a, e), Effect_set.pure)));
+  ("list_drop_while",
+   let a = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, TBool, e), TFun (TList a, TList a, e), Effect_set.pure)));
+  ("list_each",
+   let a = fresh () and b = fresh () and e = Effect_set.unknown () in
+   generalize [] (TFun (TFun (a, b, e), TFun (TList a, TUnit, e), Effect_set.pure)));
+  ("list_contains", let a = fresh () in generalize [] ((a @-> (TList a @-> TBool))));
+  ("list_indexed",  let a = fresh () in generalize [] ((TList a @-> TList (TTuple [TInt; a]))));
+  ("list_zip",
+   let a = fresh () and b = fresh () in
+   generalize [] ((TList a @-> (TList b @-> TList (TTuple [a; b])))));
+  ("list_take", let a = fresh () in generalize [] ((TInt @-> (TList a @-> TList a))));
   ("str_join",     generalize [] ((TString @-> (TList TString @-> TString))));
   (* Map builtins *)
   ("map_empty",    let a = fresh () in generalize [] (TMap a));
