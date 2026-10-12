@@ -25,6 +25,7 @@ type id =
   | V_SHELL2   (* a command literal runs on to a second line without a `\` *)
   | V_SHELL1   (* Shell is narrowed, but this command word is only known at run time *)
   | V_SHELL3   (* Shell.inspect runs a command known to change things *)
+  | V_SHELL4   (* a `%!{...}` splice reads a value that is not a String as shell source *)
   | V_CTOR1    (* a match arm names bare a constructor another type shares *)
   | A_SHELL2   (* Shell.inspect runs a command whose words only the run decides *)
   | V_NET1     (* Net is narrowed, but this host is only known at run time *)
@@ -153,6 +154,17 @@ let all = [
      a violation, and --strict refuses the file. *)
   { id = V_SHELL3; code = "V-SHELL3";
     summary = "Shell.inspect runs a command that is known to change things";
+    kind = Violation };
+  (* A raw splice reads its value as shell source. That is right for text
+     written to be shell, and a String is the only type that can be; a
+     Path, an Int or any other value is data, and a file name with a `;` in
+     it runs what comes after the `;`. Graded as V-SHELL3 is, the other
+     rule about a command that does more than the text says: a violation,
+     so a warning by default and an error under --strict. The fix is
+     certain -- `%{...}` passes the same value as one argument -- so
+     --fix makes it. *)
+  { id = V_SHELL4; code = "V-SHELL4";
+    summary = "a `%!{...}` splice reads a value that is not a String as shell source";
     kind = Violation };
   (* A bare constructor name that another type in scope shares is read as
      the matched type's in a `match` arm. That is allowed; this is for a
@@ -387,6 +399,23 @@ let net1_dynamic =
 let shell1_dynamic =
   "this command's first word is decided at run time, so the Shell(...) \
    list is checked when it spawns rather than here"
+
+(* A raw splice ends what the scan can read: the value can add words, or a
+   `;` and a command of its own, so the words after it are the run's. The
+   first word may be a literal and checked already -- this is not about
+   the first word. *)
+let shell1_raw =
+  "this command has a %!{...} splice, which can add words or further \
+   commands, so the Shell(...) list is checked when it spawns rather than \
+   here"
+
+let shell4 ~typ =
+  Printf.sprintf
+    "this %%!{...} splice reads a value of type %s as shell source, and \
+     only a String written to be shell belongs there: data read as shell can \
+     run as a command -- a file name like `x;rm -rf ~.log` runs `rm`. Write \
+     %%{...}, which passes the value as one argument"
+    typ
 
 let ctor1 ~name ~type_name =
   Printf.sprintf

@@ -1123,7 +1123,7 @@ let ambient_shell_read : bool Domain.DLS.key =
 
 (* The directory the command being run starts in, from `Shell.in_dir`. It
    rides beside the perform, as the bound does, so a mock still matches the
-   plain command string. None is the script's own directory. *)
+   plain command string. None is the current directory of the process. *)
 let ambient_shell_dir : string option Domain.DLS.key =
   Domain.DLS.new_key (fun () -> None)
 

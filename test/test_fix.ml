@@ -783,6 +783,18 @@ let test_list_in_a_raw_splice () =
     fixed;
   Alcotest.(check (list string)) "via the E-TYPE fix" ["E-TYPE"] (codes applied)
 
+(* A `%!{...}` over a Path is V-SHELL4, and the fix is the quoted splice,
+   blanks inside the braces and all. A String raw splice stays (#123). *)
+let test_raw_splice_quoted () =
+  let (fixed, applied) =
+    fix "uses {Shell}\nlet f! (p: Path) (s: String) = $(ls %!{ p } %!{s})\n\
+         f! /tmp \"-l\"\n" in
+  Alcotest.(check string) "the Path is quoted"
+    "uses {Shell}\nlet f! (p: Path) (s: String) = $(ls %{ p } %!{s})\n\
+     f! /tmp \"-l\"\n"
+    fixed;
+  Alcotest.(check (list string)) "via V-SHELL4" ["V-SHELL4"] (codes applied)
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -872,6 +884,9 @@ let () =
     ];
     "a function nothing calls", [
       Alcotest.test_case "a bare main! is called" `Quick test_bare_main_is_called;
+    ];
+    "a raw splice of data", [
+      Alcotest.test_case "becomes a quoted one" `Quick test_raw_splice_quoted;
     ];
     "the words of what a file calls", [
       Alcotest.test_case "count toward its manifest" `Quick test_called_words_count;

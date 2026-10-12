@@ -151,6 +151,12 @@ let wild_let_types : (Token.loc * typ) list ref = ref []
    the command that uses it. *)
 let cmd_holes : (typ * Token.hole * Token.loc option) list ref = ref []
 
+(* The type of every `%!{...}` splice in a command, with the location of the
+   spliced expression. A raw splice reads its value as shell source, which
+   is only right for text written to be shell; a value of any other type is
+   data, and the lint that says so (V-SHELL4) needs the type to know. *)
+let raw_splice_types : (Token.loc * typ) list ref = ref []
+
 (* `effect_of_operation` and `operation_types` are derived from the
    operations table, which needs `fresh` -- see "Effect operations" below. *)
 
@@ -5724,7 +5730,11 @@ let rec infer tenv (env : env) (e : expr) : typ =
          anything else out of it; the value has to be an Int. *)
       match (h : Token.hole) with
       | Token.Arith -> unify_expected ~expected:TInt ~got:t
-      | _ -> cmd_holes := (t, h, loc_of_expr e) :: !cmd_holes) parts;
+      | _ ->
+        cmd_holes := (t, h, loc_of_expr e) :: !cmd_holes;
+        (match h, loc_of_expr e with
+         | Token.Source, Some l -> raw_splice_types := (l, t) :: !raw_splice_types
+         | _ -> ())) parts;
     TString
   | Seq (a, b) ->
     let ta = infer tenv env a in
@@ -7820,6 +7830,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   seq_discard_types := [];
   wild_let_types := [];
   cmd_holes := [];
+  raw_splice_types := [];
   last_shell_words := [];
   last_shell_static := true;
   last_shell_allow := None;

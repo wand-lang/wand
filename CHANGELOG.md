@@ -10,6 +10,7 @@
 - A list that holds lists in `%{...}` is a type error (#113).
 - A list in `%{...}` between the author's own quotes is a type error (#113).
 - A list in `%!{...}` is a type error, and `wand t --fix` changes the `%!{` to `%{` (#113).
+- `wand t` reports a `%!{x}` in a command where `x` is not a `String`, such as a `Path`, as `V-SHELL4`, and `wand t --fix` changes it to `%{x}` (#123).
 
 ### Changed
 
@@ -30,6 +31,7 @@
 - `wand f` keeps each `\` line continuation in a command and its line break, and indents the continued lines (#114).
 - `wand f` writes a command that opens on the line under `$?(` with the `)` under the line that opens it, not to the left of the command (#114).
 - V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).
+- `V-SHELL1` says that a `%!{...}` splice can add words or commands, not that the first word is decided at run time, when the first word is a literal (#123).
 
 ### Documentation
 
@@ -37,6 +39,7 @@
 - The reference shows `| Ok () ->` as a pattern (#116).
 - The reference tells how a list goes into a command (#113).
 - The reference tells how `wand f` writes a command that continues over lines (#114).
+- The reference and the `Shell.in_dir` doc say that a command, and a relative `dir`, use the current directory of the process, not the directory of the script (#118).
 
 ## [0.105.0] - 2026-10-12
 

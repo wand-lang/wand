@@ -371,13 +371,17 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
          is what holds a file to fully static words. *)
       (if allow <> None then
          let s = Shell_scan.scan (Shell_scan.segs_of_cmd inner) in
-         if s.Shell_scan.raw_tail
-            || List.exists (fun w -> w = Shell_scan.Dynamic)
-                 s.Shell_scan.words
-         then
+         let dynamic =
+           List.exists (fun w -> w = Shell_scan.Dynamic) s.Shell_scan.words
+         in
+         (* The reason is the one the text shows: a command word the run
+            decides, or a raw splice that can add words and commands after
+            a first word that is literal. *)
+         if dynamic || s.Shell_scan.raw_tail then
            acc := { rule = Lint_rules.V_SHELL1;
                     loc = !here;
-                    text = Lint_rules.shell1_dynamic;
+                    text = (if dynamic then Lint_rules.shell1_dynamic
+                            else Lint_rules.shell1_raw);
                     fix = None } :: !acc);
       go inner
     (* A request whose host the run decides. The bound is on the node, so a
@@ -1061,6 +1065,35 @@ and check_items ?source ~expression (prog : Ast.program) (item_locs : (Token.loc
       add Lint_rules.V_DROP3 loc
         (Lint_rules.drop3 ~typ:(Typechecker.string_of_typ t))
     | _ -> ()) !Typechecker.seq_discard_types;
+  (* A raw splice of a value that is not a String. The type is read now,
+     after inference has finished, so a parameter whose type a later use
+     decided is known; one that is still a variable is a String for all
+     anyone can tell, and is left alone. The fix changes `%!{` to `%{`,
+     and only where those three characters are in front of the value. *)
+  List.iter (fun ((l : Token.loc), t) ->
+    let t = Typechecker.repr t in
+    match t with
+    | Typechecker.TString | Typechecker.TVar _ -> ()
+    | _ ->
+      (* The `%!{` is in front of the value, with any blanks between. *)
+      let gap =
+        match source with
+        | Some src when l.Token.offset <= String.length src ->
+          let i = ref (l.Token.offset - 1) in
+          while !i >= 0 && (src.[!i] = ' ' || src.[!i] = '\t') do decr i done;
+          l.Token.offset - 1 - !i
+        | _ -> 0
+      in
+      let start = l.Token.col - gap - 3 in
+      let at = { l with Token.col = start;
+                        Token.end_line = l.Token.line;
+                        Token.end_col = start + 3;
+                        Token.offset = l.Token.offset - gap - 3;
+                        Token.end_offset = l.Token.offset - gap } in
+      add ~fix:(ReplaceAt { at; from_ = "%!{"; to_ = "%{" })
+        Lint_rules.V_SHELL4 at
+        (Lint_rules.shell4 ~typ:(Typechecker.string_of_typ t)))
+    (List.rev !Typechecker.raw_splice_types);
   (* A manifest that permits more than the file uses. Checked from what
      inference concluded, so the rule cannot disagree with the type error
      that covers the opposite case. *)
