@@ -4,19 +4,28 @@
 
 ### Added
 
+- One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
+- `Ok ()`, `Some ()`, `Error ()` and a constructor of your own whose payload is `Unit` match `()` as the payload: `| Ok () -> ...` (#116).
+
 ### Changed
 
 - A `;` at the end of a line inside a `( ... )` block continues an arm or branch body when the next line is at the body's column, as a newline does (#119).
-
-### Removed
+- In a construction of a record of one field, one name that is not the field fills that field: `B(x)` is `B(n = x)` (#115).
+- `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
 
 ### Fixed
 
 - A constructor used as a function value, such as `Stream.filter_map Some`, is accepted over a stream that reads a file, as a lambda is (#120).
 - An effect mismatch on the left of a `|>` no longer gives the hint about `|>` taking the whole call (#120).
 - An unbound name that the same definition binds in another scope gives "'x' is bound at line N, but that binding is not in scope here", not the `wand d` hint (#119).
+- An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
+- An error in a constructor pattern inside another pattern points at the inner constructor (#115).
+- `wand f` keeps `Ok ()` with its space, and puts it in brackets where it is an argument: `f (Ok ()) x` (#116).
 
 ### Documentation
+
+- The reference says that one name alone puns (#115).
+- The reference shows `| Ok () ->` as a pattern (#116).
 
 ## [0.105.0] - 2026-10-12
 

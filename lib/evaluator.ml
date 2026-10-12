@@ -2237,8 +2237,8 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
         | PConstr (_, _) -> None
         | PConstrNamed (_, bindings) -> named bindings
         | PConstrBare (_, ids) ->
-          let named_fields = List.exists (fun dn -> dn <> None) (fields ()) in
-          (match Ast.constr_bare_reading ~named_fields "" ids with
+          (match Ast.constr_bare_reading ~fields:(fields ())
+                   ~arity:(List.length vals) "" ids with
            | PConstrNamed (_, bindings) -> named bindings
            | PConstr (_, pats) when same_length pats vals ->
              List.fold_left2 (fun acc p v ->
@@ -2250,12 +2250,13 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
      | _ -> None)
   | PQualified (_, _), _ -> None
   | PConstrBare (name, ids), _ ->
-    let named_fields =
+    let fields =
       match Hashtbl.find_opt constr_fields (ctor_in_scope env name) with
-      | Some fields -> List.exists (fun dn -> dn <> None) fields
-      | None -> false
+      | Some fields -> fields
+      | None -> []
     in
-    try_match ~prefix (Ast.constr_bare_reading ~named_fields name ids) v env
+    let arity = match v with VConstr (_, vals) -> List.length vals | _ -> 0 in
+    try_match ~prefix (Ast.constr_bare_reading ~fields ~arity name ids) v env
   | PConstrNamed (name, bindings), VConstr (vname, vals)
     when ctor_matches env name vname ->
     (match Hashtbl.find_opt constr_fields vname with
@@ -2591,12 +2592,12 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
        with_ident name (fun c -> eval_constr_update env c name base fields allow)
      | ConstrBare (name, ids) ->
        with_ident name (fun c ->
-         let named_fields =
+         let fields =
            match Hashtbl.find_opt constr_fields c with
-           | Some fields -> List.exists (fun dn -> dn <> None) fields
-           | None -> false
+           | Some fields -> fields
+           | None -> []
          in
-         match Ast.constr_bare_construction ~named_fields name ids with
+         match Ast.constr_bare_construction ~fields name ids with
          | ConstrApp (_, fields, allow) -> eval_constr_app env c fields allow
          | other -> eval env other)
      | App (f, arg) ->
@@ -2604,12 +2605,12 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
        apply (eval env (Qualified (m, f))) (eval env arg)
      | other -> eval env other)
   | ConstrBare (name, ids) ->
-    let named_fields =
+    let fields =
       match Hashtbl.find_opt constr_fields (ctor_in_scope env name) with
-      | Some fields -> List.exists (fun dn -> dn <> None) fields
-      | None -> false
+      | Some fields -> fields
+      | None -> []
     in
-    eval env (Ast.constr_bare_construction ~named_fields name ids)
+    eval env (Ast.constr_bare_construction ~fields name ids)
   | ConstrApp (name, fields, allow) ->
     eval_constr_app env (ctor_in_scope env name) fields allow
   | ConstrUpdate (name, base, fields, allow) ->

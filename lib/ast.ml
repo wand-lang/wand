@@ -212,27 +212,49 @@ and handle_case =
    constructor names its fields. Both stages that match values ask here, so
    the two cannot drift apart: `Pod(name, restarts)` binds each field to its
    own name where `Pod` has fields, and matches the tuple payload where it
-   does not. *)
-let constr_bare_reading ~named_fields name ids : pat =
-  if named_fields then PConstrNamed (name, List.map (fun i -> (i, PVar i)) ids)
+   does not.
+
+   `fields` is the declaration's field names, `None` for a position with no
+   name, and empty where the declaration is not in hand. `arity` is how many
+   values the constructor carries.
+
+   One identifier alone puns too (#115): `Run(a)` is `Run(a = a)` where `a`
+   is a field of `Run`. Where the record has one field and the name is not
+   that field, `B(x)` is the field under the name `x`, which is what the
+   positional reading gave before. A record of more fields reads the name as
+   a field, and the check says that it has no such field. *)
+let constr_bare_reading ~fields ~arity name ids : pat =
+  let named_fields = List.exists (fun f -> f <> None) fields in
+  if named_fields then
+    match ids, fields with
+    | [i], [_] when not (List.mem (Some i) fields) -> PConstr (name, [PVar i])
+    | _ -> PConstrNamed (name, List.map (fun i -> (i, PVar i)) ids)
   else match ids with
     (* `Red()` is the constructor that carries nothing, which is what empty
-       parentheses mean where there are no fields to name. *)
+       parentheses mean where there are no fields to name. Where the
+       constructor carries one value, `Ok ()` is that value, the unit (#116). *)
+    | [] when arity = 1 -> PConstr (name, [Unit])
     | [] -> PConstr (name, [])
+    | [i] -> PConstr (name, [PVar i])
     | ids -> PConstr (name, [PTuple (List.map (fun i -> PVar i) ids)])
 
 
 (* The same question on the expression side, and the same answer: a
    constructor that names its fields takes each identifier as the field of
    that name, and one that does not takes them as the tuple it is applied
-   to. *)
-let constr_bare_construction ~named_fields name ids : expr =
+   to. One identifier alone is a field of its own name, or the only field of
+   a record of one field. *)
+let constr_bare_construction ~fields name ids : expr =
+  let named_fields = List.exists (fun f -> f <> None) fields in
   if named_fields then
-    ConstrApp (name, List.map (fun i -> (Some i, Var i)) ids, None)
+    match ids, fields with
+    | [i], [Some f] when f <> i -> ConstrApp (name, [(Some f, Var i)], None)
+    | _ -> ConstrApp (name, List.map (fun i -> (Some i, Var i)) ids, None)
   else match ids with
     (* `Some ()` is the constructor applied to unit, which is what an empty
        pair of parentheses means everywhere else. *)
     | [] -> App (Constr name, Unit)
+    | [i] -> App (Constr name, Var i)
     | ids -> App (Constr name, Tuple (List.map (fun i -> Var i) ids))
 
 (* `T.Ctor`, where `T` is a type rather than a module: the constructor of

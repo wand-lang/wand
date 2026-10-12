@@ -532,11 +532,11 @@ let peek_named_pat_args s =
     !found
   end
 
-(* Whether the upcoming LParen holds nothing but bare identifiers, two or
-   more of them: `Pod(name, restarts)`, the form whose reading the
-   declaration decides. One identifier is left alone -- `Wrap(v)` is the
-   payload under that name whichever way it is read, so there is nothing for
-   a declaration to settle. *)
+(* Whether the upcoming LParen holds nothing but bare identifiers:
+   `Pod(name, restarts)`, the form whose reading the declaration decides.
+   One identifier is this form too (#115). `Run(a)` is the field `a` where
+   `Run` has a field of that name, and `Wrap(v)` is the payload under the
+   name `v` where it does not -- only the declaration can say which. *)
 let peek_bare_args s =
   let arr = s.tokens in
   let n = Array.length arr in
@@ -558,7 +558,14 @@ let peek_bare_args s =
           | _ -> ok := false; stop := true)
        | _ -> ok := false; stop := true)
     done;
-    !ok && !count >= 2
+    (* One identifier followed by a `.` keeps the reading it had before:
+       `O (d).n` is `O` applied to `d`, and then the field. The tree, and
+       what `wand f` gives back for it, stay as they were. *)
+    let dot_after () =
+      incr i; skip ();
+      !i < n && fst arr.(!i) = Token.Dot
+    in
+    !ok && (!count >= 2 || (!count = 1 && not (dot_after ())))
   end
 
 (* From a `,`, whether what follows is a named field rather than another
@@ -1126,7 +1133,17 @@ and pat_base_ s =
      | Token.Upper base -> PQualified (name, type_qualified_pat_ s base)
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
-  | Token.Upper name -> ignore (advance s); pconstr_body_ s name
+  (* A constructor that takes anything is placed, so that an error in it --
+     a field it does not have, a count of arguments it does not take -- has
+     a line and a column wherever the pattern is: a parameter or a `let`
+     has no position of its own the way a `match` arm has (#115). The span
+     also tells `wand f` whether `Ok ()` was written with its space. *)
+  | Token.Upper name ->
+    let at = peek_loc s in
+    ignore (advance s);
+    (match pconstr_body_ s name with
+     | PConstr (_, []) as p -> p
+     | p -> PLocated (span_to_here s at, p))
   | t when Token.is_keyword t -> fail_at (peek_loc s) (reserved_word_message t)
   | t ->
     fail_at (peek_loc s) (Format.asprintf "unexpected token in pattern: %a%s"
@@ -1679,7 +1696,12 @@ and constr_body_ s name =
        which must then have defaults, and a constructor applied to unit
        where it does not. The declaration decides, as it does for a list of
        bare names. *)
-    if peek s = Token.RParen then (ignore (advance s); ConstrBare (name, []))
+    (* Placed, so that `wand f` can tell `Ok ()` from `Stats()` and give
+       back the one that was written: both read the same. *)
+    if peek s = Token.RParen then begin
+      ignore (advance s);
+      Located (Token.span_to ctor_loc bracket_loc, ConstrBare (name, []))
+    end
     else if peek s = Token.Let then begin
       (* `Ctor (let x = 1; f x)` -- a block, as it is after any other `(`.
          Reading it as an expression first would hand the binding to `let_`

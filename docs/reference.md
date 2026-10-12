@@ -1087,6 +1087,15 @@ itself an `if` expression goes in brackets:
 `when` is the earlier spelling of a guard. wand still accepts it with the same
 meaning, and `wand f` writes it as `if`.
 
+A constructor whose payload is the unit matches `()`, as the unit does
+alone:
+
+```ocaml
+match FS.write_file /tmp/x "1" with
+| Ok () -> "written"
+| Error e -> e
+```
+
 ### A match inside an arm
 
 A `match` in an arm needs no parentheses. Its arms are the lines level with
@@ -3724,13 +3733,24 @@ Point(x, y = 9)
 --   updated, not a field. Write 'Point(y = ..., x)' to pun it
 ```
 
-One field alone does not pun either. `B(n)` is the constructor applied to
-`n`, whichever way `B` is declared, so there is nothing for the declaration
-to settle. Write `B(n = n)`.
+One name alone puns too. `Run(a)` is `Run(a = a)` when `a` is a field of
+`Run`. When `B` has one field and the name is not that field, `B(x)` puts `x`
+in that field. When the record has more fields and the name is none of them,
+the error names the field that is not there:
+
+```ocaml
+type Run(a : Int, b : Int = 0)
+let a = 1
+Run(a)                  -- Run(a = 1, b = 0)
+
+type B(n : Int)
+let x = 2
+B(x)                    -- B(n = 2)
+```
 
 `wand f` writes a construction's puns all or none: every field puns, or every
-field carries its name. Both spellings that a mixed one can be read as -- the
-update above, and the payload here -- are why. A pattern is not written under
+field carries its name. The update above is a spelling that a mixed one can
+be read as, and that is why. A pattern is not written under
 that rule, because it has no update form to be confused with.
 
 #### A keyword names a field
@@ -3816,9 +3836,11 @@ A pun mixes with a field that carries a pattern, in any order. So
 binds the name. A name that is not one of the constructor's fields is a type
 error. The error names the constructor and the field.
 
-One name alone is the exception, on this side as on the other: `Pod(name)` is
-the payload bound to `name`, not the field. Write `Pod(name = name)`, which is
-what `wand f` writes.
+One name alone puns the same way: `Pod(name)` binds the field `name`. When
+the record has one field and the name is not that field, the name holds
+that field, so `B(x)` binds `x` to the only field of `B`. When the record
+has more fields and the name is none of them, the error names the field that
+is not there.
 
 The same spelling means the tuple on a constructor whose payload is a tuple.
 That reading has not changed:

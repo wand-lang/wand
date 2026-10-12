@@ -119,3 +119,20 @@ group "get!" (fn () -> [
     t.eq (Error "no such key") (try Result.get! (Error "no such key"))),
   test "it raises" (fn t -> t.raises (fn () -> Result.get! (Error "nope")))
 ])
+
+-- A payload that is the unit matches `()`, as the unit does alone (#116).
+let written r =
+  match r with
+  | Ok () -> "written"
+  | Error e -> e
+
+let present? o =
+  match o with
+  | Some () -> true
+  | None -> false
+
+group "a unit payload" (fn () -> [
+  test "Ok () matches" (fn t -> t.eq "written" (written (Ok ()))),
+  test "Error still reaches its own arm" (fn t -> t.eq "full" (written (Error "full"))),
+  test "Some () matches" (fn t -> t.eq true (present? (Some ())))
+])

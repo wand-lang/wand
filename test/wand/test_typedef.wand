@@ -229,6 +229,52 @@ test "bare names still read a tuple payload" (fn t ->
     | Span(a, b) -> a + b
     ))
 
+-- One name alone puns too (#115): `Pod(name)` is the field `name`, in a
+-- pattern, in a parameter and in a construction.
+type Run(a: Int, b: Int = 0, c: Int = 0)
+
+let run = Run(a = 1, b = 2)
+
+test "one name alone binds its field" (fn t ->
+  t.eq
+    "api"
+    (match pod with
+    | Pod(name) -> name
+    ))
+
+test "one name alone works as a parameter" (fn t ->
+  let first = fn (Run(a)) -> a;
+  let second (Run(b)) = b;
+  t.eq 3 (first run + second run))
+
+-- A record of one field gives its field to any one name, as it always did.
+type Only(n: Int)
+
+test "one name on a record of one field takes that field" (fn t ->
+  t.eq
+    7
+    (match Only(n = 7) with
+    | Only(x) -> x
+    ))
+
+-- A constructor that does not name its fields binds its payload.
+type Box = Box String | Empty
+
+let open_box b =
+  match b with
+  | Box(s) -> s
+  | Empty -> ""
+
+test "one name on a payload is the payload" (fn t -> t.eq "hi" (open_box (Box "hi")))
+
+test "one name on Some is the value" (fn t ->
+  t.eq
+    4
+    (match Some 4 with
+    | Some(x) -> x
+    | None -> 0
+    ))
+
 -- A construction puns the same way, from names the value already has.
 
 let name = "web"
@@ -238,6 +284,15 @@ let restarts = 5
 test "a construction puns from names in scope" (fn t ->
   let p = Pod(name, restarts);
   t.eq "web/5" "%{p.name}/%{p.restarts}")
+
+test "a construction puns from one name alone" (fn t ->
+  let a = 4;
+  let r = Run(a);
+  t.eq "4/0/0" "%{r.a}/%{r.b}/%{r.c}")
+
+test "one name fills the only field of a record of one field" (fn t ->
+  let x = 9;
+  t.eq 9 (Only(x)).n)
 
 -- A pun beside a named field parses, and `wand f` writes it out again: the
 -- pun form is all-or-nothing on this side, because a bare name in front of a

@@ -532,6 +532,30 @@ let test_a_constructor_and_its_bracket_are_kept () =
       "let h = Ok (Some true)";
       "let k = Ok Some (true)" ]
 
+(* One name alone in a constructor's brackets is kept, since it can be the
+   field of that name (#115). *)
+let test_one_name_is_kept () =
+  List.iter (fun src -> fmt_eq src src src)
+    [ "let r = Run(a)";
+      "let f (Run(a)) = a";
+      "let v =\n  match r with\n  | Some(x) -> x\n  | None -> 0" ];
+  fmt_eq "a construction of one name before a field keeps its bracket"
+    "let n = (B(x)).n" "let n = (B(x)).n"
+
+(* `Ok ()` and `Ok()` read alike, and each is given back as it was
+   written (#116). Written with its space, it is two words, so it takes
+   brackets where it is an argument. *)
+let test_a_unit_payload_is_kept () =
+  List.iter (fun src -> fmt_eq src src src)
+    [ "let a = Ok ()";
+      "let a = Ok()";
+      "let s = Stats()";
+      "let k = f (Ok ()) x";
+      "let v =\n  match r with\n  | Ok () -> 1\n  | Error () -> 2";
+      "let v =\n  match r with\n  | Some (Ok ()) -> 1\n  | _ -> 2";
+      "let v =\n  match r with\n  | Red() -> 1\n  | Green -> 2" ];
+  fmt_eq "an argument takes brackets" "let k = f Ok () x" "let k = f (Ok ()) x"
+
 (* The lines under a backtick are the string's own content. A value given a
    line of its own moves them one line down the page, and the backtick left
    above them says nothing the `=` did not. So a multi-line backtick string
@@ -2389,6 +2413,8 @@ let () =
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
       Alcotest.test_case "a constructor and its bracket are kept" `Quick
         test_a_constructor_and_its_bracket_are_kept;
+      Alcotest.test_case "one name is kept" `Quick test_one_name_is_kept;
+      Alcotest.test_case "a unit payload is kept" `Quick test_a_unit_payload_is_kept;
       Alcotest.test_case "a guard is written with if" `Quick
         test_a_guard_is_written_with_if;
       Alcotest.test_case "a map literal pun is kept" `Quick
