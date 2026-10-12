@@ -610,6 +610,67 @@ let test_replace_at_is_checked () =
   Alcotest.(check (option string)) "a result that does not parse: declined"
     None (apply "x" "(")
 
+(* `Digest.Sha256` with no `import Digest` (#148). The error is the missing
+   import, it carries the line, and nothing in it is the parser's form of
+   the expression or the `|>` hint, which is about something else. *)
+let test_qualified_constructor_import () =
+  let src =
+    "import Hash\nimport Path\nimport List\n\n\
+     let keyed d rels = List.map (fn r -> (Hash.file! Digest.Sha256 \
+     (Path.join d r) |> Digest.hex, Path.to_string r)) rels\n" in
+  let d = type_error src in
+  let msg = Diag.legacy d in
+  Alcotest.(check bool) "names the import" true
+    (Lint.contains msg "did you forget to import the standard library Digest?");
+  Alcotest.(check bool) "no internal form" false (Lint.contains msg "(@");
+  Alcotest.(check bool) "no pipe hint" false (Lint.contains msg "whole call");
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check bool) "the import is written" true
+    (Lint.contains fixed "import Digest\n")
+
+(* The same in a pattern. *)
+let test_qualified_pattern_import () =
+  let (fixed, _) =
+    fix_clean "let name a =\n  match a with\n  | Digest.Sha256 -> \"sha256\"\n  | _ -> \"other\"\n\nname\n" in
+  Alcotest.(check bool) "the import is written" true
+    (Lint.contains fixed "import Digest\n")
+
+(* `let {Sha256} = Digest` (#149): the module where its import belongs. The
+   error has a position and names the import, and the fix writes the
+   import on the right side, which is the one correct change. *)
+let test_destructured_module_import () =
+  let src =
+    "import Hash\nimport IO\nimport Digest\nlet {Sha256} = Digest\n\n\
+     let main () = IO.println (Hash.string Sha256 \"x\" |> Digest.hex)\n" in
+  let missing =
+    "import Hash\nimport IO\nlet {Sha256} = Digest\n\n\
+     let main () = IO.println (Hash.string Sha256 \"x\")\n" in
+  let d = type_error missing in
+  Alcotest.(check bool) "names the import" true
+    (Lint.contains (Diag.legacy d)
+       "did you forget to import the standard library Digest?");
+  Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
+  let (fixed, _) = fix_clean missing in
+  Alcotest.(check bool) "the right side imports" true
+    (Lint.contains fixed "let {Sha256} = import Digest\n");
+  (* With the module imported too, the right side is still the import. *)
+  let d = type_error src in
+  Alcotest.(check bool) "says how names are taken" true
+    (Lint.contains (Diag.legacy d) "`let {Sha256} = import Digest`");
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check bool) "the right side imports" true
+    (Lint.contains fixed "let {Sha256} = import Digest\n")
+
+(* Inside a function an import cannot stand, so nothing is certain and no
+   fix is carried; the error still names the cause, at a position. *)
+let test_destructured_module_local () =
+  let d = type_error "import IO\n\nlet main () =\n  let {Sha256} = Digest\n  IO.println \"x\"\n" in
+  Alcotest.(check bool) "names the import" true
+    (Lint.contains (Diag.legacy d)
+       "did you forget to import the standard library Digest?");
+  Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
+  Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
+
 let () =
   Alcotest.run "fix" [
     "manifest", [
@@ -671,6 +732,14 @@ let () =
         test_empty_list_not_offered;
       Alcotest.test_case "a replacement is checked" `Quick
         test_replace_at_is_checked;
+      Alcotest.test_case "a qualified constructor's import" `Quick
+        test_qualified_constructor_import;
+      Alcotest.test_case "a qualified pattern's import" `Quick
+        test_qualified_pattern_import;
+      Alcotest.test_case "names taken from a module" `Quick
+        test_destructured_module_import;
+      Alcotest.test_case "names taken in a function" `Quick
+        test_destructured_module_local;
     ];
     "a function nothing calls", [
       Alcotest.test_case "a bare main! is called" `Quick test_bare_main_is_called;

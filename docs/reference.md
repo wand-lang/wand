@@ -3228,7 +3228,7 @@ let half! n =
 A violated contract raises, reporting the clause that failed:
 
 ```ocaml
-half! 7   -- precondition failed: ((n % 2) == 0)
+half! 7   -- precondition failed: n % 2 == 0
 ```
 
 So a function that carries a contract performs `Raise`, and its name takes

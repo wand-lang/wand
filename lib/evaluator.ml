@@ -2387,6 +2387,10 @@ let check_request_host allow value =
        end
      | _ -> ())
 
+(* A contract clause as it is written, for the error that reports it. The
+   parser's form of it is not wand, and an error never prints it. *)
+let contract_text e = Doc.to_string (Formatter.emit_splice 0 e)
+
 let rec eval (env : env) (e : expr) : value = eval_at false env e
 
 (* Evaluate in tail position: the value of `e` is the value of whatever
@@ -2917,7 +2921,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
       match eval env req with
       | VBool true  -> ()
       | VBool false -> raise (EvalError (Printf.sprintf
-          "precondition failed: %s" (Ast.show req)))
+          "precondition failed: %s" (contract_text req)))
       | _ -> assert false
     ) reqs;
     let v = eval env body in
@@ -2926,7 +2930,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
       match eval env' e with
       | VBool true  -> ()
       | VBool false -> raise (EvalError (Printf.sprintf
-          "postcondition failed: %s" (Ast.show e)))
+          "postcondition failed: %s" (contract_text e)))
       | _ -> assert false
     ) ens;
     v

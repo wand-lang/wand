@@ -58,6 +58,13 @@
 - `IO.eprintln` and similar names give the hint `IO.println_err`, not `println`, which writes to stdout; `List.nth` gives `List.get` (#130).
 - An unknown constructor from another language names the wand constructor: `Err` gives `the constructors of Result are Ok and Error` (#129).
 - A type error in a pattern of a `match` shows the line and column of that pattern, not of the `match` (#129).
+- `Digest.Sha256` with no `import Digest` gives `did you forget to import the standard library Digest?`, and `wand t --fix` adds the import (#148).
+- An error that names a qualified name writes it as in the source, such as `List.Foo`, not in the internal form of the expression (#148).
+- The `|>` hint is added only to an error where two types do not fit, and not to errors such as a missing import or `'acc' needs its type` (#148).
+- A failed `requires` or `ensures` clause is written as in the source: `precondition failed: n % 2 == 0` (#148).
+- `let {Sha256} = Digest` gives `did you forget to import the standard library Digest?` at its position, and not `expected a module implementing nothing` (#149).
+- `wand t --fix` changes `let {Sha256} = Digest` at the top level to `let {Sha256} = import Digest` (#149).
+- `let {Sha256} = Digest` with `import Digest` in the file says to write `let {Sha256} = import Digest`, and `wand t --fix` makes that change (#149).
 
 ## [0.104.1] - 2026-10-10
 

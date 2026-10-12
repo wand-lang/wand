@@ -1395,13 +1395,26 @@ let disambiguate a b =
       | Some da, Some db when da <> db -> (da, db)
       | _ -> (qa, qb)
 
+(* The message of the last time two types did not fit. `|>` reads it to
+   tell such a failure from every other error raised while it checks its
+   left side: only two types that do not fit can come from reading
+   `f a b |> g` as `f a (b |> g)`. A missing import, or a tuple read before
+   its type is known, cannot, and the hint on them sent the reader to the
+   pipe for nothing. (#148) *)
+let unify_failure = ref ""
+
+let failed_to_unify msg =
+  unify_failure := msg;
+  raise (TypeError msg)
+
 let unify t1 t2 =
   try unify_ t1 t2 with
   | Mismatch (a, b) ->
     let (sa, sb) = disambiguate a b in
-    raise (TypeError (Printf.sprintf "%s and %s are not the same type" sa sb))
+    failed_to_unify (Printf.sprintf "%s and %s are not the same type" sa sb)
   | Effect_set.Conflict (a, b) ->
-    raise (TypeError (effects_conflict_message a b))
+    failed_to_unify (effects_conflict_message a b)
+  | TypeError msg -> failed_to_unify msg
 
 (* For a site that knows which side the reader wrote: an annotation, a
    condition, an argument, an arm of a `match`. *)
@@ -1409,10 +1422,11 @@ let unify_expected ~expected ~got =
   try unify_ expected got with
   | Mismatch (a, b) ->
     let (sa, sb) = disambiguate a b in
-    raise (TypeError (Printf.sprintf "expected %s, got %s" sa sb))
+    failed_to_unify (Printf.sprintf "expected %s, got %s" sa sb)
   | Effect_set.Conflict (a, b) ->
-    raise (TypeError (effects_conflict_message ~expected:"the type"
-                        ~got:"the body" a b))
+    failed_to_unify (effects_conflict_message ~expected:"the type"
+                       ~got:"the body" a b)
+  | TypeError msg -> failed_to_unify msg
 
 (* ── Schemes and environment ──────────────────────────────────────────────── *)
 
@@ -3649,6 +3663,86 @@ let type_qualified_pat tenv m inner =
 let type_qualified_expr tenv m inner =
   if is_ctor_type tenv m then Ast.qualify_ctor_expr m inner else None
 
+(* The name `M.Ctor ...` reads in `M`: the constructor or value at the head
+   of what follows the dot. The rest is the call's arguments, and is not part
+   of the name. *)
+let rec qualified_head = function
+  | Located (_, e) | App (e, _) -> qualified_head e
+  | Constr n | Var n -> Some n
+  | Qualified (m, e) ->
+    Option.map (fun n -> m ^ "." ^ n) (qualified_head e)
+  | _ -> None
+
+let rec qualified_pat_head = function
+  | PLocated (_, p) | PAnnot (p, _) -> qualified_pat_head p
+  | PConstr (n, _) | PConstrBare (n, _) | PConstrNamed (n, _) | PVar n -> Some n
+  | PQualified (m, p) ->
+    Option.map (fun n -> m ^ "." ^ n) (qualified_pat_head p)
+  | _ -> None
+
+(* `M.Ctor` where `M` declares no types. A stdlib module that is not
+   imported is the usual cause, and then the fix is the import: the module
+   declares the type once it is in scope. The error names what was written
+   as wand writes it, and never the parser's form of it. (#148) *)
+let qualified_unknown env m head =
+  let imported =
+    match List.assoc_opt m env with Some (Namespace _) -> true | _ -> false
+  in
+  if List.mem m stdlib_module_names && not imported then begin
+    pending_fix := Some (Diag.InsertLine ("import " ^ m));
+    raise (TypeError (Printf.sprintf
+      "did you forget to import the standard library %s?" m))
+  end else
+    raise (TypeError (match head with
+      | Some n ->
+        Printf.sprintf "'%s' declares no types, so '%s.%s' names nothing in it"
+          m m n
+      | None -> Printf.sprintf "'%s' declares no types" m))
+
+(* `let {Sha256} = Digest`: names taken from a stdlib module written as a
+   value. A module's names are taken with `import`, so the right side is the
+   name of a module where `import Digest` belongs. Without this, the module
+   the name stands for -- or the missing import -- met the map pattern and
+   the error said "expected a module implementing nothing, got Map 'a", at
+   no position, whether the module was imported or not. At the top level
+   the one correct change is known, and it carries it; inside a function an
+   import cannot stand, so there it is only said. (#149) *)
+let check_module_destructure ~top tenv env pat e =
+  let rec bare_pat = function
+    | PLocated (_, p) | PAnnot (p, _) -> bare_pat p
+    | p -> p
+  in
+  match bare_pat pat, e with
+  | PMap _, Located (loc, inner) ->
+    (match strip_located inner with
+     | Constr m when List.mem m stdlib_module_names
+                  && find_ctor_in_tenv tenv m = None ->
+       let imported =
+         match List.assoc_opt m env with Some (Namespace _) -> true | _ -> false
+       in
+       let at =
+         match ctor_extent loc m with Some l -> l | None -> loc
+       in
+       let wanted =
+         Printf.sprintf "`let %s = import %s`" (Formatter.emit_pat (bare_pat pat)) m
+       in
+       let cause =
+         if imported then
+           Printf.sprintf "'%s' is a module, and its names are taken with \
+                           `import`." m
+         else
+           Printf.sprintf "did you forget to import the standard library %s?" m
+       in
+       if top then begin
+         replace_fix at m ("import " ^ m);
+         raise (TypeErrorAt (at, Printf.sprintf "%s Write %s" cause wanted))
+       end else
+         raise (TypeErrorAt (at, Printf.sprintf
+           "%s Names are taken from a module at the top of the file, with %s"
+           cause wanted))
+     | _ -> ())
+  | _ -> ()
+
 let rec infer_pat tenv (p : pat) t (env : env) : env =
   match p with
   (* Where the arm's pattern is, so what is found in it -- a bare
@@ -3751,9 +3845,7 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
       (match type_qualified_pat tenv m inner with
        | Some p -> infer_pat tenv p t env
        | None ->
-         raise (TypeError (Printf.sprintf
-           "'%s' declares no types, so '%s' names nothing in it"
-           m (Ast.show_pat inner))))
+         qualified_unknown env m (qualified_pat_head inner))
     else
     with_visible (List.map fst own) (fun () -> infer_pat tenv' inner t env)
   | PConstrBare (name, ids) ->
@@ -4507,6 +4599,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
        record_local name t1;
        infer tenv ((name, generalize env t1) :: env) e2
      | _ ->
+       check_module_destructure ~top:false tenv env p e1;
        let t1     = with_defined_below below (fun () -> infer tenv env e1) in
        (match p, e1 with
         | Wild, Located (loc, _) ->
@@ -4649,9 +4742,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
       (match type_qualified_expr tenv m inner with
        | Some e -> infer tenv env e
        | None ->
-         raise (TypeError (Printf.sprintf
-           "'%s' declares no types, so '%s' names nothing in it"
-           m (Ast.show inner))))
+         qualified_unknown env m (qualified_head inner))
     else begin
       (* The constructor is the module's, and its arguments are the
          caller's. Inferring the arguments inside the module's scope read
@@ -5900,12 +5991,18 @@ and infer_binop tenv (env : env) op a b : typ =
       | Located (l, _) -> l.Token.line = loc.Token.line && l.Token.col = loc.Token.col
       | _ -> false
     in
+    (* And only two types that do not fit. Any other error raised while
+       the call is checked -- a missing import, a field read on a value of
+       no known type -- is about what is written, however the pipe is
+       read. *)
+    let a_mismatch msg = msg <> "" && msg = !unify_failure in
     let explained f =
       match strip_located a with
       | App _ ->
+        unify_failure := "";
         (try f () with
-         | TypeError msg -> raise (TypeError (with_hint msg))
-         | TypeErrorAt (loc, msg) when at_the_call loc ->
+         | TypeError msg when a_mismatch msg -> raise (TypeError (with_hint msg))
+         | TypeErrorAt (loc, msg) when at_the_call loc && a_mismatch msg ->
            raise (TypeErrorAt (loc, with_hint msg)))
       | _ -> f ()
     in
@@ -7801,6 +7898,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     | TLLetPat (_, body) when is_import_expr body ->
       (env, last_t)  (* pre-loaded by load_imports_for *)
     | TLLetPat (pat, e) ->
+      check_module_destructure ~top:true tenv env pat e;
       let (t, eff) = scoped_eff (fun () -> infer tenv env e) in
       performs eff;
       last_load_effects :=

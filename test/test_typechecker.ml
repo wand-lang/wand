@@ -2490,6 +2490,21 @@ let test_errors_say_the_fix () =
    | Error msg when contains msg "whole call" ->
      Alcotest.failf "an error inside a lambda is not about the pipe: %s" msg
    | _ -> ());
+  (* Only two types that do not fit get the hint: an error of any other
+     kind in the call is about what is written there (#148). *)
+  (match run "import IO\nimport Map\nimport Option\nimport Stream\n\
+              let step acc line =\n  if line == \"\" then acc\n  else\n    \
+              let old = Map.get line acc.0 |> Option.default [];\n    \
+              (Map.set line (1 :: old) acc.0, acc.1)\n\
+              let r = IO.stdin_lines () |> Stream.fold_left step (Map.empty, 0)\n" with
+   | Error msg when contains msg "whole call" ->
+     Alcotest.failf "a tuple read too early is not about the pipe: %s" msg
+   | Error _ -> ()
+   | Ok _ -> Alcotest.fail "expected an error");
+  (* An unknown member is named as wand writes it. *)
+  err_contains "an unknown member names it as written"
+    "import List\nlet x = List.Foo (List.length [1])"
+    "'List' declares no types, so 'List.Foo' names nothing in it";
   (* A default that is not a literal. *)
   err_contains "a map default"
     "import Map\ntype App(name: String, env: Map String = Map.empty)\n1"
