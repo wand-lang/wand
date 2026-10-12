@@ -2687,6 +2687,15 @@ let rec eval (env : env) (e : expr) : value = eval_in (loc_cell ()) false env e
    called us, so no frame here has any work left to do. *)
 and eval_tail (env : env) (e : expr) : value = eval_in (loc_cell ()) true env e
 
+(* An argument: a name the definition binds, which is most arguments, read
+   as `eval_in` reads it, without the call into `eval_in`. *)
+and slot_or_eval c env x =
+  match x with
+  | Slot (name, d) when not check_slots ->
+    let v = lookup_slot name d env in
+    if v == absent then unbound_variable name env else v
+  | _ -> eval_in c false env x
+
 and eval_at (tail : bool) (env : env) (e : expr) : value =
   eval_in (loc_cell ()) tail env e
 
@@ -2773,7 +2782,18 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     if v == absent then unbound_variable g.Ast.g_name env else v
   | ModField (g, label, cf, positions) ->
     (* The steps the positions around `m` took, as they took them. *)
-    for _ = 1 to positions do take_step c done;
+    for _ = 1 to positions do
+      (* `take_step`, written out. *)
+      if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+      then check_interrupt_now ();
+      c.budget <- c.budget - 1;
+      if c.budget <= 0 then fiber_turn c;
+      let f = c.fuel in
+      if f != unlimited then begin
+        f.left <- f.left - 1;
+        if f.left < 0 then out_of_steps f
+      end
+    done;
     let m = g.Ast.g_name in
     (* `cf` keeps the list past the edge, the module found from it and the
        member, so a second read from the same list is one compare, as for
@@ -2870,11 +2890,11 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
             app2_c c tail env ((name, vg) :: fenv) p1 p2 body va x
           | _ ->
             let vf = apply_c c vg va in
-            let vx = eval_in c false env x in
+            let vx = slot_or_eval c env x in
             if tail then apply_tail_c c vf vx else apply_c c vf vx)
        | _ ->
          let vf = eval_in c false env f in
-         let vx = eval_in c false env x in
+         let vx = slot_or_eval c env x in
          if tail then apply_tail_c c vf vx else apply_c c vf vx)
   | Let (p, e1, e2, _) ->
     let v1 = eval_in c false env e1 in
@@ -2888,7 +2908,12 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
         VFix (name, fenv, params, body)
       | _ -> v1
     in
-    eval_in c tail (bind_pat ~prefix:true p v1 env) e2
+    let env' =
+      match p with
+      | PVar name -> (name, v1) :: env
+      | _ -> bind_pat ~prefix:true p v1 env
+    in
+    eval_in c tail env' e2
   | LetRec (bindings, e2, _) ->
     let env' = List.fold_left (fun acc (name, _, _) ->
       (name, VFixGroup (bindings, env, name)) :: acc) env bindings in
@@ -3382,10 +3407,36 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
       f.left <- f.left - 1;
       if f.left < 0 then out_of_steps f
     end;
-    if tail then (mark_loc c loc; eval_in c true env e)
+    let line = c.at_line and col = c.at_col in
+    (* `mark_loc`, written out. *)
+    c.at_line <- loc.Token.line;
+    c.at_col <- loc.Token.col;
+    if c.at_file != loc.Token.file then c.at_file <- loc.Token.file;
+    (* The parser often puts a position straight inside another. The inner
+       one takes its step and marks its position here, after the outer
+       one, as it would as a node of its own; the position the inner one
+       would put back on the way out is the outer one's, which the outer
+       one then puts back too. So only the outer one's is put back. *)
+    let e =
+      match e with
+      | Located (inner, e) ->
+        if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+        then check_interrupt_now ();
+        c.budget <- c.budget - 1;
+        if c.budget <= 0 then fiber_turn c;
+        let f = c.fuel in
+        if f != unlimited then begin
+          f.left <- f.left - 1;
+          if f.left < 0 then out_of_steps f
+        end;
+        c.at_line <- inner.Token.line;
+        c.at_col <- inner.Token.col;
+        if c.at_file != inner.Token.file then c.at_file <- inner.Token.file;
+        e
+      | e -> e
+    in
+    if tail then eval_in c true env e
     else begin
-      let line = c.at_line and col = c.at_col in
-      mark_loc c loc;
       let v = eval_in c false env e in
       (* Only on the way out through a value. An error on its way past wants
          the position it was raised at, not the one being returned to. *)
