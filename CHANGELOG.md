@@ -29,6 +29,7 @@
 - `String.words` is faster (#122).
 - `String.split` with a delimiter of one character is faster (#122).
 - `String.lines` is faster (#122).
+- `String.words` copies each word one time, and `String.slice`, `String.starts_with?` and `Int.of_string` make fewer copies, which makes them faster (#160).
 - `Stream.unique` over a stream of `String` is faster (#122).
 - A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
 - A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).

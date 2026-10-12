@@ -19,6 +19,14 @@ test "words: a single word" (fn t -> t.eq ["a"] (String.words "a"))
 
 test "words: empty text" (fn t -> t.eq [] (String.words ""))
 
+test "words: text that is one word" (fn t -> t.eq ["abc"] (String.words "abc"))
+
+test "words: only separators" (fn t -> t.eq [] (String.words " \t\r\n "))
+
+test "words: a word at each end" (fn t -> t.eq ["a", "b", "c"] (String.words "a \t b\r\nc"))
+
+test "words: separators at both ends" (fn t -> t.eq ["a", "b"] (String.words "\n\t a b \r"))
+
 test "words: carriage returns separate" (fn t -> t.eq ["a", "b"] (String.words "a\r\nb\r"))
 
 -- Only space, tab, newline and carriage return separate. A no-break space,
@@ -69,6 +77,11 @@ test "starts_with?: an empty prefix" (fn t -> t.ok (String.starts_with? "" "abc"
 test "starts_with?: a prefix longer than the text" (fn t ->
   t.eq false (String.starts_with? "abcd" "abc"))
 
+test "starts_with?: empty prefix and text" (fn t -> t.ok (String.starts_with? "" ""))
+
+test "starts_with?: a difference at the last byte" (fn t ->
+  t.eq false (String.starts_with? "ms=" "ms-12"))
+
 test "starts_with?: the whole text" (fn t -> t.ok (String.starts_with? "abc" "abc"))
 
 test "contains?: an empty needle" (fn t -> t.ok (String.contains? "" ""))
@@ -84,6 +97,14 @@ test "slice: bounds are clamped" (fn t -> t.eq "abc" (String.slice (0 - 2) 100 "
 test "slice: an end before the start is empty" (fn t -> t.eq "" (String.slice 3 1 "abc"))
 
 test "slice: a start past the end is empty" (fn t -> t.eq "" (String.slice 9 12 "abc"))
+
+test "slice: all of the text" (fn t -> t.eq "abc" (String.slice 0 3 "abc"))
+
+test "slice: to the end of the text" (fn t -> t.eq "s=12" (String.slice 1 5 "ms=12"))
+
+test "slice: an end before zero is empty" (fn t -> t.eq "" (String.slice 0 (0 - 1) "abc"))
+
+test "slice: of empty text" (fn t -> t.eq "" (String.slice 0 5 ""))
 
 test "slice: by byte" (fn t -> t.eq "\xa9" (String.slice 1 2 "é"))
 
@@ -107,6 +128,12 @@ test "of_string: leading zeros and minus zero" (fn t ->
     Int.of_string "-0",
     Int.of_string "-12"
   ])
+
+test "of_string: whitespace only" (fn t ->
+  t.eq (Error `cannot parse " \t " as Int`) (Int.of_string " \t "))
+
+test "of_string: a minus sign and whitespace" (fn t ->
+  t.eq (Error `cannot parse " - " as Int`) (Int.of_string " - "))
 
 test "of_string: the smallest Int" (fn t ->
   t.eq (Ok Int.min_value) (Int.of_string "-4611686018427387904"))
