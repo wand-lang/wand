@@ -22,6 +22,7 @@
 
 ### Changed
 
+- A tuple index such as `acc.0` is accepted when the type of the tuple is known later in the same definition, as in a fold step whose `else` branch gives the tuple (#147).
 - `xs[1]` on a list gives an error that says what to write: `use List.get 1 xs (as an Option) or List.get! 1 xs` (#145).
 - `wand f` writes `{a = a}` in a map literal as `{a}`, as it does in a map pattern (#146).
 - When the values of a `{...}` map literal have different types, the type error says that a Map holds values of one type, and that fields of different types need a `type`: `type T(groups: ..., skipped: ...)`, then `T(groups = ..., skipped)` (#146).

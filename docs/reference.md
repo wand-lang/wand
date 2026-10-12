@@ -1135,10 +1135,20 @@ let nested = ((1, 2), 3)
 nested.0.1             -- 2
 ```
 
-As for a record field, the type of the tuple must be known where the
-element is read. An argument written after a lambda gives it its type, so
-`List.filter (fn p -> p.1 > 0) pairs` is accepted. A parameter with
-nothing else to go on needs its type written:
+The type of the tuple must be known by the end of the top-level definition
+that reads the element, not at the read itself. An argument written after a
+lambda gives it its type, so `List.filter (fn p -> p.1 > 0) pairs` is
+accepted, and so is a lambda given straight to a fold with its initial
+value. A function can also give the type itself, as this fold step does in
+its `else` branch:
+
+```ocaml
+let step acc line = if line == "" then acc else (acc.0 + 1, acc.1)
+List.fold_left step (0, 0) ["a", "", "b"]   -- (2, 0)
+```
+
+A use of the function in a later definition is too late: a parameter with
+nothing else to go on in its own definition needs its type written:
 
 ```ocaml
 let second p = p.1

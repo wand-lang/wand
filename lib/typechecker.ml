@@ -1407,7 +1407,7 @@ let failed_to_unify msg =
   unify_failure := msg;
   raise (TypeError msg)
 
-let unify t1 t2 =
+let unify_now t1 t2 =
   try unify_ t1 t2 with
   | Mismatch (a, b) ->
     let (sa, sb) = disambiguate a b in
@@ -1415,6 +1415,116 @@ let unify t1 t2 =
   | Effect_set.Conflict (a, b) ->
     failed_to_unify (effects_conflict_message a b)
   | TypeError msg -> failed_to_unify msg
+
+(* ── A tuple element read before the tuple's type is known (#147) ────────
+   `acc.0` needs the size of the tuple, and in a fold's step function that
+   is often known only further on: `if line == "" then acc else (acc.0 + 1,
+   acc.1)` tells that `acc` is a pair at the `if`, after `.0` was read. So a
+   read from a value whose type is still a variable is not an error where it
+   stands. It is kept here, with a variable for the element, and settled
+   when the variable becomes a type: a tuple long enough gives the element,
+   anything else is the error the read would have given.
+
+   A variable with a read waiting on it is never generalised (see
+   `generalize`): the element's type is not yet tied to the tuple's, so a
+   scheme over either would let two uses disagree about one value. The read
+   that is still waiting when its top-level item ends can never be settled,
+   and gives the error that asks for the type. *)
+type pending_element = {
+  pe_tuple : typ;               (* the value read from *)
+  pe_index : int;
+  pe_elem : typ;                (* what the read gave *)
+  pe_label : string;            (* the index as written *)
+  pe_subject : string option;   (* the name read from, when it is a name *)
+  pe_at : Token.loc option;     (* where the read is *)
+}
+
+let pending_elements : pending_element list ref = ref []
+
+let raise_element_at pe msg =
+  match pe.pe_at with
+  | Some l -> raise (TypeErrorAt (l, msg))
+  | None -> raise (TypeError msg)
+
+(* The error for a read whose value has no known type. The size of the
+   tuple is not known, nor the type of each element, so no annotation is
+   certain and none is offered as a fix. The example has as many elements
+   as the index needs. *)
+let element_type_unknown_message ~subject ~label ~index =
+  let example =
+    "(" ^ String.concat ", "
+      (List.init (max 2 (index + 1)) (fun k ->
+         String.make 1 (Char.chr (Char.code 'A' + (k mod 26))))) ^ ")"
+  in
+  match subject with
+  | Some n ->
+    Printf.sprintf
+      "'%s' needs its type before '.%s' can be read: write its tuple \
+       type, such as '(%s: %s)'" n label n example
+  | None ->
+    Printf.sprintf
+      "this value needs its type before '.%s' can be read: bind it to \
+       a name that carries its type, such as 'let (x: %s) = ...'"
+      label example
+
+(* The element at `i` of a value of type `t`, when `t` says what it is:
+   `Some` the element, `None` while `t` is still a variable. *)
+let tuple_element ~label i t =
+  match repr t with
+  | TTuple ts ->
+    let n = List.length ts in
+    (match List.nth_opt ts i with
+     | Some ti -> Some ti
+     | None ->
+       raise (TypeError (Printf.sprintf
+         "a tuple of %d has elements .0 to .%d" n (n - 1))))
+  | TVar _ -> None
+  | t ->
+    raise (TypeError (Printf.sprintf
+      "'.%s' reads an element of a tuple, and this is %s"
+      label (string_of_typ t)))
+
+let solving_elements = ref false
+
+(* Settle every read whose value now has a type, until none changes: one
+   settled read can give the type another waits on, as in `p.0.1`. *)
+let solve_pending_elements () =
+  if not !solving_elements && !pending_elements <> [] then begin
+    solving_elements := true;
+    Fun.protect ~finally:(fun () -> solving_elements := false) (fun () ->
+      let progress = ref true in
+      while !progress do
+        progress := false;
+        (* Oldest first, so the first read written is the first settled. *)
+        List.iter (fun pe ->
+          match tuple_element ~label:pe.pe_label pe.pe_index pe.pe_tuple with
+          | None -> ()
+          | Some ti ->
+            pending_elements := List.filter (fun x -> x != pe) !pending_elements;
+            progress := true;
+            (try unify_now ti pe.pe_elem
+             with TypeError msg -> raise_element_at pe msg)
+          | exception TypeError msg ->
+            pending_elements := List.filter (fun x -> x != pe) !pending_elements;
+            raise_element_at pe msg)
+          (List.rev !pending_elements)
+      done)
+  end
+
+(* Raise for the first read in the file that is still waiting. *)
+let fail_pending_elements () =
+  solve_pending_elements ();
+  match List.rev !pending_elements with
+  | [] -> ()
+  | pe :: _ ->
+    pending_elements := [];
+    raise_element_at pe (element_type_unknown_message
+      ~subject:pe.pe_subject ~label:pe.pe_label ~index:pe.pe_index)
+
+(* Unify, and settle any read the new knowledge gives a type. *)
+let unify t1 t2 =
+  unify_now t1 t2;
+  if !pending_elements <> [] then solve_pending_elements ()
 
 (* For a site that knows which side the reader wrote: an annotation, a
    condition, an argument, an arm of a `match`. *)
@@ -1875,7 +1985,14 @@ let free_evars_env (env : env) =
 (* ── Generalization and instantiation ────────────────────────────────────── *)
 
 let generalize (env : env) t =
-  let env_free = free_tvars_env env in
+  solve_pending_elements ();
+  (* A read still waiting holds its tuple and its element monomorphic: see
+     "A tuple element read before the tuple's type is known". *)
+  let held =
+    List.concat_map (fun pe -> free_tvars pe.pe_tuple @ free_tvars pe.pe_elem)
+      !pending_elements
+  in
+  let env_free = held @ free_tvars_env env in
   let quantify =
     free_tvars t
     |> List.sort_uniq compare
@@ -4991,37 +5108,17 @@ let rec infer tenv (env : env) (e : expr) : typ =
         "'.%s' reads an element of a tuple, and a module is not a tuple"
         label));
     let t = infer tenv env e in
-    (match repr t with
-     | TTuple ts ->
-       let n = List.length ts in
-       (match List.nth_opt ts i with
-        | Some ti -> ti
-        | None ->
-          raise (TypeError (Printf.sprintf
-            "a tuple of %d has elements .0 to .%d" n (n - 1))))
-     | TVar _ ->
-       (* The size of the tuple is not known, nor the type of each element,
-          so no annotation is certain and none is offered as a fix. The
-          example has as many elements as the index needs. *)
-       let example =
-         "(" ^ String.concat ", "
-           (List.init (max 2 (i + 1)) (fun k ->
-              String.make 1 (Char.chr (Char.code 'A' + (k mod 26))))) ^ ")"
-       in
-       (match strip_located e with
-        | Var n ->
-          raise (TypeError (Printf.sprintf
-            "'%s' needs its type before '.%s' can be read: write its tuple \
-             type, such as '(%s: %s)'" n label n example))
-        | _ ->
-          raise (TypeError (Printf.sprintf
-            "this value needs its type before '.%s' can be read: bind it to \
-             a name that carries its type, such as 'let (x: %s) = ...'"
-            label example)))
-     | _ ->
-       raise (TypeError (Printf.sprintf
-         "'.%s' reads an element of a tuple, and this is %s"
-         label (string_of_typ t))))
+    (match tuple_element ~label i t with
+     | Some ti -> ti
+     | None ->
+       (* The type is not known yet. The read waits for it, and is settled
+          when the variable becomes a type (#147). *)
+       let elem = fresh () in
+       let subject = match strip_located e with Var n -> Some n | _ -> None in
+       pending_elements :=
+         { pe_tuple = t; pe_index = i; pe_elem = elem; pe_label = label;
+           pe_subject = subject; pe_at = !cur_loc } :: !pending_elements;
+       elem)
   | Field (e, label) ->
     (* Namespace access: Ns.member — check before falling into regular field inference *)
     let lookup_ns ns_name =
@@ -7539,6 +7636,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   visible_set := None;
   holes := [];
   hole_locs := [];
+  pending_elements := [];
   relaxed_ctors := [];
   let prog = settle_aliases ~init_tenv prog in
   (* Read before the items are walked, so an implementation can precede the
@@ -7880,7 +7978,10 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   let saved_below = !defined_below in
   let (env, last_t) =
   Fun.protect ~finally:(fun () -> defined_below := saved_below) @@ fun () ->
-  List.fold_left (fun (env, last_t) item ->
+  List.fold_left (fun acc item ->
+  (* A tuple element read inside the item is settled by the item's end, or
+     never (#147). *)
+  let after = (fun (env, last_t) item ->
     incr item_index;
     current_item := !item_index;
     defined_below := below_each.(!item_index);
@@ -8039,7 +8140,9 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       in
       (env', last_t)
     | TLType _ | TLImport _ | TLInterface _ -> (env, last_t)
-  ) (base_env, TUnit) prog.items
+  ) acc item in
+  fail_pending_elements ();
+  after) (base_env, TUnit) prog.items
   in
   let n_own = List.length env - List.length base_env in
   let own_env = List.filteri (fun i _ -> i < n_own) env in
