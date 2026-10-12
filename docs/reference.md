@@ -1464,6 +1464,11 @@ whatever `name` says, and handing that to a shell would run it, where
 `$(echo %{name})` passes it as one argument. The quoting lives in the
 syntax, so a `Command` can only be built where its words were written.
 
+A `Command` cannot go into another command. `%{c}` or `%!{c}` with a
+`Command` is a type error, also as a list element. To use what the command
+prints, run it with `Shell.run!` and splice the `String`. To run both, write
+them in one `$(...)`.
+
 #### Running a command in another directory
 
 A command runs in the current directory of the process: the directory

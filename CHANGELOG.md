@@ -10,6 +10,7 @@
 - The evaluator does less work at each position in the source (#162).
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
+- A `Command` in `%{...}` or `%!{...}`, also as a list element, is a type error. Before, it gave its source text (#174).
 
 ### Fixed
 

@@ -990,6 +990,26 @@ $(printf "[%s]" "x %{xs}")|} "2:22: a list in %{...} between quotes";
     {|let xs = ["a"]
 $(printf "[%s]" %!{xs})|} "2:20: a list in %!{...} would read each element"
 
+(* A Command in a splice gave its source text, `$*(...)`, as an argument
+   (#174). It is refused in every hole, and in a list; a parameter whose
+   type the run decides is refused when the command is built. *)
+let test_a_command_in_a_command () =
+  let refused = "a Command cannot go into another command" in
+  err_contains "a bare splice" {|let c = $*(echo hi)
+$(printf "[%s]" %{c})|} ("2:19: " ^ refused);
+  err_contains "between double quotes" {|let c = $*(echo hi)
+$(printf "[%s]" "x %{c}")|} refused;
+  err_contains "between single quotes" {|let c = $*(echo hi)
+$(printf "[%s]" 'x %{c}')|} refused;
+  err_contains "a raw splice" {|let c = $*(echo hi)
+$(printf "[%s]" %!{c})|} refused;
+  err_contains "a list" {|let c = $*(echo hi)
+$(printf "[%s]" %{[c]})|} refused;
+  err_contains "the type settled at run time" {|let f x = $(printf "[%s]" %{x})
+f $*(echo hi)|} refused;
+  err_contains "a list the run decides" {|let f x = $(printf "[%s]" %{x})
+f [$*(echo hi)]|} refused
+
 let test_a_shared_holds_no_shared () =
   let nests = "a Shared cannot hold another Shared" in
   err_contains "directly"
@@ -2817,6 +2837,7 @@ let () =
     "shared", [
       Alcotest.test_case "a Shared holds no Shared" `Quick test_a_shared_holds_no_shared;
       Alcotest.test_case "a list in a command" `Quick test_a_list_in_a_command;
+      Alcotest.test_case "a command in a command" `Quick test_a_command_in_a_command;
       Alcotest.test_case "an update performs nothing" `Quick test_an_update_performs_nothing;
       Alcotest.test_case "state is declared" `Quick test_state_is_declared;
     ];

@@ -7882,7 +7882,19 @@ let source_splice_extent (l : Token.loc) =
    has no one argument for an element; between the author's quotes the
    value is part of one word; and `%!{...}` would read every element as
    shell source, which is the reading a list of file names must never get.
-   The last one has one correct form, and the fix writes it. *)
+   The last one has one correct form, and the fix writes it.
+
+   A Command is refused in every splice, alone or in a list (#174). In
+   `%{...}` it gave its source text, `$*(...)`, as one argument, and in
+   `%!{...}` that text was a shell syntax error. There is more than one
+   thing the author can mean -- the output of the command, or one command
+   that holds both -- so the error has no fix. *)
+let command_splice_msg =
+  "a Command cannot go into another command: %{...} would give its source \
+   text as one argument, and %!{...} would give that text to the shell. To \
+   use what the command prints, run it with Shell.run! and splice the \
+   String; to run both, write them in one $(...)"
+
 let check_cmd_lists () =
   List.iter (fun (t, (h : Token.hole), loc) ->
     let fail msg =
@@ -7891,6 +7903,8 @@ let check_cmd_lists () =
       | None -> raise (TypeError msg)
     in
     match repr t, h with
+    | TCommand, _ -> fail command_splice_msg
+    | TList inner, _ when repr inner = TCommand -> fail command_splice_msg
     | TList inner, _ when (match repr inner with TList _ -> true | _ -> false) ->
       fail (Printf.sprintf
         "%%{...} gives one argument for each element of a list, and this \

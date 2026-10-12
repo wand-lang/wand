@@ -2602,6 +2602,10 @@ let quote_within q v =
     Buffer.contents buf
   end else "\"" ^ shell_quote v ^ "\""
 
+let command_splice_error =
+  "a Command cannot go into another command: run it with Shell.run! and \
+   splice the String it gives, or write both in one $(...)"
+
 (* The text of a value that `%{...}` splices into a command. A `Path` whose
    text starts with `-` gets `./` in front (#175): it names the same file,
    and no command can read it as an option. A `String` is not changed --
@@ -3321,6 +3325,9 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     List.iter (fun (lit, e, h) ->
       Buffer.add_string buf lit;
       match eval env e, (h : Token.hole) with
+      (* The typechecker refuses a Command in a splice where it knows the
+         type (#174); this is the case it could not see. *)
+      | VCommand _, _ -> raise (EvalError command_splice_error)
       (* A list in a bare `%{...}` is one quoted argument for each element,
          as `"$@"` is in a shell, and an empty list is no argument at all.
          The typechecker refuses the other cases where it knows the type;
@@ -3332,6 +3339,7 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
           | VList _ -> raise (EvalError
               "%{...} takes a list of values, one argument for each, and \
                this list holds a list; flatten it first")
+          | VCommand _ -> raise (EvalError command_splice_error)
           | v -> shell_quote (splice_text v)) vs))
       | VList _, Token.Inside _ -> raise (EvalError
           "a list in %{...} between quotes would be one word; take the \
