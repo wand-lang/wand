@@ -10,6 +10,12 @@
 - The evaluator does less work at each position in the source (#162).
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
+- A `Command` in `%{...}` or `%!{...}`, also as a list element, is a type error. Before, it gave its source text (#174).
+
+### Fixed
+
+- A `%{x}` value between the author's double quotes cannot end the quote in a Big5, GBK or GB18030 locale. The value goes in single-quoted between the two double-quoted parts (#168).
+- A `Path` that starts with `-` in `%{...}` at the start of a word, also as a list element, goes in with `./` in front, so that no command reads it as an option (#175).
 
 ### Fixed
 

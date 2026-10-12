@@ -1464,6 +1464,11 @@ whatever `name` says, and handing that to a shell would run it, where
 `$(echo %{name})` passes it as one argument. The quoting lives in the
 syntax, so a `Command` can only be built where its words were written.
 
+A `Command` cannot go into another command. `%{c}` or `%!{c}` with a
+`Command` is a type error, also as a list element. To use what the command
+prints, run it with `Shell.run!` and splice the `String`. To run both, write
+them in one `$(...)`.
+
 #### Running a command in another directory
 
 A command runs in the current directory of the process: the directory
@@ -1546,18 +1551,34 @@ $?(grep %{pat} notes.txt)   -- runs: grep '--version' notes.txt
 ```
 
 The quoting is right — `--version` arrived as exactly one argument. It is
-`grep` that reads a leading dash as a flag. Where the value comes from
-outside the script, end the options first: `$(grep -- %{pat} notes.txt)`.
-Most tools take `--`, and the ones that do not take a path instead
-(`./%{name}` rather than `%{name}`).
+`grep` that reads a leading dash as a flag. A `String` value can start with
+`-`, so where the value comes from outside the script, put `--` before the
+operands when the command accepts it: `$(grep -- %{pat} notes.txt)`.
+
+A `Path` has one correct form for this, and wand writes it: a `Path` whose
+text starts with `-` goes in with `./` in front. It names the same file, and
+no command reads it as an option. This applies where the value starts a
+word, also between your own quotes, and to each `Path` element of a list.
+After other text in the same word, as in `backup-%{p}` or `--out=%{p}`, a
+command cannot read the value as an option, so it goes in as it is. A
+`Path` that is absolute or starts with `./` already does not change:
+
+```ocaml
+let p = Path.of_string "-rf"
+$(rm %{p})                  -- runs: rm './-rf'
+```
 
 Write `%{x}` between quotes of your own, and it becomes part of that word.
-It is not an argument of its own. wand escapes it for the quote it sits in.
-The shell reads nothing in the value as syntax:
+It is not an argument of its own. wand quotes it for the quote it sits in.
+Between double quotes, wand closes your quote, puts the value in single
+quotes and opens your quote again, so the word stays one word. A backslash
+before each special character is not safe in every locale: in Big5 or GBK a
+byte of the value and the backslash after it can be one character. The
+shell reads nothing in the value as syntax:
 
 ```ocaml
 let name = "$(whoami)"
-$(echo "hi %{name}")        -- runs: echo "hi \$(whoami)"    (one argument)
+$(echo "hi %{name}")        -- runs: echo "hi "'$(whoami)'""    (one argument)
 $(grep "^%{name}" log)      -- the value is part of the pattern
 ```
 
