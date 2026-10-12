@@ -36,6 +36,7 @@
 - A call to a wand function is approximately 15% faster (#122).
 - Each step of evaluation is cheaper. A loop that calls a function is approximately 25% faster, and a program that runs for ever still stops at once on Ctrl-C (#157).
 - A name that a function binds, such as a parameter or a `let`, is found by its place, and a name from outside the function is found once and kept. Speed tasks 02, 03 and 09 are approximately 30% faster (#156).
+- A builtin that calls a function for each element reads the task state one time, which makes it faster. A call that gives two arguments to a function of two parameters, as in a fold or after `|>`, is also faster (#159).
 
 ### Fixed
 
