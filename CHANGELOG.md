@@ -8,6 +8,8 @@
 - The evaluator reads a variable or a module member with less work (#165).
 - The evaluator calls a function of one parameter with less work (#164).
 - The evaluator does less work at each position in the source (#162).
+- `String.words` is faster for a word longer than eight bytes (#163).
+- `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
 
 ## [0.106.0] - 2026-10-12
 

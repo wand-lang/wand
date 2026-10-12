@@ -42,6 +42,18 @@ test "words: a log line" (fn t ->
     ["2026-10-01T15:08:04Z", "WARN", "billing:", "disk", "91%", "full", "ip=10.3.15.15"]
     (String.words "2026-10-01T15:08:04Z WARN billing: disk 91% full ip=10.3.15.15"))
 
+-- A word of more than eight bytes is read eight bytes at a time. A control
+-- byte in it, or a `!` (one above a space), does not end it.
+test "words: long words and the bytes near a space" (fn t ->
+  t.eq
+    [
+      "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789",
+      "abcdefg\x01hijklmnop",
+      "a!bcdefghij!"
+    ]
+    (String.words
+      "abcdefghijklmnopqrstuvwxyz0123456789abcdefghijklmnopqrstuvwxyz0123456789\tabcdefg\x01hijklmnop a!bcdefghij!\n"))
+
 -- ── split ───────────────────────────────────────────────────────────────
 
 test "split: empty fields at both ends and between" (fn t ->
