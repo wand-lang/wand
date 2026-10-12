@@ -34,6 +34,12 @@ let route! (state: Shared State) (req: HTTP.Incoming) =
     HTTP.reply 200 "ok",
     headers = Map.set "x-echo" req.body {}
   )
+  -- The body, sent back as a header name: one that is not a token answers
+  -- 500, as a request with one is refused.
+  | (HTTP.POST, ["name"]) -> HTTP.Response(
+    HTTP.reply 200 "ok",
+    headers = Map.set req.body "v" {}
+  )
   | _ -> HTTP.reply 404 ""
 
 group "a handler without a socket" (fn () -> [
@@ -67,7 +73,22 @@ let with_headers! first second data url =
 -- client is done, the server stops.
 test "a server answers each request as its limits say" (fn t ->
   t.eq
-    ["201", "ada", "404", "500", "503", "413", "501", "200", "500", "501", "400", "400"]
+    [
+      "201",
+      "ada",
+      "404",
+      "500",
+      "503",
+      "413",
+      "501",
+      "200",
+      "500",
+      "200",
+      "500",
+      "501",
+      "400",
+      "400"
+    ]
     (with Shared.make State(users = {}) as state ->
     Par.all! [
       fn () -> (
@@ -89,6 +110,8 @@ test "a server answers each request as its limits say" (fn t ->
           status! "OPTIONS" "" "%{url}/",
           status! "POST" "plain" "%{url}/header",
           status! "POST" "a\r\nx: 1" "%{url}/header",
+          status! "POST" "x-name" "%{url}/name",
+          status! "POST" "a name" "%{url}/name",
           with_header! "Transfer-Encoding: chunked" "abc" "%{url}/users/1",
           with_headers! "Content-Length: 3" "Content-Length: 4" "abc" "%{url}/users/1",
           with_header! "Content-Length: 0x3" "abc" "%{url}/users/1"

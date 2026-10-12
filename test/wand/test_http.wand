@@ -1,8 +1,9 @@
 import Test
-let {test} = import Test
+let {test, group} = import Test
 import Decode
 import HTTP
 import List
+import Map
 import Result
 
 -- Reaching a host, without reaching one. Every test here runs under a
@@ -94,3 +95,46 @@ test "an alias and the built-in name are one type" (fn t ->
     status,
     HTTP.Request(url = https://api.example.com/x).method
   ))
+
+-- A header goes to `curl` as `-H "name: value"`. A line break in the value
+-- would add headers, and a name that starts with `@` would make `curl` send
+-- a local file. Both are refused before the request starts (#167), with an
+-- error a script catches.
+group "a header that breaks the wire rule" (fn () ->
+  let send headers =
+    Test.with_http [("api.example.com", HTTP.Response(status = 200, headers = {}, body = ""))] (fn () ->
+      HTTP.request HTTP.Request(url = https://api.example.com/x, headers = headers));
+  let reason headers =
+    match send headers with
+    | Ok _ -> "sent"
+    | Error why -> why
+  in
+  [
+    test "a CR LF in a value is refused" (fn t ->
+      t.eq
+        "http: the value of header x-a holds a CR, LF or NUL byte"
+        (reason (Map.from_list [("x-a", "v\r\nInjected: yes")]))),
+    test "a NUL in a value is refused" (fn t ->
+      t.eq false (Result.ok? (send (Map.from_list [("x-a", "a\x00b")])))),
+    test "a name that starts with @ is refused" (fn t ->
+      t.eq
+        `http: the header name "@hdr" is not an RFC 7230 token`
+        (reason (Map.from_list [("@hdr", "z")]))),
+    test "a name with a separator or a line break is refused" (fn t ->
+      t.eq
+        [
+          `http: the header name "x;" is not an RFC 7230 token`,
+          `http: the header name "a\nb" is not an RFC 7230 token`,
+          `http: the header name "" is not an RFC 7230 token`
+        ]
+        (List.map (fn k -> reason (Map.from_list [(k, "v")])) ["x;", "a\nb", ""])),
+    test "the raising form raises" (fn t ->
+      t.raises (fn () ->
+        Test.with_http [] (fn () ->
+          HTTP.request! HTTP.Request(
+            url = https://api.example.com/x,
+            headers = Map.from_list [("x", "a\nb")]
+          )))),
+    test "a token name and a clean value are sent" (fn t ->
+      t.eq "sent" (reason (Map.from_list [("X-Custom_1.v~", `a: b; c="d"`)])))
+  ])

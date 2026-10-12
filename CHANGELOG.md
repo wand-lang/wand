@@ -11,6 +11,10 @@
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
 
+### Fixed
+
+- `HTTP.request` refuses a header name that is not an RFC 7230 token and a header value with a CR, LF or NUL byte (#167).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added

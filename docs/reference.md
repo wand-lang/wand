@@ -6026,6 +6026,13 @@ and a `Map` is not. `header` answers the last value of a name, so a
 response that repeats one — `set-cookie` is the case that matters — keeps
 only the last value.
 
+**A header obeys one rule, sent or answered.** Its name is an RFC 7230
+token — one or more letters, digits and ``!#$%&'*+-.^_`|~`` — and its value
+holds no CR, LF or NUL. A request that breaks the rule does not start.
+Then `request!` raises and `request` answers `Error`, with a message that
+names the header. A line break in a value would add headers of its own, and
+a name that starts with `@` would make `curl` send a local file as headers.
+
 `timeout` is a field rather than a wrapper, unlike `Shell.timeout` and
 `Par.timeout`. A wrapper cannot differ per request inside a `Par.map` over a
 list of URLs, which is the case that wants a timeout most, and a field is
@@ -6079,6 +6086,7 @@ in the system's queue. Each request is answered on its own:
 | the body is larger than `max_body` | 413 |
 | the head is larger than `max_head` | 431 |
 | the method is not one `HTTP.Method` names | 501 |
+| a header of the response breaks the header rule | 500 |
 
 **On SIGTERM or Ctrl-C a server drains.** It stops accepting, gives the
 requests in progress `grace` to finish, then stops the rest and the commands

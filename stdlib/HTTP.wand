@@ -60,12 +60,44 @@ let ok? (r: Response) = r.status >= 200 && r.status < 300
 -- Some("text/plain") : Option String
 let header name (r: Response) = Map.get (String.lower name) r.headers
 
--- Send a request. Raises if the exchange did not happen.
+-- The one rule for a header that goes on the wire, in a request and in a
+-- response. The name is an RFC 7230 token: one or more of the letters,
+-- digits and marks in `_tchars`. The value holds no CR, LF or NUL.
+-- A line break in a value ends the header and adds others. A name that
+-- starts with `@` makes `curl` read a local file and send its lines as
+-- headers.
+let _tchars =
+  "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+let _token? name =
+  !(String.empty? name)
+  && List.all? (fn c -> String.contains? c _tchars) (String.bytes name)
+
+let _clean? text =
+  !(String.contains? "\r" text || String.contains? "\n" text || String.contains? "\x00" text)
+
+let _sendable? (k, v) = _token? k && _clean? v
+
+-- A header name as an error shows it, with its line breaks written out so
+-- the message stays on one line.
+let _shown name =
+  name
+  |> String.replace "\r" "\\r"
+  |> String.replace "\n" "\\n"
+  |> String.replace "\x00" "\\0"
+
+-- Send a request. Raises if the exchange did not happen, and before it
+-- starts when a header breaks the rule above: a name that is not an
+-- RFC 7230 token, or a value with a CR, LF or NUL in it.
 --
 -- >> Test.with_http [] (fn () ->
 -- ..   (HTTP.request! HTTP.Request(url = https://example.com/)).status)
 -- 200 : Int
-let request! req = net_http req
+let request! (req: Request) =
+  match List.find (fn p -> !(_sendable? p)) (Map.to_list req.headers) with
+  | Some(k, _) -> if _token? k then fail_exn "http: the value of header %{k} holds a CR, LF or NUL byte"
+    else fail_exn `http: the header name "%{_shown k}" is not an RFC 7230 token`
+  | None -> net_http req
 
 -- Send a request, reporting a transport failure rather than raising.
 --
@@ -323,15 +355,11 @@ let _read_request (limits: Server) conn =
     | _ -> Error (400, "the request line is not `METHOD target HTTP/version`")
   )
 
--- A header the handler set can hold no line break: written as it was, a
--- value carrying user input could end the header and add others, or a
--- second response. `Content-Length` and `Connection` are the server's own,
--- so a handler's are not sent beside them.
-let _sendable? (k, v) =
-  let clean t =
-    !(String.contains? "\r" t || String.contains? "\n" t || String.contains? "\x00" t);
-  clean k && clean v
-
+-- A header the handler set obeys the rule a request obeys (`_sendable?`):
+-- written as it was, a value carrying user input could end the header and
+-- add others, or a second response. A response that breaks it answers 500.
+-- `Content-Length` and `Connection` are the server's own, so a handler's
+-- are not sent beside them.
 let _ours? k = List.any? (fn n -> n == String.lower k) ["content-length", "connection"]
 
 let _send (r: Response) conn =
