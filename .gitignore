@@ -46,3 +46,6 @@ _opam/
 # keeping is moved into test/fuzz/regressions/ by hand.
 _fuzz-findings/
 .DS_Store
+
+# Claude Code: local settings and the worktrees of its agents
+.claude/
