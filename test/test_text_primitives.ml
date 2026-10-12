@@ -66,6 +66,38 @@ let test_words () =
       (words_ref s) (List.map strings_of (Evaluator.str_words_impl s))
   done
 
+(* Long words and the bytes near 32. The scan steps over eight bytes at a
+   time when none of them is 32 or less, so a word must be longer than
+   eight bytes to reach that path, and a byte below 32 that is not a
+   separator, or a byte of 33, must stop it without an error. *)
+let long_alphabet = [| "a"; " "; "\t"; "\n"; "\r"; "abcdefg"; "abcdefgh";
+                       "abcdefghijklmnopq"; "\x00"; "\x01"; "\x1f"; "\x0b";
+                       "\x21"; "\x7f"; "\x80"; "\xff"; "\xc3\xa9";
+                       String.make 70 'x' |]
+
+let test_words_long () =
+  let st = Random.State.make [| 6 |] in
+  for _ = 1 to rounds do
+    let n = Random.State.int st 30 in
+    let s = String.concat "" (List.init n (fun _ ->
+      long_alphabet.(Random.State.int st (Array.length long_alphabet)))) in
+    Alcotest.(check (list string)) (Printf.sprintf "words %S" s)
+      (words_ref s) (List.map strings_of (Evaluator.str_words_impl s))
+  done
+
+(* Every range of every length up to 80, around the 64 bytes where the copy
+   goes back to `String.sub`, and ranges outside the text, which must raise
+   as `String.sub` does. *)
+let test_short_sub () =
+  let s = String.init 80 (fun i -> Char.chr (i * 37 land 255)) in
+  for start = -2 to 82 do
+    for len = -2 to 82 do
+      let expected = try Some (String.sub s start len) with Invalid_argument _ -> None in
+      let got = try Some (Evaluator.short_sub s start len) with Invalid_argument _ -> None in
+      Alcotest.(check (option string)) (Printf.sprintf "sub %d %d" start len) expected got
+    done
+  done
+
 let test_split () =
   let st = Random.State.make [| 2 |] in
   let delims = [| ","; " "; "\n"; "aa"; "a,"; ""; "-0" |] in
@@ -122,6 +154,8 @@ let () =
   Alcotest.run "text_primitives" [
     "against references", [
       Alcotest.test_case "words" `Quick test_words;
+      Alcotest.test_case "words, long" `Quick test_words_long;
+      Alcotest.test_case "short_sub" `Quick test_short_sub;
       Alcotest.test_case "split" `Quick test_split;
       Alcotest.test_case "lines" `Quick test_lines;
       Alcotest.test_case "Int.of_string" `Quick test_decimal_int;

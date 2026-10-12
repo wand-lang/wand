@@ -4033,11 +4033,37 @@ let str_has_prefix prefix s =
     !j = plen
   end
 
+external str_get64u : string -> int -> int64 = "%caml_string_get64u"
+external bytes_set64u : bytes -> int -> int64 -> unit = "%caml_bytes_set64u"
+
+(* `String.sub` for the short pieces that `String.words` and its kin cut.
+   `String.sub` is `Bytes.sub`: a check of the range, then a C call to copy
+   with `memmove`, and the copy of a word of a few bytes cost more than the
+   bytes did. Here a copy of up to 64 bytes is eight bytes at a time in
+   OCaml, with no call. A longer copy, or a range that is not in [s], goes
+   to `String.sub` as before. *)
+let short_sub s start len =
+  if len > 64 || start < 0 || len < 0 || start > String.length s - len then
+    String.sub s start len
+  else begin
+    let b = Bytes.create len in
+    let j = ref 0 in
+    while !j + 8 <= len do
+      bytes_set64u b !j (str_get64u s (start + !j));
+      j := !j + 8
+    done;
+    while !j < len do
+      Bytes.unsafe_set b !j (String.unsafe_get s (start + !j));
+      incr j
+    done;
+    Bytes.unsafe_to_string b
+  end
+
 (* `String.sub`, except that a range that covers all of [s] gives [s] back.
    A String does not change, so the copy holds nothing that [s] does not,
    and a one-word line or a slice to the end of a word then costs nothing. *)
 let[@inline] str_sub s start len =
-  if start = 0 && len = String.length s then s else String.sub s start len
+  if start = 0 && len = String.length s then s else short_sub s start len
 
 let str_split_impl delim str =
   let dlen = String.length delim in
@@ -4113,6 +4139,17 @@ let str_lines_impl str =
     VString (str_sub str 0 !stop) :: !acc
   end
 
+(* True when one of the eight bytes in [x] is 32 or less, and so can be a
+   space. The test can say true for a byte above 32 when a lower byte is 32
+   or less, but it never says false when one is: a false answer lets the
+   scan step over eight bytes of a word at once, and a true answer sends it
+   back to one byte at a time. *)
+let[@inline] any_byte_le_32 x =
+  Int64.logand
+    (Int64.logand (Int64.sub x 0x2121212121212121L) (Int64.lognot x))
+    0x8080808080808080L
+  <> 0L
+
 let str_words_impl str =
   (* From the end, so each word goes on the front of the list in its final
      place: a seven-word line made fourteen list cells and threw half of
@@ -4123,6 +4160,9 @@ let str_words_impl str =
     while !i >= 0 && is_word_space (String.unsafe_get str !i) do decr i done;
     if !i >= 0 then begin
       let stop = !i + 1 in
+      while !i >= 7 && not (any_byte_le_32 (str_get64u str (!i - 7))) do
+        i := !i - 8
+      done;
       while !i >= 0 && not (is_word_space (String.unsafe_get str !i)) do decr i done;
       acc := VString (str_sub str (!i + 1) (stop - !i - 1)) :: !acc
     end

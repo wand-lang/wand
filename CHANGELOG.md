@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `String.words` reads long words eight bytes at a time and copies short words without a C call, so it is faster (#163).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added
