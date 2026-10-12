@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.106.0] - 2026-10-12
+
 ### Added
 
 - One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
