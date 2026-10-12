@@ -1128,7 +1128,8 @@ and pat_base_ s =
   (* A constructor that takes anything is placed, so that an error in it --
      a field it does not have, a count of arguments it does not take -- has
      a line and a column wherever the pattern is: a parameter or a `let`
-     has no position of its own the way a `match` arm has (#115). *)
+     has no position of its own the way a `match` arm has (#115). The span
+     also tells `wand f` whether `Ok ()` was written with its space. *)
   | Token.Upper name ->
     let at = peek_loc s in
     ignore (advance s);
@@ -1687,7 +1688,12 @@ and constr_body_ s name =
        which must then have defaults, and a constructor applied to unit
        where it does not. The declaration decides, as it does for a list of
        bare names. *)
-    if peek s = Token.RParen then (ignore (advance s); ConstrBare (name, []))
+    (* Placed, so that `wand f` can tell `Ok ()` from `Stats()` and give
+       back the one that was written: both read the same. *)
+    if peek s = Token.RParen then begin
+      ignore (advance s);
+      Located (Token.span_to ctor_loc bracket_loc, ConstrBare (name, []))
+    end
     else if peek s = Token.Let then begin
       (* `Ctor (let x = 1; f x)` -- a block, as it is after any other `(`.
          Reading it as an expression first would hand the binding to `let_`

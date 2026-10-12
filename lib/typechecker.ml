@@ -4012,7 +4012,17 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
       | Some (_, ctor) -> List.map fst ctor.fields
       | None -> []
     in
-    infer_pat tenv (Ast.constr_bare_reading ~fields name ids) t env
+    (* How many values the constructor carries, so that `Ok ()` reads as
+       `Ok` applied to the unit and `Red()` as `Red` (#116). *)
+    let arity =
+      let name = ctor_name_for tenv name in
+      match (match builtin_result_scheme name with
+             | Some _ as s -> s
+             | None -> List.assoc_opt name (tenv_to_ctor_env tenv)) with
+      | Some s -> List.length (fst (unwrap_ctor_type (instantiate s)))
+      | None -> 0
+    in
+    infer_pat tenv (Ast.constr_bare_reading ~fields ~arity name ids) t env
   | PConstrNamed (name, bindings) ->
     let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     (match find_ctor_in_tenv tenv name with

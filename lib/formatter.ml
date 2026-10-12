@@ -99,6 +99,22 @@ let comments_between lo hi =
 
 let loc_of = function Located (l, _) -> Some l | _ -> None
 
+(* Whether the constructor `name` and the empty brackets after it had space
+   between them: `Ok ()` rather than `Ok()`. A pattern's span runs to the
+   `)`; a construction's runs to the `(`, so a bracket wrapped across lines
+   does not count as a space. *)
+let unit_spaced ?(to_close = true) (l : Token.loc) name =
+  l.Token.end_offset - l.Token.offset
+  > String.length name + (if to_close then 2 else 1)
+
+(* The constructor of an `Ok ()` written with its space, under any
+   `Located` wrappers (#116). *)
+let rec spaced_unit = function
+  | Located (l, ConstrBare (name, [])) when unit_spaced ~to_close:false l name ->
+    Some name
+  | Located (_, e) -> spaced_unit e
+  | _ -> None
+
 (* Run `f` against a different column budget and put the old one back. Only
    the tests narrow it: formatting the corpus at a margin nothing fits under
    is how the "emitted source that will not parse" bugs are found, and every
@@ -399,6 +415,9 @@ let rec emit_pat (p : pat) : string = match p with
     c ^ "(" ^ String.concat ", " entries ^ ")"
   | PConstrBare (c, ids) -> c ^ "(" ^ String.concat ", " ids ^ ")"
   | PQualified (m, p) -> m ^ "." ^ emit_pat p
+  (* `Ok ()` and `Ok()` read alike; the span says which was written, so
+     the one written is the one given back (#116). *)
+  | PLocated (l, PConstrBare (c, [])) when unit_spaced l c -> c ^ " ()"
   | PLocated (_, p) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
@@ -975,7 +994,11 @@ let rec emit_expr ?col ?(stmt = false) indent e =
   match Layouts.find_opt layouts key with
   | Some text -> text
   | None ->
-    let text = emit_expr_inner ?col ~stmt indent (strip_located e) in
+    let text =
+      match spaced_unit e with
+      | Some name -> Doc.text (name ^ " ()")
+      | None -> emit_expr_inner ?col ~stmt indent (strip_located e)
+    in
     Layouts.replace layouts key text;
     text
 
@@ -1055,6 +1078,11 @@ and stands_in room e =
   | _ -> None
 
 and emit_atom ?(followed = false) indent e =
+  match spaced_unit e with
+  (* `Ok ()` written with its space is two words, so it takes brackets
+     where an atom goes (#116). *)
+  | Some name -> Doc.text ("(" ^ name ^ " ())")
+  | None ->
   let e' = strip_located e in
   let s = emit_expr_inner indent e' in
   (* A chain of bindings brings its own brackets here -- this is not a
@@ -1246,7 +1274,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
   | List es  -> emit_list ~col indent es
   | ConstrBare (name, ids) ->
     let oneline = Doc.text (name ^ "(" ^ String.concat ", " ids ^ ")") in
-    if fits col oneline then oneline
+    if ids = [] || fits col oneline then oneline
     else
       let ind = Doc.spaces indent in
       let inner = Doc.spaces (indent + 2) in
@@ -1340,6 +1368,8 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
       ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
   | Field (e, l) -> emit_field indent e l
   | Seq _ as e -> emit_block ~col indent e
+  | Located (_, _) when spaced_unit e <> None ->
+    Doc.text (Option.get (spaced_unit e) ^ " ()")
   | Located (_, e) -> emit_expr_inner indent e
   | Contract (reqs, ens, body) ->
     (* Each clause sits on its own line at the body's indent; the first is

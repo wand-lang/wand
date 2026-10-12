@@ -215,14 +215,15 @@ and handle_case =
    does not.
 
    `fields` is the declaration's field names, `None` for a position with no
-   name, and empty where the declaration is not in hand.
+   name, and empty where the declaration is not in hand. `arity` is how many
+   values the constructor carries.
 
    One identifier alone puns too (#115): `Run(a)` is `Run(a = a)` where `a`
    is a field of `Run`. Where the record has one field and the name is not
    that field, `B(x)` is the field under the name `x`, which is what the
    positional reading gave before. A record of more fields reads the name as
    a field, and the check says that it has no such field. *)
-let constr_bare_reading ~fields name ids : pat =
+let constr_bare_reading ~fields ~arity name ids : pat =
   let named_fields = List.exists (fun f -> f <> None) fields in
   if named_fields then
     match ids, fields with
@@ -230,7 +231,9 @@ let constr_bare_reading ~fields name ids : pat =
     | _ -> PConstrNamed (name, List.map (fun i -> (i, PVar i)) ids)
   else match ids with
     (* `Red()` is the constructor that carries nothing, which is what empty
-       parentheses mean where there are no fields to name. *)
+       parentheses mean where there are no fields to name. Where the
+       constructor carries one value, `Ok ()` is that value, the unit (#116). *)
+    | [] when arity = 1 -> PConstr (name, [Unit])
     | [] -> PConstr (name, [])
     | [i] -> PConstr (name, [PVar i])
     | ids -> PConstr (name, [PTuple (List.map (fun i -> PVar i) ids)])

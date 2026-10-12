@@ -1072,6 +1072,15 @@ itself an `if` expression goes in brackets:
 `when` is the earlier spelling of a guard. wand still accepts it with the same
 meaning, and `wand f` writes it as `if`.
 
+A constructor whose payload is the unit matches `()`, as the unit does
+alone:
+
+```ocaml
+match FS.write_file /tmp/x "1" with
+| Ok () -> "written"
+| Error e -> e
+```
+
 ### A match inside an arm
 
 A `match` in an arm needs no parentheses. Its arms are the lines level with

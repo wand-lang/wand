@@ -2237,7 +2237,8 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
         | PConstr (_, _) -> None
         | PConstrNamed (_, bindings) -> named bindings
         | PConstrBare (_, ids) ->
-          (match Ast.constr_bare_reading ~fields:(fields ()) "" ids with
+          (match Ast.constr_bare_reading ~fields:(fields ())
+                   ~arity:(List.length vals) "" ids with
            | PConstrNamed (_, bindings) -> named bindings
            | PConstr (_, pats) when same_length pats vals ->
              List.fold_left2 (fun acc p v ->
@@ -2254,7 +2255,8 @@ let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
       | Some fields -> fields
       | None -> []
     in
-    try_match ~prefix (Ast.constr_bare_reading ~fields name ids) v env
+    let arity = match v with VConstr (_, vals) -> List.length vals | _ -> 0 in
+    try_match ~prefix (Ast.constr_bare_reading ~fields ~arity name ids) v env
   | PConstrNamed (name, bindings), VConstr (vname, vals)
     when ctor_matches env name vname ->
     (match Hashtbl.find_opt constr_fields vname with

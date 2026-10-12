@@ -64,6 +64,24 @@ let test_one_name_puns () =
     (run_t ^ "let f (Run x) = x\nf (Run(a = 1, b = 2, c = 3))")
     "2:8: constructor 'Run' expects 3 argument(s), got 1"
 
+(* ── A unit payload matches () (#116) ────────────────────────────────────── *)
+
+let test_unit_payload () =
+  value "Ok ()" "match Ok () with | Ok () -> 1 | Error _ -> 2" "1";
+  value "Some ()" "match Some () with | Some () -> 1 | None -> 2" "1";
+  value "Error ()" "match Error () with | Ok _ -> 1 | Error () -> 2" "2";
+  value "a user constructor"
+    "type T = U Unit | V\nmatch U () with\n| U () -> 1\n| V -> 2" "1";
+  value "nested" "match Some (Ok ()) with\n| Some (Ok ()) -> 1\n| _ -> 2" "1";
+  value "no space" "match Ok () with | Ok() -> 1 | Error _ -> 2" "1";
+  value "a constructor that carries nothing" "type C = Red | Green\nmatch Red with\n| Red() -> 1\n| Green -> 2" "1";
+  (* `Ok ()` covers `Ok _`, so the two arms are the whole of a Result. *)
+  value "covers the constructor" "let f r = match r with | Ok () -> 1 | Error _ -> 2\nf (Ok ())" "1";
+  expect_error "Error is still needed"
+    "match Ok () with | Ok () -> 1" "missing case, e.g. Error _";
+  expect_error "a payload that is not the unit"
+    "match Ok 1 with | Ok () -> 1 | _ -> 2" "1:19: expected Int, got Unit"
+
 (* ── OCaml ────────────────────────────────────────────────────────────────── *)
 
 (* `::` is cons. It used to be corrected to `:`, which is the drift rule
@@ -391,6 +409,7 @@ let () =
     ];
     "issues", [
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
+      Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [
       Alcotest.test_case "bracket maps" `Quick test_bracket_maps;

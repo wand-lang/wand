@@ -5,6 +5,7 @@
 ### Added
 
 - One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
+- `Ok ()`, `Some ()`, `Error ()` and a constructor of your own whose payload is `Unit` match `()` as the payload: `| Ok () -> ...` (#116).
 
 ### Changed
 
@@ -17,10 +18,12 @@
 
 - An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
 - An error in a constructor pattern inside another pattern points at the inner constructor (#115).
+- `wand f` keeps `Ok ()` with its space, and puts it in brackets where it is an argument: `f (Ok ()) x` (#116).
 
 ### Documentation
 
 - The reference says that one name alone puns (#115).
+- The reference shows `| Ok () ->` as a pattern (#116).
 
 ## [0.105.0] - 2026-10-12
 
