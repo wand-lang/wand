@@ -8,7 +8,8 @@ open Evaluator
    fact. Anything else propagates. *)
 let diag_of_exn = function
   | Lexer.LexError (loc, msg)          -> Diag.error ~code:"E-LEX" ~loc msg
-  | Parser.ParseError (loc, msg)       -> Diag.error ~code:"E-PARSE" ?loc msg
+  | Parser.ParseError (loc, msg)       ->
+    Diag.error ~code:"E-PARSE" ?loc ?fix:(Parser.take_fix loc msg) msg
   | Typechecker.TypeError msg          -> Diag.error ~code:"E-TYPE" msg
   | Typechecker.TypeErrorAt (loc, msg) -> Diag.error ~code:"E-TYPE" ~loc msg
   (* Module loading has a code and a position of its own. Everything it

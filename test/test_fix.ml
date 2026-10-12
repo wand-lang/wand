@@ -89,6 +89,23 @@ let test_refuses_parse_error () =
   let d = refuse "let x = (1\n" in
   Alcotest.(check string) "the parse error is reported" "E-PARSE" d.Diag.code
 
+(* A `:` written for cons is changed to `::`, one at a time, though the
+   file does not parse until the last is changed (#117). *)
+let test_cons_colon_fixed () =
+  let (fixed, applied) =
+    fix "let f xs =\n  match xs with\n  | [a : b : t] -> a\n  | (x : y) -> x\n  | [] -> 0\n" in
+  Alcotest.(check string) "every ':' is '::'"
+    "let f xs =\n  match xs with\n  | [a :: b :: t] -> a\n  | (x :: y) -> x\n  | [] -> 0\n"
+    fixed;
+  Alcotest.(check (list string)) "three parse fixes"
+    ["E-PARSE"; "E-PARSE"; "E-PARSE"] (codes applied)
+
+(* A `:` before a type name may be an annotation in the wrong place, so it
+   is refused, not changed. *)
+let test_cons_colon_before_a_type_refused () =
+  let d = refuse "let f xs =\n  match xs with\n  | [x : Int] -> x\n  | _ -> 0\n" in
+  Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
+
 (* A missing import is a correction the checker already knows: the error
    names the module, so the fix is the line the file lacks. *)
 
@@ -703,8 +720,11 @@ let () =
     "refusals", [
       Alcotest.test_case "parse error"    `Quick test_refuses_parse_error;
       Alcotest.test_case "type error"     `Quick test_refuses_unfixable_type_error;
+      Alcotest.test_case "':' before a type" `Quick
+        test_cons_colon_before_a_type_refused;
     ];
     "errors that say the fix", [
+      Alcotest.test_case "a ':' for cons" `Quick test_cons_colon_fixed;
       Alcotest.test_case "an empty default" `Quick
         test_empty_default_becomes_a_literal;
       Alcotest.test_case "a piped inspect!" `Quick test_piped_inspect_takes_input;

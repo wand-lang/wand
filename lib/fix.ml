@@ -90,19 +90,31 @@ let import_line_for lines text =
      | Some (n, _) -> n
      | None -> fst (List.nth plain (List.length plain - 1)) + 1)
 
-(* Whether `text` parses. A fix must not write a file that does not parse,
-   so a replacement that gives one is declined. The text is lexed under a
-   name of its own: the lexer keeps each whole source by its file name, and
-   the file being checked is kept under "". *)
-let parses text =
+(* Where `text` first fails to parse: `None` when it parses, otherwise
+   the line and column of the error, or (0, 0) when the error has none. A
+   fix must not write a file that does not parse, so a replacement that
+   gives one is declined -- unless the file did not parse before it either,
+   and the replacement moves the first error past itself. A source with two
+   `:` written for cons is fixed one `:` at a time that way, and each step
+   is checked. The text is lexed under a name of its own: the lexer keeps
+   each whole source by its file name, and the file being checked is kept
+   under "". *)
+let parse_error_at text =
   let file = "<wand fix check>" in
-  let ok =
-    match Parser.parse_program (Lexer.tokenize ~file text) with
-    | _ -> true
-    | exception _ -> false
+  let at = function
+    | Some (l : Token.loc) -> Some (l.Token.line, l.Token.col)
+    | None -> Some (0, 0)
   in
+  let r =
+    match Parser.parse_program (Lexer.tokenize ~file text) with
+    | _ -> None
+    | exception Parser.ParseError (l, _) -> at l
+    | exception Lexer.LexError (l, _) -> at (Some l)
+    | exception _ -> Some (0, 0)
+  in
+  Parser.pending_fix := None;
   Hashtbl.remove Lexer.sources file;
-  ok
+  r
 
 (* The byte offset of a 1-based line and column in `text`, when that
    position is in the text. *)
@@ -124,7 +136,8 @@ let offset_of text line col =
       if s + col - 1 <= stop then Some (s + col - 1) else None
 
 (* `text` with the extent `l` replaced by `to_`, when the extent holds
-   exactly `from_` and the result parses. The extent is read by its lines
+   exactly `from_` and the result parses, or gets further than the text did
+   (see `parse_error_at`). The extent is read by its lines
    and columns in `text` as it is now, so a fix made after an earlier fix
    in the same pass reads the text that fix left. Only an extent in the
    file being checked counts: an extent from an imported file has a file
@@ -142,7 +155,11 @@ let replace_extent text (l : Token.loc) from_ to_ =
         String.sub text 0 start ^ to_
         ^ String.sub text stop (String.length text - stop)
       in
-      if parses replaced then Some replaced else None
+      (match parse_error_at replaced with
+       | None -> Some replaced
+       | Some pos when pos > (l.Token.line, l.Token.col)
+                    && parse_error_at text <> None -> Some replaced
+       | Some _ -> None)
     | _ -> None
 
 

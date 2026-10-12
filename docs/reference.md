@@ -1176,9 +1176,17 @@ Cons patterns chain, matching several leading elements at once:
 
 ```ocaml
 match xs with
-| [a : b : c : t] -> "first three: %{a}, %{b}, %{c}, rest: %{t}"
-| _               -> "fewer than three elements"
+| [a :: b :: c :: t] -> "first three: %{a}, %{b}, %{c}, rest: %{t}"
+| _                  -> "fewer than three elements"
 ```
+
+The leading elements can also be written with commas, before one `::` and
+the tail: `[a, b, c :: t]` is the same pattern as `[a :: b :: c :: t]`, and
+`wand f` writes it that way. This is a pattern form only. In an expression,
+`[1, 2 :: t]` is a list whose last element is `2 :: t`.
+
+Cons is `::`, never a single `:`. A `:` gives a name a type, so `[h : t]` and
+`(h : t)` are parse errors, and `wand t --fix` changes each `:` to `::`.
 
 The same patterns work in a `let`, with one difference. A `match` arm gives
 the whole shape, because a longer list belongs to another arm. A `let` has no

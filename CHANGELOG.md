@@ -16,6 +16,8 @@
 - A tuple index with a leading zero, such as `p.01`, is an error that says to write `p.1` (#144).
 - `wand f` keeps `p.1` as it is written (#144).
 - `Int.to_string`, `Float.to_string`, `Bool.to_string`, `Duration.to_string`, `Size.to_string`, `DateTime.to_string` and `Port.to_string` write a value as the text that `"%{x}"` gives, and `of_string` reads it back (#143).
+- A list pattern can give its first elements with commas before the `::`: `[a, b :: rest]` is `[a :: b :: rest]` (#117).
+- A `:` written for cons in a pattern, as in `[x : xs]` or `(x : xs)`, carries a fix, and `wand t --fix` changes it to `::` (#117).
 
 ### Changed
 
@@ -65,6 +67,10 @@
 - `let {Sha256} = Digest` gives `did you forget to import the standard library Digest?` at its position, and not `expected a module implementing nothing` (#149).
 - `wand t --fix` changes `let {Sha256} = Digest` at the top level to `let {Sha256} = import Digest` (#149).
 - `let {Sha256} = Digest` with `import Digest` in the file says to write `let {Sha256} = import Digest`, and `wand t --fix` makes that change (#149).
+
+### Documentation
+
+- The reference writes the chained cons pattern with `::`, not `:` (#117).
 
 ## [0.104.1] - 2026-10-10
 

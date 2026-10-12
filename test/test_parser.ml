@@ -149,6 +149,48 @@ let test_the_cons_mistake_still_reports () =
   Alcotest.(check string) "cons in brackets" "[h :: t]"
     (expr_pats "match xs with | [h :: t] -> h")
 
+(* `[a, b :: t]` is `[a :: b :: t]`: the elements before the `::` are its
+   heads in order (#117). *)
+let test_commas_before_cons () =
+  let check = Alcotest.(check string) in
+  check "two heads" "[a :: [b :: t]]"
+    (expr_pats "match xs with | [a, b :: t] -> a");
+  check "three heads" "[a :: [b :: [c :: t]]]"
+    (expr_pats "match xs with | [a, b, c :: t] -> a");
+  check "the same as the chain" "[a :: [b :: t]]"
+    (expr_pats "match xs with | [a :: b :: t] -> a");
+  check "a chained tail" "[a :: [b :: [c :: t]]]"
+    (expr_pats "match xs with | [a, b :: c :: t] -> a");
+  check "a plain list is still a list" "[a, b]"
+    (expr_pats "match xs with | [a, b] -> a")
+
+(* A `:` written for cons carries the fix to `::` when no type can follow
+   it, and none when one can (#117). *)
+let test_cons_colon_fix () =
+  let fix_of src =
+    match Parser.parse_program (Lexer.tokenize src) with
+    | _ -> Alcotest.failf "expected a parse error for: %s" src
+    | exception (Parser.ParseError _ as e) -> (Runner.diag_of_exn e).Diag.fix
+  in
+  let colon_at line col = function
+    | Some (Diag.ReplaceAt { at; from_ = ":"; to_ = "::" }) ->
+      at.Token.line = line && at.Token.col = col
+    | _ -> false
+  in
+  let check = Alcotest.(check bool) in
+  check "in brackets" true
+    (colon_at 1 20 (fix_of "match xs with | [h : t] -> h"));
+  check "in brackets, the first of a chain" true
+    (colon_at 1 20 (fix_of "match xs with | [a : b : t] -> a"));
+  check "after commas" true
+    (colon_at 1 23 (fix_of "match xs with | [a, b : t] -> a"));
+  check "in parentheses" true
+    (colon_at 1 20 (fix_of "match xs with | (x : xs) -> x"));
+  check "in a constructor's payload" true
+    (colon_at 1 23 (fix_of "match xs with | Ok (x : xs) -> x"));
+  check "a type may follow" true
+    (fix_of "match xs with | [x : Int] -> x" = None)
+
 (* ── Brace maps ──────────────────────────────────────────────────────────── *)
 
 let test_brace_map_literal () =
@@ -1527,6 +1569,8 @@ let () =
     "a type on a pattern", [
       Alcotest.test_case "every position"   `Quick test_pattern_annotation;
       Alcotest.test_case "cons still fails" `Quick test_the_cons_mistake_still_reports;
+      Alcotest.test_case "commas before cons" `Quick test_commas_before_cons;
+      Alcotest.test_case "a ':' for cons, the fix" `Quick test_cons_colon_fix;
     ];
     "layout", [
       Alcotest.test_case "indented continuation" `Quick test_indented_continuation;

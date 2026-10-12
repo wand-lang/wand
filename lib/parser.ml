@@ -9,6 +9,24 @@ exception ParseError of Token.loc option * string
 let fail msg = raise (ParseError (None, msg))
 let fail_at loc msg = raise (ParseError (Some loc, msg))
 
+(* A parse error whose correction is certain carries it here, beside the
+   exception rather than inside it, so the many places that catch
+   `ParseError` stay as they are. The location and the message key it: a
+   fix left by an error that was caught and passed over is never given to
+   a different one. *)
+let pending_fix : (Token.loc * string * Diag.fix) option ref = ref None
+
+let fail_with_fix loc msg fix =
+  pending_fix := Some (loc, msg, fix);
+  raise (ParseError (Some loc, msg))
+
+let take_fix loc msg =
+  let f = !pending_fix in
+  pending_fix := None;
+  match f, loc with
+  | Some (l, m, fix), Some l' when l = l' && m = msg -> Some fix
+  | _ -> None
+
 (* The name a bare import binds: a standard library module's own, or the
    last segment of a path or URL, without `.wand` and with each `-` made a
    `_`. None when that is still not a name. *)
@@ -945,6 +963,22 @@ and parse_type_expr s =
   end
   else left
 
+(* A `:` where a cons pattern needs `::`. The fix is carried only when the
+   token after the `:` can start no type, so `(x : xs)` and `[h : t]` get
+   one and a `:` before a type name, which may be a misplaced annotation,
+   does not. *)
+let fail_cons_colon s msg =
+  let at = peek_loc s in
+  let certain = match peek2 s with
+    | Token.Ident _ | Token.Underscore | Token.LBracket
+    | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _
+    | Token.Bool _ -> true
+    | _ -> false
+  in
+  if certain then
+    fail_with_fix at msg (Diag.ReplaceAt { at; from_ = ":"; to_ = "::" })
+  else fail_at at msg
+
 (* A pattern, and a cons written without its brackets. `[h :: t]` is the
    spelling: the brackets say list, exactly as `[a, b, c]` does. `h :: t`
    bare is what an OCaml reader writes, so it is read and `wand f` writes
@@ -994,7 +1028,7 @@ and pat_base_ s =
               && (is_type_atom_start (peek2 s) || qualified_type_after_colon s) then begin
         (* `(p : Pod)` gives the parameter a type. One token decides it: a
            type starts with an `Upper` name, a `'a`, or a `(`, and a cons
-           pattern -- which is written `[h : t]`, in brackets -- never
+           pattern -- which is written `[h :: t]`, in brackets -- never
            does. So the message below still meets the mistake it was
            written for. *)
         ignore (advance s);
@@ -1002,7 +1036,7 @@ and pat_base_ s =
         expect s Token.RParen;
         PAnnot (p, te)
       end else if peek s = Token.Colon then
-        fail_at (peek_loc s)
+        fail_cons_colon s
           "a cons pattern is written in square brackets: \
            [x :: xs] -- a single ':' gives a name a type"
       else begin
@@ -1092,7 +1126,7 @@ and pconstr_body_ s name =
           ignore (advance s);
           PAnnot (p, parse_type_expr s)
         end else if peek s = Token.Colon then
-          fail_at (peek_loc s)
+          fail_cons_colon s
             "a cons pattern is written in square brackets: \
              [x :: xs] -- a single ':' gives a name a type"
         else p
@@ -1143,7 +1177,7 @@ and pat_atom_ s =
               && (is_type_atom_start (peek2 s) || qualified_type_after_colon s) then begin
         (* `(p : Pod)` gives the parameter a type. One token decides it: a
            type starts with an `Upper` name, a `'a`, or a `(`, and a cons
-           pattern -- which is written `[h : t]`, in brackets -- never
+           pattern -- which is written `[h :: t]`, in brackets -- never
            does. So the message below still meets the mistake it was
            written for. *)
         ignore (advance s);
@@ -1151,7 +1185,7 @@ and pat_atom_ s =
         expect s Token.RParen;
         PAnnot (p, te)
       end else if peek s = Token.Colon then
-        fail_at (peek_loc s)
+        fail_cons_colon s
           "a cons pattern is written in square brackets: \
            [x :: xs] -- a single ':' gives a name a type"
       else (expect s Token.RParen; p)
@@ -1188,31 +1222,37 @@ and list_pat_ s =
         "a map pattern is written in braces -- {k = v}, not [k = v]"
     else begin
       (* The elements are read with `pat_base_`: the brackets own the cons
-         here, so a `::` inside them is this loop's and not the element's. *)
-      let first = pat_base_ s in
-      if peek s = Token.Colon then
-        fail_at (peek_loc s)
-          "cons is '::' -- a single ':' gives a name a type";
+         here, so a `::` inside them is this loop's and not the element's.
+         `[a, b :: t]` is `[a :: b :: t]`: the elements before the `::` are
+         its heads in order, and what follows it is the tail. That is what
+         an OCaml or Haskell reader writes first, and inside brackets that
+         are cons in wand it can mean nothing else. *)
+      let element () =
+        let p = pat_base_ s in
+        if peek s = Token.Colon then
+          fail_cons_colon s "cons is '::' -- a single ':' gives a name a type";
+        p
+      in
       let is_cons () = peek s = Token.DoubleColon in
+      (* Chain further cons cells: [a :: b :: c :: t] is PCons(a, PCons(b,
+         PCons(c, t))), not just a single cons with a flat tail. *)
+      let rec parse_cons_tail () =
+        let p = element () in
+        if is_cons () then begin
+          ignore (advance s);
+          PCons (p, parse_cons_tail ())
+        end else p
+      in
+      let pats = ref [element ()] in
+      while peek s = Token.Comma do
+        ignore (advance s); pats := !pats @ [element ()]
+      done;
       if is_cons () then begin
         ignore (advance s);
-        (* Chain further cons cells: [a :: b :: c :: t] is PCons(a, PCons(b,
-           PCons(c, t))), not just a single cons with a flat tail. *)
-        let rec parse_cons_tail () =
-          let p = pat_base_ s in
-          if is_cons () then begin
-            ignore (advance s);
-            PCons (p, parse_cons_tail ())
-          end else p
-        in
         let tl = parse_cons_tail () in
         expect s Token.RBracket;
-        PCons (first, tl)
+        List.fold_right (fun h t -> PCons (h, t)) !pats tl
       end else begin
-        let pats = ref [first] in
-        while peek s = Token.Comma do
-          ignore (advance s); pats := !pats @ [pat_base_ s]
-        done;
         expect s Token.RBracket;
         PList !pats
       end
