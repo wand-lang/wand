@@ -2087,6 +2087,20 @@ let test_an_arm_before_a_semicolon_is_bracketed () =
   assert_idempotent "the bare statement is a fixed point"
     "let f x = (\n  match x with\n  | true -> g ()\n  | false -> ();\n  h ()\n)"
 
+(* A `;` that begins a line is read as one at the end of the line above
+   (#152), and written back the way that one is: as `in` after a value that
+   ends on an arm, and as a `;` at the line end after any other. *)
+let test_a_semicolon_that_begins_a_line_is_written_back () =
+  fmt_eq "after a match, it is written as in"
+    "let run th =\n  let t = match th with\n    | 1 -> 1\n    | _ -> 0\n  ;\n  let u = t + 1;\n  u"
+    "let run th =\n  let t =\n    match th with\n    | 1 -> 1\n    | _ -> 0\n  in\n  let u = t + 1;\n  u";
+  fmt_eq "after a plain value, it goes to the line end"
+    "let run () =\n  let t = 41\n  ;\n  t + 1"
+    "let run () =\n  let t = 41;\n  t + 1";
+  ok_after_format "and the file still runs"
+    "let run th =\n  let t = match th with\n    | 1 -> 1\n    | _ -> 0\n  ;\n  let u = t + 1;\n  u\nrun 1"
+    "2"
+
 let test_a_newline_binding_stops_at_the_next_definition () =
   fmt_eq "the definition below stays its own"
     "let f () =\n  let a = 1\n  a + 1\n\nlet g () = 2"
@@ -2379,5 +2393,7 @@ let () =
         test_a_guard_is_written_with_if;
       Alcotest.test_case "a map literal pun is kept" `Quick
         test_a_map_literal_pun_is_kept;
+      Alcotest.test_case "a ; that begins a line is written back" `Quick
+        test_a_semicolon_that_begins_a_line_is_written_back;
     ];
   ]

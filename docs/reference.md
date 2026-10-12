@@ -908,6 +908,24 @@ one statement, and the lines under it continue that statement. A line after a
 `;` that falls back inside the body's column is not part of the body, and
 wand reports it, since the `;` there ended the definition.
 
+A `;` at the start of a line says the same as one at the end of the line
+above. This includes a `;` on a line of its own after a binding whose value
+ends on a `match` or `handle` arm. The `;` is to the left of the arms, so no
+arm can hold it, and it ends the value as `in` does:
+
+```ocaml
+let next text =
+  let t = match Int.of_string text with
+    | Ok n -> n
+    | Error _ -> 0
+  ;
+  t + 1
+```
+
+`wand f` writes that `;` as `in`. The `;` must be at or past the binding's
+column. A `;` at the column of the definition itself still ends the
+definition, as it does at the top level of a file.
+
 Inside a bracket that a statement opened, a newline is formatting again and
 an application continues across it. That is what lets an argument list run
 down the page:
