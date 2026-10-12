@@ -57,3 +57,18 @@ test "more work costs more steps" (fn t ->
   let (_, small) = Wand.cost (fn () -> deep 10);
   let (_, big) = Wand.cost (fn () -> deep 1000);
   t.ok (big > small))
+
+-- A step is a position the evaluator passes, and the count is part of what
+-- `Wand.limit` promises: a limit set to a number stops at that number. These
+-- counts are pinned, so a change to where the evaluator counts shows here.
+let count n acc = if n == 0 then acc else count (n - 1) (acc + n)
+test "the steps a program takes do not change" (fn t ->
+  let (_, a) = Wand.cost (fn () -> deep 10);
+  let (_, b) = Wand.cost (fn () -> count 100 0);
+  let (_, c) = Wand.cost (fn () -> List.map (fn x -> x * 2) [1, 2, 3]);
+  let (_, d) =
+    Wand.cost (fn () ->
+      match Some 3 with
+      | Some x -> x
+      | None -> 0);
+  t.eq [57, 507, 15, 6] [a, b, c, d])

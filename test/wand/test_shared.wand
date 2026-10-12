@@ -134,3 +134,18 @@ group "wait" (fn () -> [
       | Shared!wait _ k -> k 9
       ))
 ])
+
+-- A fiber that computes and never waits still gives the others a turn: it
+-- yields after a number of steps. The first item waits for a flag that only
+-- the second sets, and both run as fibers on this domain, so without the
+-- turns the first would wait for ever.
+test "a fiber that never waits lets the others run" (fn t ->
+  t.eq
+    true
+    (with Shared.make false as flag -> (
+      let wait n = if Shared.get flag then n else wait (n + 1);
+      let set () = Shared.update flag (fn _ -> true);
+      let item i = if i == 1 then wait 0 else (set (); 0);
+      Par.each 2 (fn i -> (let _ = item i; ())) [1, 2];
+      Shared.get flag
+    )))

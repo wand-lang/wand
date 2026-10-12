@@ -2431,11 +2431,14 @@ let rec payload_shape = function
   | App (f, _) -> (match strip_located f with Constr _ -> true | _ -> false)
   | _ -> false
 
-let rec eval (env : env) (e : expr) : value = eval_at false env e
+let rec eval (env : env) (e : expr) : value = eval_in (loc_cell ()) false env e
 
 (* Evaluate in tail position: the value of `e` is the value of whatever
    called us, so no frame here has any work left to do. *)
-and eval_tail (env : env) (e : expr) : value = eval_at true env e
+and eval_tail (env : env) (e : expr) : value = eval_in (loc_cell ()) true env e
+
+and eval_at (tail : bool) (env : env) (e : expr) : value =
+  eval_in (loc_cell ()) tail env e
 
 (* An argument that is a nullary constructor holding a bracket it cannot
    own -- `Sha256 (x)` where the call meant `Sha256` and `x`. Answers the
@@ -2474,8 +2477,22 @@ and nullary_payload env x =
   | Located (_, inner) when Ast.is_constr_payload inner -> None
   | _ -> unpack None (fun c -> c) x
 
-and eval_at (tail : bool) (env : env) (e : expr) : value =
-  check_interrupt ();
+(* `c` is the cell of the task that runs this evaluation, read from
+   domain-local state once where evaluation starts and then handed down.
+   A domain-local read is a call and a bounds check, and the hot steps --
+   a position, a call -- each made one. Handing the cell down is safe for
+   the reason holding it across a call in `apply` always was: a task
+   always runs with its own cell. A fiber that yields takes its cell with
+   it, and gets it back when it is resumed; an item that moves from a
+   pool domain to the calling domain takes its cell along, and the pool
+   domain starts a new one. Only the cell's contents change while a task
+   runs, never which cell is the task's.
+
+   The interrupt check is made at each position, with the step count and
+   the fiber's turn, and at each call, and no longer at every node. A
+   loop in wand is a call, and every function body is a position, so a
+   program that runs for ever still meets one at each turn. *)
+and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
   match e with
   | Int n      -> VInt n
   | Float f    -> VFloat f
@@ -2520,17 +2537,17 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
   | Hole ->
     raise (EvalError "cannot evaluate a hole")
   | UnOp ("-", e) ->
-    (match eval env e with
+    (match eval_in c false env e with
      | VInt n   -> VInt (neg_ovf n)
      | VFloat f -> VFloat (-.f)
      | _        -> raise (EvalError "'-' requires a number"))
   | UnOp ("!", e) ->
-    (match eval env e with
+    (match eval_in c false env e with
      | VBool b -> VBool (not b)
      | _       -> raise (EvalError "'!' requires a bool"))
   | UnOp (op, _) ->
     raise (EvalError (Printf.sprintf "unknown operator '%s'" op))
-  | BinOp (op, a, b) -> eval_binop env op a b
+  | BinOp (op, a, b) -> eval_binop c env op a b
   | Fn (params, body) -> VFun (env, params, body)
   | App (f, x) ->
     (* The other half of the typechecker's rule: a bracket after a
@@ -2545,38 +2562,38 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
        call cost 6% of a loop that calls a function, and comparing the
        answer with `<> None` went out to the runtime's compare each time. *)
     (match if payload_shape x then nullary_payload env x else None with
-     | Some (ctor, arg) -> eval_at tail env (App (App (f, ctor), arg))
+     | Some (ctor, arg) -> eval_in c tail env (App (App (f, ctor), arg))
      | None ->
-       let vf = eval env f in
-       let vx = eval env x in
-       if tail then apply_tail vf vx else apply vf vx)
+       let vf = eval_in c false env f in
+       let vx = eval_in c false env x in
+       if tail then apply_tail_c c vf vx else apply_c c vf vx)
   | Let (p, e1, e2, _) ->
-    let v1 = eval env e1 in
+    let v1 = eval_in c false env e1 in
     let v1 = match p, v1 with
       | PVar name, VFun (fenv, params, body) ->
         VFix (name, fenv, params, body)
       | _ -> v1
     in
-    eval_at tail (bind_pat ~prefix:true p v1 env) e2
+    eval_in c tail (bind_pat ~prefix:true p v1 env) e2
   | LetRec (bindings, e2, _) ->
     let env' = List.fold_left (fun acc (name, _, _) ->
       (name, VFixGroup (bindings, env, name)) :: acc) env bindings in
-    eval_at tail env' e2
+    eval_in c tail env' e2
   | If (cond, then_, else_) ->
-    (match eval env cond with
-     | VBool true  -> eval_at tail env then_
-     | VBool false -> eval_at tail env else_
+    (match eval_in c false env cond with
+     | VBool true  -> eval_in c tail env then_
+     | VBool false -> eval_in c tail env else_
      | _           -> raise (EvalError "if condition must be a bool"))
   | Unless (cond, then_, else_) ->
-    (match eval env cond with
-     | VBool false -> eval_at tail env then_
-     | VBool true  -> eval_at tail env else_
+    (match eval_in c false env cond with
+     | VBool false -> eval_in c tail env then_
+     | VBool true  -> eval_in c tail env else_
      | _           -> raise (EvalError "unless condition must be a bool"))
   | Match (scrutinee, cases) ->
-    let sv = eval env scrutinee in
-    eval_match tail env sv cases
-  | Tuple es  -> VTuple (List.map (eval env) es)
-  | List es   -> VList  (List.map (eval env) es)
+    let sv = eval_in c false env scrutinee in
+    eval_match c tail env sv cases
+  | Tuple es  -> VTuple (List.map (eval_in c false env) es)
+  | List es   -> VList  (List.map (eval_in c false env) es)
   (* `Foo.Live`: the module's namespace holds its constructors, so the
      identity comes from there rather than from the bare-name index. *)
   (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
@@ -2757,7 +2774,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      | _ ->
     (* No VMap case: dot access on a Map is rejected by the typechecker.
        VRecord is how imported module namespaces are reached (FS.cwd). *)
-    (match eval env e with
+    (match eval_in c false env e with
      (* `p.1`: the typechecker has held the index to the tuple's size. *)
      | VTuple vs when Ast.tuple_index label <> None ->
        (match List.nth_opt vs (Option.get (Ast.tuple_index label)) with
@@ -2787,7 +2804,7 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
             "constructor '%s' has no named fields" (Ctor.name name))))
      | _ -> raise (EvalError "field access on non-record")))
   | Seq (a, b) ->
-    ignore (eval env a); eval_at tail env b
+    ignore (eval_in c false env a); eval_in c tail env b
   | ImportExpr _ ->
     raise (EvalError "import expressions must be handled by the runner")
   | RegexLit (pat, flags) ->
@@ -3040,9 +3057,10 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
      | other ->
        raise (EvalError (Printf.sprintf
          "with expects a resource, got %s" (show_value other))))
-  | Annot (_, e) -> eval_at tail env e
+  | Annot (_, e) -> eval_in c tail env e
   | Located (loc, e) ->
-    let c = loc_cell () in
+    if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+    then check_interrupt_now ();
     c.budget <- c.budget - 1;
     if c.budget <= 0 then fiber_turn c;
     let f = c.fuel in
@@ -3050,11 +3068,11 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
       f.left <- f.left - 1;
       if f.left < 0 then out_of_steps f
     end;
-    if tail then (mark_loc c loc; eval_tail env e)
+    if tail then (mark_loc c loc; eval_in c true env e)
     else begin
       let line = c.at_line and col = c.at_col in
       mark_loc c loc;
-      let v = eval env e in
+      let v = eval_in c false env e in
       (* Only on the way out through a value. An error on its way past wants
          the position it was raised at, not the one being returned to. *)
       c.at_line <- line;
@@ -3147,12 +3165,16 @@ and eval_constr_app env c fields allow =
        VRequest (built, allow)
      end else built)
 
-and apply vf vx =
+and apply vf vx = apply_c (loc_cell ()) vf vx
+
+(* `apply` with the task's cell already in hand. *)
+and apply_c c vf vx =
   (* The call is left with work to do after this returns -- it is a builtin
      applying a function it was handed, or a caller evaluating the rest of
      an expression -- so the callee's position goes back where it was found.
      `apply_tail` is the same call with nothing to come back to. *)
-  let c = loc_cell () in
+  if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+  then check_interrupt_now ();
   let line = c.at_line and col = c.at_col in
   if c.depth >= c.depth_cap then
     raise (Limit_reached (c.depth_owner, Printf.sprintf
@@ -3163,7 +3185,7 @@ and apply vf vx =
        depth; carry the result in an argument instead of waiting on the \
        call");
   c.depth <- c.depth + 1;
-  let v = (try apply_tail vf vx with e -> c.depth <- c.depth - 1; raise e) in
+  let v = (try apply_tail_c c vf vx with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
   c.at_line <- line;
   c.at_col  <- col;
@@ -3172,10 +3194,15 @@ and apply vf vx =
 and apply_tail vf vx =
   match vf with
   | VBuiltin f -> f vx
+  | _ -> apply_tail_c (loc_cell ()) vf vx
+
+and apply_tail_c c vf vx =
+  match vf with
+  | VBuiltin f -> f vx
   | VFun (fenv, params, body) ->
     (match params with
      | []      -> raise (EvalError "function with no parameters")
-     | [p]     -> eval_tail (bind_pat p vx fenv) body
+     | [p]     -> eval_in c true (bind_pat p vx fenv) body
      | p :: rest ->
        let env' = bind_pat p vx fenv in
        VFun (env', rest, body))
@@ -3187,13 +3214,13 @@ and apply_tail vf vx =
     let fenv' = (name, vf) :: fenv in
     (match params with
      | []        -> raise (EvalError "function with no parameters")
-     | [p]       -> eval_tail (bind_pat p vx fenv') body
+     | [p]       -> eval_in c true (bind_pat p vx fenv') body
      | p :: rest -> VFun (bind_pat p vx fenv', rest, body))
   | VFixGroup (bindings, fenv, my_name) ->
     let fenv' = List.fold_left (fun acc (n, _, _) ->
       (n, VFixGroup (bindings, fenv, n)) :: acc) fenv bindings in
     let (_, params, body) = List.find (fun (n, _, _) -> n = my_name) bindings in
-    apply_tail (VFun (fenv', params, body)) vx
+    apply_tail_c c (VFun (fenv', params, body)) vx
   | VPartialConstr (name, 1, args) -> VConstr (name, args @ [vx])
   | VPartialConstr (name, n, args) -> VPartialConstr (name, n - 1, args @ [vx])
   | _ -> raise (EvalError "cannot apply a non-function")
@@ -3208,24 +3235,24 @@ and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
     | Some env' -> env'
     | None      -> raise (EvalError "pattern match failure")
 
-and eval_match (tail : bool) (env : env) sv cases =
+and eval_match c (tail : bool) (env : env) sv cases =
   match cases with
   | [] -> raise (EvalError "non-exhaustive match")
   | (p, guard, body) :: rest ->
     (match try_match p sv env with
-     | None      -> eval_match tail env sv rest
+     | None      -> eval_match c tail env sv rest
      | Some env' ->
        let passes = match guard with
          | None   -> true
          | Some g ->
-           (match eval env' g with
+           (match eval_in c false env' g with
             | VBool b -> b
             | _       -> raise (EvalError "guard must evaluate to a bool"))
        in
-       if passes then eval_at tail env' body
-       else eval_match tail env sv rest)
+       if passes then eval_in c tail env' body
+       else eval_match c tail env sv rest)
 
-and eval_binop (env : env) op a b : value =
+and eval_binop c (env : env) op a b : value =
   match op with
   (* A sum of sizes is written in bytes, because a size holds one unit and
      `100MB + 4KB` fills two. `Size.format` is the readable spelling.
@@ -3240,7 +3267,7 @@ and eval_binop (env : env) op a b : value =
      negative size, which reads as under any threshold a script compares it
      against. *)
   | "+"  ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VInt x,   VInt y   -> VInt (add_ovf x y)
      | VFloat x, VFloat y -> VFloat (x +. y)
      | VSize x,  VSize y  ->
@@ -3254,7 +3281,7 @@ and eval_binop (env : env) op a b : value =
                     (add_ovf (datetime_epoch x) (parse_dur_ms d / 1000)))
      | _ -> raise (EvalError "'+' requires matching types"))
   | "-"  ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VInt x,   VInt y   -> VInt (sub_ovf x y)
      | VFloat x, VFloat y -> VFloat (x -. y)
      | VSize x,  VSize y  ->
@@ -3272,23 +3299,23 @@ and eval_binop (env : env) op a b : value =
                     (max 0 (mul_ovf (sub_ovf (datetime_epoch x) (datetime_epoch y)) 1000)))
      | _ -> raise (EvalError "'-' requires matching types"))
   | "*"  ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VInt x,   VInt y   -> VInt (mul_ovf x y)
      | VFloat x, VFloat y -> VFloat (x *. y)
      | _ -> raise (EvalError "'*' requires matching numeric types"))
   | "/"  ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VInt _,   VInt 0   -> raise (EvalError "division by zero")
      | VInt x,   VInt y   -> VInt (div_ovf x y)
      | VFloat x, VFloat y -> VFloat (x /. y)
      | _ -> raise (EvalError "'/' requires matching numeric types"))
   | "%"  ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VInt _,   VInt 0   -> raise (EvalError "modulo by zero")
      | VInt x,   VInt y   -> VInt (x mod y)
      | _ -> raise (EvalError "'%' requires Int operands"))
   | "++" ->
-    (match eval env a, eval env b with
+    (match eval_in c false env a, eval_in c false env b with
      | VString s1, VString s2 ->
        charge_bytes (String.length s1 + String.length s2);
        VString (s1 ^ s2)
@@ -3296,37 +3323,37 @@ and eval_binop (env : env) op a b : value =
      | VList l1, VList l2 -> VList (List.rev_append (List.rev l1) l2)
      | _ -> raise (EvalError "'++' requires two strings or two lists"))
   | "::" ->
-    let vh = eval env a in
-    (match eval env b with
+    let vh = eval_in c false env a in
+    (match eval_in c false env b with
      | VList vs -> VList (vh :: vs)
      | _        -> raise (EvalError "':' right side must be a list"))
-  | "==" -> VBool (wand_equal (eval env a) (eval env b))
-  | "!=" -> VBool (not (wand_equal (eval env a) (eval env b)))
+  | "==" -> VBool (wand_equal (eval_in c false env a) (eval_in c false env b))
+  | "!=" -> VBool (not (wand_equal (eval_in c false env a) (eval_in c false env b)))
   (* Normalized, so `90s > 1min` and two spellings of one instant compare
      as one value. The `Ord` constraint has already refused every type
      that has no order. *)
-  | "<"  -> VBool (wand_order (eval env a) (eval env b) <  0)
-  | ">"  -> VBool (wand_order (eval env a) (eval env b) >  0)
-  | "<=" -> VBool (wand_order (eval env a) (eval env b) <= 0)
-  | ">=" -> VBool (wand_order (eval env a) (eval env b) >= 0)
+  | "<"  -> VBool (wand_order (eval_in c false env a) (eval_in c false env b) <  0)
+  | ">"  -> VBool (wand_order (eval_in c false env a) (eval_in c false env b) >  0)
+  | "<=" -> VBool (wand_order (eval_in c false env a) (eval_in c false env b) <= 0)
+  | ">=" -> VBool (wand_order (eval_in c false env a) (eval_in c false env b) >= 0)
   | "&&" ->
-    (match eval env a with
+    (match eval_in c false env a with
      | VBool false -> VBool false
      | VBool true  ->
-       (match eval env b with
+       (match eval_in c false env b with
         | VBool b -> VBool b
         | _       -> raise (EvalError "'&&' requires bools"))
      | _ -> raise (EvalError "'&&' requires bools"))
   | "||" ->
-    (match eval env a with
+    (match eval_in c false env a with
      | VBool true  -> VBool true
      | VBool false ->
-       (match eval env b with
+       (match eval_in c false env b with
         | VBool b -> VBool b
         | _       -> raise (EvalError "'||' requires bools"))
      | _ -> raise (EvalError "'||' requires bools"))
   | "|>" ->
-    let va = eval env a in
+    let va = eval_in c false env a in
     (match Ast.strip_located b with
      | RunCmd (e, allow) ->
        let cmd = command_line env e allow "$(…)" in
@@ -3337,8 +3364,8 @@ and eval_binop (env : env) op a b : value =
        let stdin = to_text va in
        perform_shell "Shell!capture" allow (VTuple [VString cmd; VString stdin])
      | _ ->
-       let vf = eval env b in
-       apply vf va)
+       let vf = eval_in c false env b in
+       apply_c c vf va)
   | op -> raise (EvalError (Printf.sprintf "unknown operator '%s'" op))
 
 (* Builtins that reach outside the program perform an effect rather than

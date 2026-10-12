@@ -33,6 +33,7 @@
 - A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
 - `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
 - A call to a wand function is approximately 15% faster (#122).
+- Each step of evaluation is cheaper. A loop that calls a function is approximately 25% faster, and a program that runs for ever still stops at once on Ctrl-C (#157).
 
 ### Fixed
 

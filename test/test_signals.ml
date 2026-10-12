@@ -349,6 +349,80 @@ let test_http_server_drains () =
   Alcotest.(check bool) "exits 143, as a stopped process does" true
     (status = Unix.WEXITED 143)
 
+(* A program that computes for ever and never waits stops when it is
+   asked to. Nothing in it reaches a command or a sleep, where a stop is
+   also taken, so only the check that evaluation makes as it steps can see
+   the request. The check is made at each position and each call, not at
+   each node, and this is what holds that to "promptly": the child gets
+   five seconds, and is killed and the test failed if it takes more. The
+   second script loops in two fibers of `Par.each`, where the check has to
+   be made in whichever fiber has its turn. *)
+let loop_script marker =
+  Printf.sprintf
+    {|import FS
+import Path
+let spin n = spin (n + 1)
+with FS.temp_dir "wand_sig_" as d ->
+  let () = FS.write_file! (Path.of_string "%s") (Path.to_string d) in
+  spin 0|}
+    marker
+
+let fiber_loop_script marker =
+  Printf.sprintf
+    {|import FS
+import Par
+import Path
+let spin n = spin (n + 1)
+with FS.temp_dir "wand_sig_" as d ->
+  let () = FS.write_file! (Path.of_string "%s") (Path.to_string d) in
+  Par.each 2 (fn _ -> spin 0) [1, 2]|}
+    marker
+
+let stops_promptly ~signal ~expect script =
+  let marker = Filename.temp_file "wand_sig_m" "" in
+  Sys.remove marker;
+  let path = Filename.temp_file "wand_sig_script" ".wand" in
+  Out_channel.with_open_text path (fun oc ->
+    Out_channel.output_string oc (script marker));
+  let devnull = Unix.openfile "/dev/null" [Unix.O_WRONLY] 0o644 in
+  let pid = Unix.create_process wand_binary [| wand_binary; path |]
+              Unix.stdin devnull devnull in
+  let rec await_marker tries =
+    let held = try In_channel.with_open_text marker In_channel.input_all with _ -> "" in
+    if String.trim held <> "" then String.trim held
+    else if tries = 0 then ""
+    else begin ignore (Unix.select [] [] [] 0.05); await_marker (tries - 1) end
+  in
+  let dir = await_marker 200 in
+  Unix.kill pid signal;
+  let deadline = Unix.gettimeofday () +. 5.0 in
+  let rec await_exit () =
+    match Unix.waitpid [Unix.WNOHANG] pid with
+    | (0, _) when Unix.gettimeofday () < deadline ->
+      ignore (Unix.select [] [] [] 0.02); await_exit ()
+    | (0, _) -> Unix.kill pid Sys.sigkill; ignore (Unix.waitpid [] pid); None
+    | (_, status) -> Some status
+  in
+  let status = await_exit () in
+  Unix.close devnull;
+  (try Sys.remove path with _ -> ());
+  (try Sys.remove marker with _ -> ());
+  let present = dir <> "" && Sys.file_exists dir in
+  if present then ignore (Sys.command (Printf.sprintf "rm -rf %s" (Filename.quote dir)));
+  Alcotest.(check bool) "the child started its loop" true (dir <> "");
+  (match status with
+   | None -> Alcotest.fail "the loop did not stop within five seconds"
+   | Some status ->
+     Alcotest.(check bool) (Printf.sprintf "exits %d" expect) true
+       (status = Unix.WEXITED expect));
+  Alcotest.(check bool) "the directory was released" false present
+
+let test_sigint_stops_a_loop () =
+  stops_promptly ~signal:Sys.sigint ~expect:130 loop_script
+
+let test_sigterm_stops_fibers_that_loop () =
+  stops_promptly ~signal:Sys.sigterm ~expect:143 fiber_loop_script
+
 let () =
   Alcotest.run "Signals" [
     "a stopped script still releases", [
@@ -360,6 +434,10 @@ let () =
       Alcotest.test_case "exit in Par.all!" `Quick test_exit_in_par_all;
       Alcotest.test_case "during acquire" `Quick test_interrupt_during_acquire_releases;
       Alcotest.test_case "an HTTP server drains" `Quick test_http_server_drains;
+      Alcotest.test_case "SIGINT in a loop that never ends" `Quick
+        test_sigint_stops_a_loop;
+      Alcotest.test_case "SIGTERM in fibers that never end" `Quick
+        test_sigterm_stops_fibers_that_loop;
     ];
     "the limit", [
       Alcotest.test_case "SIGKILL cannot" `Quick test_sigkill_cannot_release;
