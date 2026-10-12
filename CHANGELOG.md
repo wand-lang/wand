@@ -15,6 +15,7 @@
 
 - `HTTP.request` refuses a header name that is not an RFC 7230 token and a header value with a CR, LF or NUL byte (#167).
 - A command longer than the system limit raises an error that `try` catches, and does not stop the script with a fatal error (#171).
+- `Shell.in_dir` does not use `CDPATH` and does not read `-` as `$OLDPWD`, so it runs a command in the same directory as `Shell.stream` (#172).
 
 ## [0.106.0] - 2026-10-12
 

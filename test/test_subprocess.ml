@@ -246,8 +246,61 @@ let test_a_refused_spawn_closes_its_pipes () =
   refused (fun () -> ignore (Wand.Runner.stream_command cmd));
   Alcotest.(check int) "no descriptor is left open" before (open_fds ())
 
+(* `Shell.in_dir` gave its directory to `cd` as it was written. With
+   `CDPATH` set, a relative directory was looked up there, and `cd` printed
+   where it went into the command's output; `-` went to `$OLDPWD` (#172).
+   The directory is now made absolute first, so each spawn runs where
+   `Shell.stream` runs it: the directory that the script named, under the
+   one wand runs in. *)
+let test_in_dir_reads_the_directory_as_written () =
+  let base = Filename.temp_dir "wand_in_dir" "" in
+  List.iter (fun d -> Sys.mkdir (Filename.concat base d) 0o755)
+    ["sub"; "cdp"; "-"];
+  Sys.mkdir (Filename.concat (Filename.concat base "cdp") "sub") 0o755;
+  let saved_cwd = Sys.getcwd () in
+  let saved_env = List.map (fun k -> (k, Sys.getenv_opt k)) ["CDPATH"; "OLDPWD"] in
+  let restore () =
+    Sys.chdir saved_cwd;
+    List.iter (fun (k, v) -> Unix.putenv k (Option.value v ~default:"")) saved_env;
+    Domain.DLS.set Wand.Evaluator.ambient_shell_dir None;
+    ignore (Sys.command (Printf.sprintf "rm -rf '%s'" base))
+  in
+  Fun.protect ~finally:restore (fun () ->
+    Sys.chdir base;
+    let here = Sys.getcwd () in
+    Unix.putenv "CDPATH" (Filename.concat here "cdp");
+    Unix.putenv "OLDPWD" "/";
+    let output_in dir cmd =
+      Domain.DLS.set Wand.Evaluator.ambient_shell_dir (Some dir);
+      let (pid, r) = Wand.Runner.spawn_in cmd in
+      let ic = Unix.in_channel_of_descr r in
+      let out = In_channel.input_all ic in
+      close_in ic;
+      ignore (Wand.Runner.reap pid);
+      String.trim out
+    in
+    let streamed_in dir cmd =
+      Domain.DLS.set Wand.Evaluator.ambient_shell_dir (Some dir);
+      let (pull, finish) = Wand.Runner.stream_command cmd in
+      let line = pull () in
+      finish false;
+      match line with
+      | Some (Wand.Evaluator.VString s) -> s
+      | _ -> Alcotest.fail "the stream gave no line"
+    in
+    let sub = Filename.concat here "sub" in
+    Alcotest.(check string) "a direct command" sub (output_in "sub" "/bin/pwd");
+    Alcotest.(check string) "a command through sh" sub (output_in "sub" "pwd; true");
+    Alcotest.(check string) "a stream" sub (streamed_in "sub" "pwd");
+    Alcotest.(check string) "a directory named -"
+      (Filename.concat here "-") (output_in "-" "/bin/pwd"))
+
 let () =
   Alcotest.run "Subprocess" [
+    "Shell.in_dir", [
+      Alcotest.test_case "reads the directory as written" `Quick
+        test_in_dir_reads_the_directory_as_written;
+    ];
     "a spawn the system refuses", [
       Alcotest.test_case "is an error a script catches" `Quick
         test_too_long_is_an_error_a_script_catches;

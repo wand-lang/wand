@@ -1481,7 +1481,8 @@ $*(wand widget.wand) |> Shell.in_dir copy |> Shell.run!
 Only that command runs in `dir`. The script and its other commands stay
 where they are, because wand has no `cd`. A relative `dir` is read from the
 current directory of the process. On a command that has a directory already, a relative
-`dir` is read from that directory, as a second `cd` is. A `dir` that is not
+`dir` is read from that directory, as a second `cd` is. `CDPATH` plays no
+part, and `-` is a directory named `-`, not `$OLDPWD`. A `dir` that is not
 a directory raises when the command runs.
 
 This is the way to write `sh -c 'cd dir && cmd'`. The manifest names the

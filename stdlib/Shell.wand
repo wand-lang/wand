@@ -106,7 +106,8 @@ let inspect_with (c: Command) (input: String) = try inspect_with! c input
 -- where they are. A relative `dir` is read from the current directory of
 -- the process, not from the directory that holds the script.
 -- On a command that has a directory already, a relative `dir` is read from
--- that directory, as a second `cd` is.
+-- that directory, as a second `cd` is. `CDPATH` plays no part, and `-` is
+-- a directory named `-`, not `$OLDPWD`.
 -- A `dir` that is not a directory raises when the command runs.
 --
 -- The manifest names the command's own words, not a shell, so this is the

@@ -233,6 +233,18 @@ let start_process prog argv stdin stdout stderr =
 let closing_on_failure fds f =
   try f () with e -> List.iter Unix.close fds; raise e
 
+(* The directory `Shell.in_dir` named, checked and made absolute. `cd` reads
+   a relative directory through `CDPATH` (and then prints where it went, into
+   the command's captured output), and reads `-` as `$OLDPWD` (#172). An
+   absolute path is read as itself, so the command runs where `Shell.stream`
+   runs it. *)
+let in_dir_path dir =
+  if not (Sys.file_exists dir && Sys.is_directory dir) then
+    raise (Evaluator.EvalError (Printf.sprintf
+      "Shell.in_dir: %s is not a directory" dir));
+  if Filename.is_relative dir then Filename.concat (Sys.getcwd ()) dir
+  else dir
+
 let create_process_for cmd stdin stdout stderr =
   (* A wand String is a byte string, and a NUL can arrive in one from a
      command's output, a file read or `Base64.decode!`. A command line
@@ -256,9 +268,7 @@ let create_process_for cmd stdin stdout stderr =
        before it got here, and the manifest does not need `sh`. The
        directory and the command arrive as arguments, never as text of the
        script, so nothing in either is read as shell. *)
-    if not (Sys.file_exists dir && Sys.is_directory dir) then
-      raise (Evaluator.EvalError (Printf.sprintf
-        "Shell.in_dir: %s is not a directory" dir));
+    let dir = in_dir_path dir in
     let argv = match Shell_scan.direct_words cmd with
       | Some (_ :: _ as ws) ->
         Array.of_list
@@ -311,11 +321,7 @@ let spawn_grouped ~stdout ~stderr cmd =
       "this command holds a NUL byte, which no command line can carry -- \
        take it out of the value before splicing it in");
   let cwd = match Domain.DLS.get Evaluator.ambient_shell_dir with
-    | Some dir ->
-      if not (Sys.file_exists dir && Sys.is_directory dir) then
-        raise (Evaluator.EvalError (Printf.sprintf
-          "Shell.in_dir: %s is not a directory" dir));
-      Spawn.Working_dir.Path dir
+    | Some dir -> Spawn.Working_dir.Path (in_dir_path dir)
     | None -> Spawn.Working_dir.Inherit
   in
   let devnull =
