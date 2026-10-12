@@ -213,10 +213,15 @@ let dash = Path.of_string "-rf"
 
 test "a Path that starts with - gets ./ in front" (fn t -> t.eq "[./-rf]" (quoted! dash))
 
-test "and between the author's quotes" (fn t ->
+test "and between the author's quotes at the start of a word" (fn t ->
+  t.eq "[./-rf][./-rf]" $(printf "[%s]" "%{dash}" '%{dash}'))
+
+-- After other text in the same word, the value cannot be read as an
+-- option, and a `./` would name another file.
+test "a Path after other text in its word is not changed" (fn t ->
   t.eq
-    "[pre ./-rf post][pre ./-rf post]"
-    $(printf "[%s]" "pre %{dash} post" 'pre %{dash} post'))
+    "[backup--rf][--out=-rf][pre -rf post][pre -rf post]"
+    $(printf "[%s]" backup-%{dash} --out=%{dash} "pre %{dash} post" 'pre %{dash} post'))
 
 test "and as an element of a list" (fn t ->
   t.eq

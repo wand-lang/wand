@@ -2611,10 +2611,25 @@ let command_splice_error =
    and no command can read it as an option. A `String` is not changed --
    it can be an option on purpose, so the author puts `--` before the
    operands when the command accepts it. *)
-let splice_text v =
+let splice_text ?(word_start = true) v =
   match v with
-  | VPath s when String.length s > 0 && s.[0] = '-' -> "./" ^ s
+  | VPath s when word_start && String.length s > 0 && s.[0] = '-' -> "./" ^ s
   | v -> to_text v
+
+(* Whether a value spliced after the command text in `buf` starts a word,
+   which is the only place a command can read it as an option. After other
+   text in the same word, `backup-%{p}`, a `./` would name another file. *)
+let starts_word buf (h : Token.hole) =
+  let n = Buffer.length buf in
+  let sep j =
+    j < 0 ||
+    (match Buffer.nth buf j with
+     | ' ' | '\t' | '\n' | '(' | ';' | '|' | '&' | '`' -> true
+     | _ -> false)
+  in
+  match h with
+  | Token.Inside q -> n > 0 && Buffer.nth buf (n - 1) = q && sep (n - 2)
+  | _ -> sep (n - 1)
 
 (* Deriving a decoder needs the decoding machinery, which is defined further
    down the file; `eval` only has to be able to reach it. *)
@@ -3334,13 +3349,15 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
          these are the ones it could not see, as a parameter that takes
          any type. *)
       | VList vs, Token.Arg ->
-        Buffer.add_string buf (String.concat " " (List.map (fun v ->
+        let word_start = starts_word buf h in
+        Buffer.add_string buf (String.concat " " (List.mapi (fun i v ->
+          let word_start = word_start || i > 0 in
           match v with
           | VList _ -> raise (EvalError
               "%{...} takes a list of values, one argument for each, and \
                this list holds a list; flatten it first")
           | VCommand _ -> raise (EvalError command_splice_error)
-          | v -> shell_quote (splice_text v)) vs))
+          | v -> shell_quote (splice_text ~word_start v)) vs))
       | VList _, Token.Inside _ -> raise (EvalError
           "a list in %{...} between quotes would be one word; take the \
            quotes away to give one argument for each element")
@@ -3348,11 +3365,12 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
           "a list in %!{...} would be read as shell source; write %{...} to \
            give one quoted argument for each element")
       | v, h ->
+        let word_start = starts_word buf h in
         Buffer.add_string buf
           (match h with
            | Token.Source    -> to_text v
-           | Token.Arg       -> shell_quote (splice_text v)
-           | Token.Inside q  -> quote_within q (splice_text v)
+           | Token.Arg       -> shell_quote (splice_text ~word_start v)
+           | Token.Inside q  -> quote_within q (splice_text ~word_start v)
            (* The typechecker holds an arithmetic operand to `Int`, whose
               text is digits and a sign -- nothing a shell reads -- so it
               goes in as itself, where a quote would be a syntax error. *)

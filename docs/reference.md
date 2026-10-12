@@ -1551,9 +1551,11 @@ operands when the command accepts it: `$(grep -- %{pat} notes.txt)`.
 
 A `Path` has one correct form for this, and wand writes it: a `Path` whose
 text starts with `-` goes in with `./` in front. It names the same file, and
-no command reads it as an option. This applies to a `Path` in `%{...}` in
-every context, and to each `Path` element of a list. A `Path` that is
-absolute or starts with `./` already does not change:
+no command reads it as an option. This applies where the value starts a
+word, also between your own quotes, and to each `Path` element of a list.
+After other text in the same word, as in `backup-%{p}` or `--out=%{p}`, a
+command cannot read the value as an option, so it goes in as it is. A
+`Path` that is absolute or starts with `./` already does not change:
 
 ```ocaml
 let p = Path.of_string "-rf"

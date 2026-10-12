@@ -15,7 +15,7 @@
 ### Fixed
 
 - A `%{x}` value between the author's double quotes cannot end the quote in a Big5, GBK or GB18030 locale. The value goes in single-quoted between the two double-quoted parts (#168).
-- A `Path` that starts with `-` in `%{...}`, also as a list element, goes in with `./` in front, so that no command reads it as an option (#175).
+- A `Path` that starts with `-` in `%{...}` at the start of a word, also as a list element, goes in with `./` in front, so that no command reads it as an option (#175).
 
 ## [0.106.0] - 2026-10-12
 
