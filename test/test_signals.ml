@@ -106,19 +106,21 @@ let test_sigterm_releases () =
    The marker is written after the resource exists and before the work that
    follows it, so the parent signals while acquire is still running. The
    work is pure: a command would end by another route, and this is the one
-   that check_interrupt governs. *)
+   that check_interrupt governs. It runs for seconds when nothing stops it:
+   a fold over 500,000 elements ended in about 100 ms, and on a loaded CI
+   runner it ended before the signal came, so the child exited 0. *)
 let acquire_script marker =
   Printf.sprintf
     {|import FS
-import List
 import Path
 import Resource
 let held = "%s.held"
+let spin n = if n == 0 then 0 else spin (n - 1)
 let r =
   let acquire = fn () ->
     let () = FS.write_file! (Path.of_string held) "x" in
     let () = FS.write_file! (Path.of_string "%s") held in
-    let _ = List.fold_left (fn a _ -> a + 1) 0 (List.range 0 500000) in
+    let _ = spin 20000000 in
     held
   in
   let release = fn h -> FS.delete! (Path.of_string h) in
