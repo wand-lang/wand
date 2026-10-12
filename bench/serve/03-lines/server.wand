@@ -1,0 +1,26 @@
+uses {Clock, Net.Listen, Proc}
+
+import HTTP
+import Int
+import List
+import Port
+import Proc
+import String
+
+-- GET /lines/N answers N lines of generated text: the response-writing
+-- path.
+
+let line i = "%{i} the quick brown fox jumps over the lazy dog\n"
+
+let route (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.GET, ["lines", n]) -> (
+    match Int.of_string n with
+    | Ok count -> HTTP.reply 200 (List.range 1 count |> List.map line |> String.join "")
+    | Error why -> HTTP.reply 400 why
+  )
+  | _ -> HTTP.reply 404 "not found"
+
+match Proc.args () with
+| [port :: _] -> HTTP.serve! HTTP.Server(port = Port.of_string! port) route
+| [] -> Proc.exit 2

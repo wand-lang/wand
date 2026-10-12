@@ -1,0 +1,31 @@
+uses {Clock, Net.Listen, Proc}
+
+import Decode
+import HTTP
+import JSON
+import List
+import Port
+import Proc
+import Result
+
+-- POST /sum with {"xs": [...]} answers {"sum": n}: decode a small JSON
+-- body, add it up, and encode the answer.
+
+type Body(xs: List Int)
+
+let sum (req: HTTP.Incoming) =
+  match JSON.parse req.body |> Result.and_then (JSON.decode Body.decoder) with
+  | Ok body -> (
+    let total = List.fold_left (fn a b -> a + b) 0 body.xs;
+    HTTP.reply 200 (JSON.stringify (JSON.of_map {sum = JSON.of_int total}))
+  )
+  | Error why -> HTTP.reply 400 why
+
+let route (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.POST, ["sum"]) -> sum req
+  | _ -> HTTP.reply 404 "not found"
+
+match Proc.args () with
+| [port :: _] -> HTTP.serve! HTTP.Server(port = Port.of_string! port) route
+| [] -> Proc.exit 2

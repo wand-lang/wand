@@ -1,0 +1,317 @@
+uses {Clock, Env, FS.Read, FS.Write, IO, Proc, Random, Shell}
+
+import Clock
+import DateTime
+import Env
+import Float
+import FS
+import Int
+import IO
+import JSON
+import List
+import Map
+import Option
+import Path
+import Proc
+import Random
+import Result
+import Shell
+import String
+
+let {wand_exe} = import ./lib
+
+-- The serve benchmark: the same HTTP server in wand (`HTTP.serve!`) and in
+-- Python, two ways (the standard library's `ThreadingHTTPServer`, and
+-- `asyncio` with a small parser of its own), under the same load. bash
+-- cannot serve, so it has no column.
+--
+-- Each task in `bench/serve/<NN-slug>/` holds one server per kind, the
+-- request to send (`request.json`, and the body it names), and the answer
+-- every server must give (`answer.txt`).
+--
+-- The runner picks a free port for each server, starts it, and waits until
+-- it answers. Before any timing, every server must give the right answer.
+-- The load is `ab`, so the same client measures each server. Each request
+-- has a connection of its own, as no server here keeps one open.
+--
+-- Timing follows what CLAUDE.md says about this machine: every run is in
+-- every round, the order inside a round is shuffled, and the best round is
+-- kept. The failures are summed over all rounds.
+--
+-- Settings, from the environment:
+--
+--   REQUESTS     requests in each run of `ab` (default: 5000)
+--   CONNECTIONS  the connections at once, separated by commas
+--                (default: 1,16,64)
+--   ROUNDS       rounds of timing (default: 3)
+--   TASKS        run only tasks whose directory starts with this
+--   WAND         the wand build under test (default: the one on the PATH)
+--
+-- The results go to `bench/results/serve-<date>.md`.
+
+-- One kind of server, and how it is started.
+type Kind = WandServe | Threading | Asyncio
+
+let kinds = [WandServe, Threading, Asyncio]
+
+let kind_name kind =
+  match kind with
+  | WandServe -> "wand"
+  | Threading -> "python threading"
+  | Asyncio -> "python asyncio"
+
+let kind_file kind =
+  match kind with
+  | WandServe -> "server.wand"
+  | Threading -> "server.py"
+  | Asyncio -> "server_async.py"
+
+let kind_interp kind =
+  match kind with
+  | WandServe -> wand_exe
+  | Threading -> "python3"
+  | Asyncio -> "python3"
+
+-- What a task sends. `body` names a file in the task's directory.
+type Request(method: String, path: String, body: String = "")
+
+-- One run of `ab`: the requests per second, the median and 99th
+-- percentile latency in milliseconds, and the requests that failed or did
+-- not answer 2xx. `stopped` counts the runs that `ab` did not finish, such
+-- as one where a request had no answer in 30 seconds; such a run has no
+-- numbers.
+type Run(rps: Float = 0.0, p50: Int = 0, p99: Int = 0, failed: Int = 0, stopped: Int = 0)
+
+let int_setting name fallback =
+  Env.get name
+  |> Option.and_then (fn s -> Int.of_string s |> Result.to_option)
+  |> Option.default fallback
+
+let task_name (t: Path) = Path.to_string (Path.basename t)
+
+let tasks! (prefix: Option String) =
+  FS.list_dir! ./bench/serve
+  |> List.filter FS.dir?
+  |> List.filter (fn t ->
+    match prefix with
+    | None -> true
+    | Some p -> String.starts_with? p (task_name t))
+  |> List.sort
+
+let absolute (p: Path) = if Path.absolute? p then p else Path.join (FS.cwd ()) p
+
+let request! (task: Path) =
+  JSON.read_file! (Path.join task ./request.json)
+  |> JSON.decode Request.decoder
+  |> Result.get!
+
+-- The body to send as a file, for `curl` and `ab`, or `None` for a GET.
+let body_file (task: Path) (req: Request) =
+  if String.empty? req.body then None
+  else Some (absolute (Path.join task (Path.of_string req.body)))
+
+let url port path = "http://127.0.0.1:%{port}%{path}"
+
+-- How curl ends a request to `port`: 0 when it got an answer, 7 when
+-- nothing took the connection.
+let probe port = $?(curl -s -o /dev/null --max-time 1 %{url port "/"}).code
+
+let answers? port = probe port == 0
+
+-- A port nothing listens on, drawn below the range the kernel gives to
+-- outgoing connections.
+let free_port () =
+  let port = Random.int 20000 40000;
+  if probe port == 7 then port else free_port ()
+
+-- Wait until the server on `port` answers, for up to `tries` times 20ms.
+let ready? port tries =
+  if answers? port then true
+  else if tries <= 0 then false
+  else (Clock.sleep 20ms; ready? port (tries - 1))
+
+-- Start the server of `kind` for `task` on a free port, wait until it
+-- answers, and give the port to `f`. The server stops when `f` returns.
+-- The interpreter is a word decided at run time (`WAND` names the build
+-- under test), which `V-SHELL1` reports.
+let with_server! (task: Path) kind f =
+  let port = free_port ();
+  let prog = absolute (Path.join task (Path.of_string (kind_file kind)));
+  with Shell.spawn $*(%{kind_interp kind} %{prog} %{port}) as _ ->
+  if ready? port 500 then f port
+  else Error "%{kind_name kind} did not answer on port %{port}"
+
+-- What `curl -w` prints for the status alone.
+let status_format = "\%{http_code}"
+
+let send port (req: Request) data =
+  match data with
+  | None -> $?(curl -s -f -X %{req.method} %{url port req.path})
+  | Some file -> $?(curl -s -f -X %{req.method} --data-binary @%{file} %{url port req.path})
+
+-- What is wrong with what one server answers, or `None` when it is right:
+-- the task's request gets the task's answer, and an unknown path gets 404.
+let wrong_answer! (task: Path) kind = (
+  let req = request! task;
+  let want = FS.read_file! (Path.join task ./answer.txt);
+  let outcome =
+    with_server! task kind (fn port ->
+      let r = send port req (body_file task req);
+      let missing = $?(curl -s -o /dev/null -w %{status_format} %{url port "/nope"});
+      if r.code != 0 then Error "%{req.method} %{req.path}: curl exit %{r.code}"
+      else if r.stdout != String.trim want then
+        Error
+          "%{req.method} %{req.path}: wanted %{String.truncate 200 want}, got %{String.truncate 200 r.stdout}"
+      else if missing.stdout != "404" then Error "GET /nope: wanted 404, got %{missing.stdout}"
+      else Ok ());
+  match outcome with
+  | Ok () -> None
+  | Error why -> Some "%{task_name task} %{kind_name kind}: %{why}"
+)
+
+-- Every server of every task that gives a wrong answer. Empty when all
+-- are right.
+let wrong_answers! (ts: List Path) =
+  ts |> List.flat_map (fn task -> List.filter_map (wrong_answer! task) kinds)
+
+let number text = Int.of_string text |> Result.default 0
+
+-- The numbers `ab` reports, read from its output.
+let read_ab text =
+  String.lines text
+  |> List.fold_left
+    (fn run line -> match String.words line with
+      | ["Requests" :: "per" :: "second:" :: n :: _] -> Run(
+        run,
+        rps = Float.of_string n |> Result.default 0.0
+      )
+      | ["Failed" :: "requests:" :: n :: _] -> Run(run, failed = run.failed + number n)
+      | ["Non-2xx" :: "responses:" :: n :: _] -> Run(run, failed = run.failed + number n)
+      | ["50%" :: n :: _] -> Run(run, p50 = number n)
+      | ["99%" :: n :: _] -> Run(run, p99 = number n)
+      | _ -> run
+    )
+    Run()
+
+-- One run of `ab` against the server of `kind` for `task`. `-r` keeps it
+-- going past a failed request, so that the failure is counted and not the
+-- end of the run.
+let load! (task: Path) kind requests connections =
+  let req = request! task;
+  with_server! task kind (fn port ->
+    let target = url port req.path;
+    let r =
+      match body_file task req with
+      | None -> $?(ab -q -r -n %{requests} -c %{connections} %{target})
+      | Some file -> $?(ab -q -r -n %{requests} -c %{connections} -p %{file} -T application/json %{target})
+    in
+    if r.code == 0 then Ok (read_ab r.stdout) else Error "ab exit %{r.code}: %{r.stderr}")
+
+let key task kind connections = "%{task_name task} %{kind_name kind} %{connections}"
+
+-- Every run in every round, in a shuffled order, by key.
+let timings! (ts: List Path) (levels: List Int) requests rounds =
+  let jobs =
+    ts
+    |> List.flat_map (fn t ->
+      List.flat_map (fn k -> List.map (fn c -> (t, k, c)) levels) kinds);
+  List.range 1 rounds
+  |> List.flat_map (fn round -> (
+    IO.println_err "round %{round} of %{rounds}";
+    Random.shuffle jobs
+    |> List.map (fn (task, kind, connections) ->
+      let run =
+        match load! task kind requests connections with
+        | Ok run -> run
+        | Error why -> (
+          IO.println_err "%{key task kind connections}: %{why}";
+          Run(stopped = 1)
+        )
+      in
+      (key task kind connections, run))
+  ))
+
+-- The best round of each key, with the failures and stopped runs of every
+-- round.
+let best (runs: List (String, Run)) =
+  runs
+  |> List.fold_left
+    (fn m (k, run) -> Map.update
+      k
+      run
+      (fn b ->
+        let top = if run.rps > b.rps then run else b;
+        Run(top, failed = b.failed + run.failed, stopped = b.stopped + run.stopped))
+      m)
+    Map.empty
+
+let ratio (a: Float) (b: Float) = if b == 0.0 then "-" else Float.format 2 (a / b)
+
+let report (date: String) (version: String) requests rounds (ts: List Path) (levels: List Int) results =
+  let get task kind c = Map.get (key task kind c) results |> Option.default Run();
+  let rows f = ts |> List.flat_map (fn t -> List.map (fn c -> f t c) levels);
+  let rps_row task c =
+    let w = (get task WandServe c).rps;
+    let t = (get task Threading c).rps;
+    let a = (get task Asyncio c).rps;
+    "| %{task_name task} | %{c} | %{Float.format 0 w} | %{Float.format 0 t} | %{Float.format 0 a} | %{ratio w t} | %{ratio w a} |";
+  let latency_row task c =
+    let cell kind =
+      let run = get task kind c;
+      "%{run.p50} / %{run.p99}";
+    let failures kind =
+      let run = get task kind c;
+      if run.stopped == 0 then "%{run.failed}" else "%{run.failed} (%{run.stopped} stopped)";
+    let failed = kinds |> List.map failures |> String.join " / ";
+    "| %{task_name task} | %{c} | %{cell WandServe} | %{cell Threading} | %{cell Asyncio} | %{failed} |";
+  String.join
+    "\n"
+    (List.flatten [
+      [
+        "# Serve benchmark: %{date}",
+        "",
+        "%{version}, %{requests} requests in each run of `ab`, one connection for each request, the best of %{rounds} rounds in a shuffled order.",
+        "",
+        "Requests per second:",
+        "",
+        "| task | connections | wand | python threading | python asyncio | wand / threading | wand / asyncio |",
+        "|---|---|---|---|---|---|---|"
+      ],
+      rows rps_row,
+      [
+        "",
+        "Latency of the best round, p50 / p99 in milliseconds, and the failed requests of all rounds (wand / threading / asyncio). A stopped run is one that `ab` did not finish.",
+        "",
+        "| task | connections | wand | python threading | python asyncio | failed |",
+        "|---|---|---|---|---|---|"
+      ],
+      rows latency_row,
+      [""]
+    ])
+
+let main! () = (
+  let requests = int_setting "REQUESTS" 5000;
+  let rounds = int_setting "ROUNDS" 3;
+  let levels =
+    Env.get "CONNECTIONS"
+    |> Option.default "1,16,64"
+    |> String.split ","
+    |> List.filter_map (fn s -> Int.of_string (String.trim s) |> Result.to_option);
+  let ts = tasks! (Env.get "TASKS");
+  if !(Shell.ok? $?(sh -c "command -v ab")) then (
+    IO.println_err "serve: ab is not on the PATH (it comes with Apache httpd)";
+    Proc.exit 2
+  );
+  match wrong_answers! ts with
+  | [] -> (
+    let results = best (timings! ts levels requests rounds);
+    let date = DateTime.date_string (Clock.now ());
+    let text = report date $(%{wand_exe} v) requests rounds ts levels results;
+    FS.mkdir! ./bench/results;
+    FS.write_file! (Path.of_string "bench/results/serve-%{date}.md") text;
+    IO.println text
+  )
+  | bad -> (List.each IO.println_err bad; Proc.exit 1)
+)
+
+main! ()

@@ -1,0 +1,17 @@
+uses {Clock, Net.Listen, Proc}
+
+import HTTP
+import Port
+import Proc
+
+-- GET /health answers 200 and "ok": the connection and dispatch path, with
+-- no work in the handler.
+
+let route (req: HTTP.Incoming) =
+  match (req.method, HTTP.segments req) with
+  | (HTTP.GET, ["health"]) -> HTTP.reply 200 "ok"
+  | _ -> HTTP.reply 404 "not found"
+
+match Proc.args () with
+| [port :: _] -> HTTP.serve! HTTP.Server(port = Port.of_string! port) route
+| [] -> Proc.exit 2

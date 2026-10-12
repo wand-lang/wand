@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `bench/serve.wand` measures the requests per second of `HTTP.serve!` against two Python servers (#155).
+
 ### Changed
 
 - A pattern finds its constructor one time and keeps it, which makes pattern matching faster (#166).

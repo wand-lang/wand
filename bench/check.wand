@@ -1,4 +1,4 @@
-uses {Env, FS.Read, FS.Write, IO, Proc, Shell}
+uses {Clock, Env, FS.Read, FS.Write, IO, Proc, Random, Shell}
 
 import Decode
 import FS
@@ -14,6 +14,7 @@ let {langs, lang_name, extension, wand_exe, run_cases!} = import ./lib
 let {generate!} = import ./speed/gen
 let {disagreements, tasks!} = import ./speed
 let {Truth, items!, sides} = import ./review
+let Serve = import ./serve
 
 -- The check for the benchmark. It runs nothing against a model. It checks
 -- that what the benchmark scores against is still right, so that a run
@@ -23,6 +24,8 @@ let {Truth, items!, sides} = import ./review
 --              hidden case
 --   speed      each task's three programs print the same thing, on a
 --              small input
+--   serve      each task's servers give the task's answer to its
+--              request, and 404 to an unknown path
 --   review     each item's wand files typecheck, its Python parses, and
 --              its truth.json reads. wand/before.wand reports nothing.
 --              wand/after.wand reports exactly the finding codes in the
@@ -94,6 +97,9 @@ let speed_problems! () =
       String.join "\n" ("speed/%{task}: the programs disagree" :: outs))
   )
 
+let serve_problems! () =
+  Serve.wrong_answers! (Serve.tasks! None) |> List.map (fn why -> "serve/%{why}")
+
 -- What is wrong with one side of a review item.
 -- `expect` is the truth's: the finding codes after.wand reports.
 let side_problems (item: Path) (expect: List String) (lang, ext) =
@@ -140,11 +146,17 @@ let review_problems! () =
   |> List.flatten
 
 let main! () = (
-  let problems = List.flatten [author_problems! (), speed_problems! (), review_problems! ()];
+  let problems =
+    List.flatten [
+      author_problems! (),
+      speed_problems! (),
+      serve_problems! (),
+      review_problems! ()
+    ];
   List.each IO.println_err problems;
   if List.empty? problems then
     IO.println
-      "bench: every reference passes, every speed task agrees, every review item reads"
+      "bench: every reference passes, every speed task agrees, every server answers, every review item reads"
   else Proc.exit 1
 )
 
