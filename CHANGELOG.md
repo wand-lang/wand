@@ -29,7 +29,10 @@
 - `String.words` is faster (#122).
 - `String.split` with a delimiter of one character is faster (#122).
 - `String.lines` is faster (#122).
-- `String.words` copies each word one time, and `String.slice`, `String.starts_with?` and `Int.of_string` make fewer copies, which makes them faster (#160).
+- `String.words` does not copy a text that is one word (#160).
+- `String.slice` is faster (#160).
+- `String.starts_with?` is faster (#160).
+- `Int.of_string` is faster (#160).
 - `Stream.unique` over a stream of `String` is faster (#122).
 - A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
 - A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
@@ -37,7 +40,8 @@
 - A call to a wand function is approximately 15% faster (#122).
 - Each step of evaluation is cheaper. A loop that calls a function is approximately 25% faster, and a program that runs for ever still stops at once on Ctrl-C (#157).
 - A name that a function binds, such as a parameter or a `let`, is found by its place, and a name from outside the function is found once and kept. Speed tasks 02, 03 and 09 are approximately 30% faster (#156).
-- A builtin that calls a function for each element reads the task state one time, which makes it faster. A call that gives two arguments to a function of two parameters, as in a fold or after `|>`, is also faster (#159).
+- A builtin that calls a function for each element, such as `List.fold_left`, is faster (#159).
+- A call that gives two arguments to a function of two parameters, as in a fold or after `|>`, is faster (#159).
 
 ### Fixed
 
