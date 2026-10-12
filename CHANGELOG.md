@@ -27,6 +27,7 @@
 - `wand f` writes `{a = a}` in a map literal as `{a}`, as it does in a map pattern (#146).
 - When the values of a `{...}` map literal have different types, the type error says that a Map holds values of one type, and that fields of different types need a `type`: `type T(groups: ..., skipped: ...)`, then `T(groups = ..., skipped)` (#146).
 - A `;` at the end of a line in a body continues the body, as a newline does, and no longer ends the definition (#131).
+- A `;` at the start of a line in a body, such as a `;` on a line of its own after a `let` value that ends on a `match` arm, has the meaning of a `;` at the end of the line above, and no longer ends the definition (#152).
 - `Decode.int`, `Decode.float` and `Decode.bool` refuse a string in JSON, TOML and YAML: `{"ms": "12"}` does not decode as `ms: Int`. CSV, `Decode.run`, `Decode.lines` and `Args` still read numbers from text (#125).
 - A decode error from JSON, TOML or YAML says when the value was a string: `expected Int, got String "12"` (#125).
 - `result` is an ordinary name outside an `ensures` clause (#128).

@@ -1310,6 +1310,92 @@ let test_semicolon_body_without_parens () =
     "import IO\nlet go () =\n  let a = IO.println \"one\";\n IO.println \"two\"\ngo ()\n"
     "put the body in parentheses"
 
+(* A `;` that begins a line has the meaning of one at the end of the line
+   above (#152). An agent wrote one on a line of its own after a binding
+   whose value ends on a `match` arm, to the left of the arms, where no arm
+   can hold it. It ended the definition, and the line below was refused as
+   a statement of its own. *)
+let test_a_semicolon_that_begins_a_line () =
+  runs "after a match, on a line of its own (the issue's example)"
+    "import Int\n\
+     let run th =\n\
+    \  let t = match Int.of_string th with\n\
+    \    | Ok n -> n\n\
+    \    | Error _ -> 0\n\
+    \  ;\n\
+    \  let u = t + 1;\n\
+    \  u\n\
+     run \"41\"" "42";
+  runs "at the end of the last arm, as before"
+    "import Int\n\
+     let run th =\n\
+    \  let t = match Int.of_string th with\n\
+    \    | Ok n -> n\n\
+    \    | Error _ -> 0;\n\
+    \  let u = t + 1;\n\
+    \  u\n\
+     run \"41\"" "42";
+  runs "after a handle"
+    "let run () =\n\
+    \  let t = handle 41 with\n\
+    \    | return x -> x\n\
+    \  ;\n\
+    \  t + 1\n\
+     run ()" "42";
+  runs "after a plain value"
+    "let run () =\n\
+    \  let t = 41\n\
+    \  ;\n\
+    \  t + 1\n\
+     run ()" "42";
+  runs "at the start of the next statement"
+    "let run () =\n\
+    \  let t = 41\n\
+    \  ; t + 1\n\
+     run ()" "42";
+  runs "between two statements of a body"
+    "uses {IO}\n\
+     import IO\n\
+     let run () =\n\
+    \  IO.print \"a\"\n\
+    \  ;\n\
+    \  IO.print \"b\"\n\
+    \  ; 42\n\
+     run ()" "42";
+  let parse src = Lexer.tokenize src |> Parser.parse_program in
+  let items label src n =
+    match (parse src).Ast.items with
+    | items when List.length items = n -> ()
+    | items -> Alcotest.failf "%s: expected %d items, got %d" label n
+                 (List.length items)
+    | exception Parser.ParseError (_, m) -> Alcotest.failf "%s: %s" label m
+  in
+  (* A `;` level with the item's column is the file's separator, as it was,
+     and so is a line level with it: the line below is an item of its
+     own. *)
+  items "a ; at the item's column ends the item"
+    "let f x =\n  let t = x\n;\nf 1\n" 2;
+  items "and a line at the item's column is an item"
+    "let f x =\nlet t = x\n  ;\nf 1\n" 2;
+  (* Between the members of an `implement`, a `;` that begins a line
+     separates two of them, as it did. *)
+  (match (parse
+            "implement Ord Int =\n\
+            \  let max a b =\n\
+            \    let t = a\n\
+            \    t\n\
+            \    ; let min a b = b").Ast.items with
+   | [Ast.TLImplement (im, _)] ->
+     Alcotest.(check (list string)) "two members"
+       ["max"; "min"] (List.map (fun (n, _, _, _) -> n) im.Ast.im_binds)
+   | _ -> Alcotest.fail "expected one implementation"
+   | exception Parser.ParseError (_, m) -> Alcotest.failf "implement: %s" m);
+  (* A `;` left of the binding's column is not its body's, so it ends the
+     definition, and the line below is refused as before. *)
+  parse_error "a ; left of the binding still ends the definition"
+    "let f x =\n  let t = x\n ;\n  t + 1\n"
+    "the ';' above ended the definition"
+
 (* A nested `match` with no brackets took every arm below it, the outer
    one's included, whatever their column (#135). An arm that begins a line
    left of the inner match's first arm now goes to the outer one. *)
@@ -1575,6 +1661,8 @@ let () =
     "layout", [
       Alcotest.test_case "indented continuation" `Quick test_indented_continuation;
       Alcotest.test_case "; body without parens" `Quick test_semicolon_body_without_parens;
+      Alcotest.test_case "a ; that begins a line" `Quick
+        test_a_semicolon_that_begins_a_line;
       Alcotest.test_case "a nested match ends at an arm to its left" `Quick
         test_a_nested_match_ends_at_an_arm_to_its_left;
       Alcotest.test_case "an if branch holds statements" `Quick

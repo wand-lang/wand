@@ -336,7 +336,10 @@ the name over the same body, so they are one thing and `wand f` writes the
 spellings survive it, and both say what the `;` cannot: `in` where the value
 ends on a `match` or `handle` arm, since an arm reads a `;` on it as part of
 itself, and `in` where it narrows — `(let x = 1 in x + 1; 9)` gives `x` to
-`x + 1` and to nothing after it. Prefer one `match` over multi-equation
+`x + 1` and to nothing after it. A `;` at the start of a line means what
+one at the end of the line above does, so a `;` on a line of its own, left
+of the arms and at the `let`'s column, ends a value that ends on an arm, and
+`wand f` writes it as `in`. Prefer one `match` over multi-equation
 definitions. Pattern matching must be exhaustive or it is a type error.
 `[x]` and `[a, b]` match exactly one and two elements, so a match on a list
 needs a `| [] ->` arm or a last `| _ ->` arm:

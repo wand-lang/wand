@@ -165,6 +165,13 @@ type state = {
        what lets a definition run onto more lines without brackets, and what
        lets a newline end a binding inside a block the way it does at the top
        level. Saved and restored around each nested statement. *)
+  mutable item_col : int;
+    (* the column the file's item being parsed began at. A `;` that begins
+       a line joins the lines round it only when it is indented past this
+       (#152); level with it, it is the file's own separator. *)
+  mutable in_implement : bool;
+    (* set while the members of an `implement` are read, where a `;` that
+       begins a line separates two members. *)
   mutable arms_at : (int * int) option;
     (* the bracket depth and the anchor column of the innermost `match` or
        `handle` whose arms are being read, while one is -- see `arms_`. A
@@ -185,6 +192,7 @@ let make tokens =
   { tokens = Array.of_list tokens; pos = 0;
     paren_depth = 0; top_fns = Hashtbl.create 16; with_owners = 0;
     clause_name = None; stmt_depth = 0; stmt_col = 1; arms_at = None;
+    item_col = 1; in_implement = false;
     shell_allow = None; net_allow = None }
 
 (* A parser for the source inside an interpolation hole. It is the same
@@ -711,6 +719,56 @@ let is_expr_start = function
   | Token.Minus | Token.Bang -> true
   | t -> is_atom_start t
 
+(* The `;` the next token is, if it is one: its index in the token array,
+   and whether it begins a line -- a line end between it and the token
+   before it, as in
+
+     let t = match Int.of_string th with
+       | Ok n -> n
+       | Error _ -> 0
+     ;
+     let u = t + 1;
+
+   `peek` steps over the line end, so a `;` there is the next token, and the
+   tests below asked for it only at `s.pos`. *)
+let semicolon_ahead s =
+  let n = Array.length s.tokens in
+  let i = ref s.pos in
+  let leading = ref false in
+  while !i < n && is_skippable (fst s.tokens.(!i)) do
+    if fst s.tokens.(!i) = Token.Newline then leading := true;
+    incr i
+  done;
+  if !i < n && fst s.tokens.(!i) = Token.Semicolon then Some (!i, !leading)
+  else None
+
+(* The token after the one at `j`, skipping what `peek` skips. *)
+let token_after s j =
+  let n = Array.length s.tokens in
+  let i = ref (j + 1) in
+  while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
+  if !i < n then Some s.tokens.(!i) else None
+
+(* Whether a `;` that begins a line (#152) may join what is above it to what
+   is below it. A `;` at the end of a line has done so since #131; one at the
+   start of the next line has the same meaning, and before this it ended the
+   definition and the line below was refused as a statement of its own.
+
+   Only where that refusal was the answer, so that nothing that parses
+   changes: outside every bracket, since inside one a `;` is the block's own
+   separator; not between the members of an `implement`, where a `;` at the
+   start of a line separates two of them; and with the `;` at or past
+   `anchor` and both it and the line below it indented past the item they
+   are in. A `;` level with the item's own column is the file's separator,
+   as it was. *)
+let leading_semicolon_joins s j anchor (next : Token.loc) =
+  let semi_col = (snd s.tokens.(j)).Token.col in
+  s.paren_depth = 0
+  && not s.in_implement
+  && semi_col >= anchor
+  && semi_col > s.item_col
+  && next.Token.col > s.item_col
+
 (* Whether the `;` just ahead hands the rest to a binding's body rather than
    ending the statement the binding sits in. The token after it has to start
    an expression and to sit at or past `anchor` -- the binding's own column,
@@ -718,14 +776,15 @@ let is_expr_start = function
    chain sits level with the one above it, so the test is `>=`, exactly as
    it is there. *)
 let semicolon_joins_the_body s anchor =
-  let n = Array.length s.tokens in
-  let i = ref s.pos in
-  (* Past the `;` itself, then past whatever `peek` steps over. *)
-  if !i < n && fst s.tokens.(!i) = Token.Semicolon then incr i;
-  while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
-  !i < n
-  && is_expr_start (fst s.tokens.(!i))
-  && (snd s.tokens.(!i)).Token.col >= anchor
+  match semicolon_ahead s with
+  | None -> false
+  | Some (j, leading) ->
+    (match token_after s j with
+     | Some (t, loc) ->
+       is_expr_start t
+       && loc.Token.col >= anchor
+       && (not leading || leading_semicolon_joins s j anchor loc)
+     | None -> false)
 
 (* Whether the `;` just ahead joins the statement before it to the next line
    of the same body, as a newline there does. A body of statements sequences
@@ -736,22 +795,22 @@ let semicolon_joins_the_body s anchor =
    the body's column. That is exactly the case the file's loop rejects with
    "the ';' above ended the definition": nothing that parses changes. Inside
    a bracket a `;` is the block's own separator and already means
-   something, and `a; b` on one line ends the item as it always did. *)
+   something, and `a; b` on one line ends the item as it always did. A `;`
+   that begins a line is on a line below the statement before it, so the
+   line it is on can hold the next statement. *)
 let semicolon_continues_the_body s =
-  let n = Array.length s.tokens in
-  s.pos < n
-  && fst s.tokens.(s.pos) = Token.Semicolon
-  && s.paren_depth = 0
+  s.paren_depth = 0
   && s.stmt_depth = 0
-  && begin
-    let semi_line = (snd s.tokens.(s.pos)).Token.line in
-    let i = ref (s.pos + 1) in
-    while !i < n && is_skippable (fst s.tokens.(!i)) do incr i done;
-    !i < n
-    && is_expr_start (fst s.tokens.(!i))
-    && (snd s.tokens.(!i)).Token.col >= s.stmt_col
-    && (snd s.tokens.(!i)).Token.line > semi_line
-  end
+  && match semicolon_ahead s with
+  | None -> false
+  | Some (j, leading) ->
+    (match token_after s j with
+     | Some (t, loc) ->
+       is_expr_start t
+       && loc.Token.col >= s.stmt_col
+       && (if leading then leading_semicolon_joins s j s.stmt_col loc
+           else loc.Token.line > (snd s.tokens.(j)).Token.line)
+     | None -> false)
 
 let is_pat_atom_start = function
   | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _ | Token.Bool _
@@ -2539,11 +2598,18 @@ let parse_implement s =
     refuse_result_parameter nloc !params body;
     ((name, !params, body, loc), Option.map (fun d -> (name, d)) doc)
   in
-  let binds = ref [parse_binding ()] in
-  while peek s = Token.Semicolon do
-    ignore (advance s);
-    binds := !binds @ [parse_binding ()]
-  done;
+  let outer_implement = s.in_implement in
+  s.in_implement <- true;
+  let binds =
+    Fun.protect ~finally:(fun () -> s.in_implement <- outer_implement)
+    @@ fun () ->
+    let binds = ref [parse_binding ()] in
+    while peek s = Token.Semicolon do
+      ignore (advance s);
+      binds := !binds @ [parse_binding ()]
+    done;
+    binds
+  in
   ({ Ast.im_iface = iface; im_args = !args;
      im_binds = List.map fst !binds },
    List.filter_map snd !binds)
@@ -2908,6 +2974,7 @@ let parse_program_generic ~on_item tokens =
     (* This item's own column is what decides, for everything inside it,
        whether a line below continues it or starts something new. *)
     s.stmt_col <- start_loc.Token.col;
+    s.item_col <- start_loc.Token.col;
     s.stmt_depth <- 0;
     (* A line indented past the definition above it is read as the
        continuation it looks like -- see `newline_breaks_expr` -- so it
