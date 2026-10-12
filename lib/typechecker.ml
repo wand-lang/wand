@@ -1923,16 +1923,57 @@ let foreign_ctor_fix = function
    when there is one, the spelling guess over `known` otherwise. Every
    caller raises the error at once, so the fix for a foreign spelling with
    one answer is set here too (#140). *)
+(* Each constructor that a standard library module declares, with the
+   module. A constructor of a module is written with the module's name,
+   `Digest.Sha256`, so a bare `Sha256` is unknown; this table says which
+   module it belongs to (#153). Read from the parse of each module, once,
+   when an unknown constructor first needs it. *)
+let stdlib_ctors : (string * string) list Lazy.t = lazy (
+  List.concat_map (fun m ->
+    match
+      Parser.parse_program
+        (Lexer.tokenize ~base:1
+           (Module_types.read_source (Module_types.resolve_stdlib m)))
+    with
+    | prog ->
+      List.concat_map (function
+        | TLType (Variants (_, _, ctors), _) ->
+          List.map (fun (c : ctor_def) -> (c.name, m)) ctors
+        | _ -> []) prog.items
+    | exception _ -> []) stdlib_module_names)
+
+let stdlib_ctor_modules name =
+  List.filter_map (fun (c, m) -> if c = name then Some m else None)
+    (Lazy.force stdlib_ctors)
+  |> List.sort_uniq compare
+
 let unknown_ctor_hint name known =
-  (match foreign_ctor_fix name, !cur_loc with
+  let modules =
+    match foreign_ctor_hint name with
+    | Some _ -> []
+    | None -> stdlib_ctor_modules name
+  in
+  let fix_to =
+    match foreign_ctor_fix name, modules with
+    | Some to_, _ -> Some to_
+    | None, [m] -> Some (m ^ "." ^ name)
+    | _ -> None
+  in
+  (match fix_to, !cur_loc with
    | Some to_, Some l ->
      (match ctor_extent l name with
       | Some at -> replace_fix at name to_
       | None -> ())
    | _ -> ());
-  match foreign_ctor_hint name with
-  | Some h -> " -- " ^ h
-  | None -> Util.hint name known
+  match foreign_ctor_hint name, modules with
+  | Some h, _ -> " -- " ^ h
+  | None, [m] -> Printf.sprintf " -- '%s' is '%s.%s'" name m name
+  | None, (_ :: _ :: _) ->
+    Printf.sprintf " -- '%s' is a constructor of more than one module: %s"
+      name
+      (String.concat ", "
+         (List.map (fun m -> Printf.sprintf "'%s.%s'" m name) modules))
+  | None, [] -> Util.hint name known
 
 (* Named in unbound-name errors that have nothing better to offer: the
    binary can enumerate what exists, and a reader who has never seen wand

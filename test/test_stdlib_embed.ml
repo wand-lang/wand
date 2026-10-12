@@ -144,6 +144,50 @@ let test_override_replaces_the_library () =
     Alcotest.(check string) "WAND_STDLIB wins over the embedded table"
       "99 : Int" out)
 
+(* A bare constructor that two modules declare (#153). The embedded
+   library has no such name, so a library with one more type in `Digest`
+   makes `Held` a constructor of `Digest` and of `FS`. The error names
+   both, and `wand t --fix` changes nothing. *)
+let test_constructor_of_two_modules () =
+  with_scratch (fun d ->
+    let alt = Filename.concat d "alt" in
+    Unix.mkdir alt 0o755;
+    List.iter
+      (fun (name, src) ->
+        let src =
+          if name = "Digest" then src ^ "\ntype Clash = Held | Other\n" else src
+        in
+        Out_channel.with_open_text (Filename.concat alt (name ^ ".wand"))
+          (fun oc -> Out_channel.output_string oc src))
+      Stdlib_embed.table;
+    let file = Filename.concat d "clash.wand" in
+    let src = "let x = Held\n" in
+    Out_channel.with_open_text file (fun oc -> Out_channel.output_string oc src);
+    let wand args =
+      let cmd =
+        Printf.sprintf "cd %s && WAND_STDLIB=%s %s %s 2>&1" (Filename.quote d)
+          (Filename.quote alt) (Filename.quote wand_binary) args
+      in
+      let ic = Unix.open_process_in cmd in
+      let out = In_channel.input_all ic in
+      ignore (Unix.close_process_in ic);
+      out
+    in
+    let contains s sub =
+      let n = String.length sub in
+      let rec go i =
+        i + n <= String.length s && (String.sub s i n = sub || go (i + 1))
+      in
+      go 0
+    in
+    let out = wand "t clash.wand" in
+    Alcotest.(check bool) "names both" true
+      (contains out "'Held' is a constructor of more than one module: \
+                     'Digest.Held', 'FS.Held'");
+    ignore (wand "t --fix clash.wand");
+    Alcotest.(check string) "the file is as it was" src
+      (In_channel.with_open_text file In_channel.input_all))
+
 let () =
   Alcotest.run "stdlib_embed"
     [ ( "table",
@@ -159,6 +203,8 @@ let () =
           Alcotest.test_case "decoy stdlib/ above ignored" `Quick
             test_decoy_stdlib_above_is_ignored;
           Alcotest.test_case "WAND_STDLIB replaces the library" `Quick
-            test_override_replaces_the_library
+            test_override_replaces_the_library;
+          Alcotest.test_case "a constructor of two modules" `Quick
+            test_constructor_of_two_modules
         ] )
     ]

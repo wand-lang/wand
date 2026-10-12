@@ -8704,7 +8704,10 @@ through a field gets the type that has the field, and lines read as one
 expression get the brackets and the `;` that the message shows. A value of
 type `T` where a `String` is expected gets `T.to_string` around it, when
 the module `T` has `to_string`: `expected String, got Path; Path.to_string
-gives its text`. `String.of_int` becomes `Int.to_string`. An error
+gives its text`. `String.of_int` becomes `Int.to_string`. A bare
+constructor of a standard library module, such as `Sha256`, becomes
+`Digest.Sha256` when only one module has that constructor, and the import
+is the next fix. An error
 whose change is a choice, such as a guess by spelling or two types that have
 the field, keeps only its text. A fix applies only where the text at its
 extent is the text it replaces, and only when the file still parses after
