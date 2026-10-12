@@ -81,6 +81,40 @@ let test_module_field () =
     [("List.length", "field"); ("xs", "0")]
     (resolved "import List\nlet f xs = List.length xs")
 
+(* Each constructor a pattern names, and how many bindings are in front of
+   it where it is checked: the scope of the arm, and what the pattern has
+   bound before it. *)
+let rec pat_ctors (p : pat) =
+  match p with
+  | PCtor (g, inner, _) -> (g.g_name, string_of_int g.g_depth) :: pat_ctors inner
+  | PConstr (_, ps) | PTuple ps | PList ps -> List.concat_map pat_ctors ps
+  | PConstrNamed (_, kvs) | PMap kvs -> List.concat_map (fun (_, p) -> pat_ctors p) kvs
+  | PCons (h, t) -> pat_ctors h @ pat_ctors t
+  | PLocated (_, p) | PAnnot (p, _) -> pat_ctors p
+  | _ -> []
+
+let test_pattern_constructors () =
+  let arms src =
+    match List.rev (items src) with
+    | last :: _ ->
+      (match Resolve.item last with
+       | TLLet (_, ps, b) ->
+         List.concat_map pat_ctors ps
+         @ (match strip_located b with
+            | Match (_, cases) -> List.concat_map (fun (p, _, _) -> pat_ctors p) cases
+            | _ -> [])
+       | _ -> Alcotest.fail "expected a definition")
+    | [] -> Alcotest.fail "no items"
+  in
+  (* `f` and `x` are in front of each arm; `a` is bound before `Some`, and
+     `a` and `b` before `Ok`. *)
+  Alcotest.check pairs "constructors in arms"
+    [("Some", "3"); ("Ok", "4"); ("None", "3")]
+    (arms "let f x =\n  match x with\n  | (a, Some (b, Ok c)) -> c\n  | (a, None) -> a");
+  Alcotest.check pairs "a parameter's constructor"
+    [("Some", "1")]
+    (arms "let f (Some x) = x")
+
 (* A place the environment does not hold -- the shape changed after the
    pass ran -- answers with the lookup by name. *)
 let eval_with env e = Evaluator.eval env e
@@ -114,6 +148,27 @@ let test_wrong_edge_falls_back () =
   Alcotest.(check string) "another list past the edge" "9"
     (Evaluator.show_value (eval_with env'' (Global g)))
 
+(* `m.f` keeps the list past the edge, the module and the member. Another
+   list, another module, or an edge that is not the resolver's gives the
+   member of the module that is there. *)
+let test_module_field_cache () =
+  let edge = "a" in
+  let g = { g_name = "M"; g_depth = 1; g_edge = edge; g_cache = Resolve.new_cache () } in
+  let e = ModField (g, "f", Resolve.new_cache (), 0) in
+  let modul n = Evaluator.VRecord (Evaluator.vrecord_make [("f", Evaluator.VInt n)]) in
+  let one = modul 1 and two = modul 2 in
+  let show env = Evaluator.show_value (eval_with env e) in
+  let past = [ ("M", one) ] in
+  Alcotest.(check string) "the first read" "1" (show ((edge, Evaluator.VInt 0) :: past));
+  Alcotest.(check string) "the same list past the edge" "1"
+    (show ((edge, Evaluator.VInt 5) :: past));
+  Alcotest.(check string) "another module" "2"
+    (show [ (edge, Evaluator.VInt 0); ("M", two) ]);
+  Alcotest.(check string) "the edge is not the resolver's binder" "1"
+    (show [ ("b", Evaluator.VInt 0); ("M", one) ]);
+  Alcotest.(check string) "the first module again" "1"
+    (show ((edge, Evaluator.VInt 0) :: past))
+
 (* A function value bound by `let` is not made recursive unless a `fn` is
    written there. `add 1` was made where `inc` meant the outer one, and
    binding the new `inc` inside it took that from it. *)
@@ -139,6 +194,13 @@ let session_lines lines =
 let test_session () =
   Alcotest.(check string) "a later line sees an earlier one" "3"
     (session_lines ["let x = 2"; "let f y = x + y"; "f 1"]);
+  (* A pattern keeps where a record's fields are. A type declared again
+     with its fields in another order moves them, and the pattern reads
+     them from the new places. *)
+  Alcotest.(check string) "a type declared again" "4"
+    (session_lines ["type T(a: Int, b: Int)"; "let f (T(a, b)) = a - b";
+                    "f (T(a = 5, b = 1))"; "type T(b: Int, a: Int)";
+                    "f (T(a = 5, b = 1))"]);
   Alcotest.(check string) "equations given one at a time" "120"
     (session_lines ["let fact 0 = 1"; "let fact n = n * fact (n - 1)"; "fact 5"])
 
@@ -154,7 +216,8 @@ let checked_files = [
   "test_effects.wand"; "test_eval.wand"; "test_generics.wand";
   "test_group.wand"; "test_imports.wand"; "test_interfaces.wand";
   "test_lambda_params.wand"; "test_list.wand"; "test_list_callbacks.wand";
-  "test_list_patterns.wand"; "test_operations.wand"; "test_ordering.wand";
+  "test_list_patterns.wand"; "test_match_places.wand";
+  "test_operations.wand"; "test_ordering.wand";
   "test_par.wand"; "test_par_race.wand"; "test_resource.wand";
   "test_result.wand"; "test_shared.wand"; "test_stream.wand";
   "test_tuple_index.wand"; "test_typedef.wand"; "test_wand_limit.wand";
@@ -183,10 +246,12 @@ let () =
       Alcotest.test_case "patterns" `Quick test_patterns;
       Alcotest.test_case "a handler" `Quick test_handler;
       Alcotest.test_case "a module's member" `Quick test_module_field;
+      Alcotest.test_case "constructors in patterns" `Quick test_pattern_constructors;
     ];
     "a wrong place", [
       Alcotest.test_case "a slot" `Quick test_wrong_place_falls_back;
       Alcotest.test_case "a global" `Quick test_wrong_edge_falls_back;
+      Alcotest.test_case "a module's member" `Quick test_module_field_cache;
     ];
     "programs", [
       Alcotest.test_case "a function value keeps its scope" `Quick

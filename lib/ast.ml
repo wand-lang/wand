@@ -47,6 +47,20 @@ type import_kind =
   | ModuleURL    of string   (* import https://…   — resolves through wand.pkg    *)
   | ModuleAlias  of string   (* import json2       — a `name` in wand.pkg         *)
 
+(* A name bound outside the definition it is used in. The definition's
+   own bindings are the first `g_depth` of the environment, and the last
+   of them is `g_edge`'s; what is past them is the environment the
+   definition was made in, which does not change once it is made. So the
+   evaluator steps past `g_depth` bindings, checks the binder there by one
+   pointer compare, and keeps what the rest answered for the name, against
+   that rest: when the same rest comes again, so does the answer. *)
+type global = { g_name : string; g_depth : int; g_edge : string; g_cache : cache }
+
+(* What a lookup found last time, as one value so that two domains that
+   fill it at once each leave a whole answer. The evaluator owns what it
+   holds; it is an integer while nothing is known. *)
+and cache = { mutable hit : Obj.t }
+
 type pat =
   | Int      of int
   | Float    of float
@@ -91,6 +105,13 @@ type pat =
      could find it in a guard instead (#109). Only an arm's pattern is
      wrapped, and only once; everything else sees through it. *)
   | PLocated      of Token.loc * pat
+  (* Never written by the parser. The resolver (`resolve.ml`) writes it
+     around a constructor pattern -- `PConstr`, `PConstrNamed` or
+     `PConstrBare` -- so the evaluator looks the constructor's name up as
+     it looks up a `Global`, and keeps the answer. The cache keeps what a
+     `PConstrBare` reads as, for the constructor it met last. Everything
+     else sees through it. *)
+  | PCtor         of global * pat * cache
 
 (* Which of the two spellings a binding comes back as. `let x = 1 in e` and
    the block binding `(let x = 1; e)` bind the same name over the same body,
@@ -222,20 +243,6 @@ type expr =
      the parser wrapped `m` in, each a step that `Wand.limit` counts. *)
   | ModField of global * string * cache * int
 
-(* A name bound outside the definition it is used in. The definition's
-   own bindings are the first `g_depth` of the environment, and the last
-   of them is `g_edge`'s; what is past them is the environment the
-   definition was made in, which does not change once it is made. So the
-   evaluator steps past `g_depth` bindings, checks the binder there by one
-   pointer compare, and keeps what the rest answered for the name, against
-   that rest: when the same rest comes again, so does the answer. *)
-and global = { g_name : string; g_depth : int; g_edge : string; g_cache : cache }
-
-(* What a lookup found last time, as one value so that two domains that
-   fill it at once each leave a whole answer. The evaluator owns what it
-   holds; it is an integer while nothing is known. *)
-and cache = { mutable hit : Obj.t }
-
 and case = pat * expr option * expr
 
 and handle_case =
@@ -325,6 +332,7 @@ let rec qualify_ctor_pat t (p : pat) : pat option =
     Option.map (fun p' -> PAnnot (p', te)) (qualify_ctor_pat t inner)
   | PLocated (loc, inner) ->
     Option.map (fun p' -> PLocated (loc, p')) (qualify_ctor_pat t inner)
+  | PCtor (_, inner, _) -> qualify_ctor_pat t inner
   | _ -> None
 
 (* ── Pretty-print ─────────────────────────────────────────────────────────── *)
@@ -340,7 +348,7 @@ let rec pat_names (p : pat) =
   | PConstrNamed (_, kvs) | PMap kvs ->
     List.concat_map (fun (_, p) -> pat_names p) kvs
   | PConstrBare (_, ids) -> ids
-  | PAnnot (p, _) | PLocated (_, p) -> pat_names p
+  | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) -> pat_names p
   | _ -> []
 
 (* The position a `Field` label names when it is the index of a tuple
@@ -401,7 +409,7 @@ let rec show_pat : pat -> string = function
   | PMap kvs ->
     "{" ^ String.concat ", " (List.map (fun (k, p) -> k ^ " = " ^ show_pat p) kvs) ^ "}"
   | PAnnot (p, _)  -> show_pat p
-  | PLocated (_, p) -> show_pat p
+  | PLocated (_, p) | PCtor (_, p, _) -> show_pat p
 
 let rec show : expr -> string = function
   | Int n      -> string_of_int n

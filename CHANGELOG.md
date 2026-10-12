@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A pattern finds its constructor one time and keeps it, which makes pattern matching faster (#166).
+- The evaluator reads a variable or a module member with less work (#165).
+- The evaluator calls a function of one parameter with less work (#164).
+- The evaluator does less work at each position in the source (#162).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added

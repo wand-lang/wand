@@ -49,7 +49,8 @@ let rec pattern_names (p : pat) =
   | PConstrNamed (_, kvs) | PMap kvs ->
     List.concat_map (fun (_, p) -> pattern_names p) kvs
   | PConstrBare (_, ids) -> ids
-  | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) -> pattern_names p
+  | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) ->
+    pattern_names p
   | Int _ | Float _ | String _ | Bool _ | Unit | Path _ | DateTime _
   | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _ | Size _
   | Wild -> []
@@ -75,6 +76,61 @@ let find scope x =
     | n :: rest -> if String.equal n x then Some (n, d) else go (d + 1) rest
   in
   go 0 scope
+
+(* A pattern whose constructors are looked up as a `Global` is: a
+   constructor is checked before what is under it binds anything, so its
+   scope is what the pattern has bound before it, in the order
+   `pattern_names` gives. Answers the pattern and the scope after it. A
+   name the definition binds itself, and a qualified constructor, stay as
+   they are, and are looked up by name. *)
+let rec pat_in scope (p : pat) : pat * string list =
+  let ctor name inner =
+    match find scope name with
+    | Some _ -> inner
+    | None -> PCtor (global scope name, inner, new_cache ())
+  in
+  match p with
+  | PVar n -> (p, n :: scope)
+  | PConstr (name, ps) ->
+    let ps, after = pats_in scope ps in
+    (ctor name (PConstr (name, ps)), after)
+  | PConstrNamed (name, kvs) ->
+    let kvs, after = fields_in scope kvs in
+    (ctor name (PConstrNamed (name, kvs)), after)
+  | PConstrBare (_, ids) -> (ctor (pat_ctor_name p) p, push_pat scope p)
+  | PTuple ps -> let ps, after = pats_in scope ps in (PTuple ps, after)
+  | PList ps -> let ps, after = pats_in scope ps in (PList ps, after)
+  | PCons (h, t) ->
+    let h, sc = pat_in scope h in
+    let t, after = pat_in sc t in
+    (PCons (h, t), after)
+  | PMap kvs -> let kvs, after = fields_in scope kvs in (PMap kvs, after)
+  | PAnnot (inner, te) -> let inner, after = pat_in scope inner in (PAnnot (inner, te), after)
+  | PLocated (l, inner) -> let inner, after = pat_in scope inner in (PLocated (l, inner), after)
+  (* Already resolved: resolved again, for the place it is in now. *)
+  | PCtor (_, inner, _) -> pat_in scope inner
+  | PQualified _ | Int _ | Float _ | String _ | Bool _ | Unit | Path _
+  | DateTime _ | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _
+  | Size _ | Wild -> (p, push_pat scope p)
+
+and pats_in scope ps =
+  let ps, after = List.fold_left (fun (acc, sc) p ->
+    let p, sc = pat_in sc p in (p :: acc, sc)) ([], scope) ps in
+  (List.rev ps, after)
+
+and fields_in scope kvs =
+  let kvs, after = List.fold_left (fun (acc, sc) (k, p) ->
+    let p, sc = pat_in sc p in ((k, p) :: acc, sc)) ([], scope) kvs in
+  (List.rev kvs, after)
+
+and pat_ctor_name = function
+  | PConstr (n, _) | PConstrNamed (n, _) | PConstrBare (n, _) -> n
+  | _ -> ""
+
+let pat scope p = fst (pat_in scope p)
+
+(* Parameters, each resolved past the ones before it. *)
+let params scope ps = fst (pats_in scope ps)
 
 (* The labels on a type that `Field` answers itself, rather than reading a
    module's member. A field with one of these names stays a `Field`. *)
@@ -106,13 +162,15 @@ let rec expr scope (e : expr) : expr =
      | None -> Global (global scope x))
   | ModField (g, f, _, n) -> ModField (global scope g.g_name, f, new_cache (), n)
   | App (f, x) -> App (r f, r x)
-  | Fn (params, body) -> Fn (params, expr (push_params scope params) body)
+  | Fn (ps, body) -> Fn (params scope ps, expr (push_params scope ps) body)
   | Let (PVar name, e1, e2, style) when is_fn e1 ->
     Let (PVar name, rec_fn name scope e1, expr (name :: scope) e2, style)
-  | Let (p, e1, e2, style) -> Let (p, r e1, expr (push_pat scope p) e2, style)
+  | Let (p, e1, e2, style) ->
+    Let (pat scope p, r e1, expr (push_pat scope p) e2, style)
   | LetRec (bindings, e2, style) ->
     let names = List.fold_left (fun sc (n, _, _) -> n :: sc) scope bindings in
-    LetRec (List.map (fun (n, ps, b) -> (n, ps, expr (push_params names ps) b)) bindings,
+    LetRec (List.map (fun (n, ps, b) ->
+      (n, params names ps, expr (push_params names ps) b)) bindings,
             expr names e2, style)
   | If (a, b, c) -> If (r a, r b, r c)
   | Unless (a, b, c) -> Unless (r a, r b, r c)
@@ -161,25 +219,28 @@ let rec expr scope (e : expr) : expr =
    `name`. *)
 and rec_fn name scope e =
   match e with
-  | Fn (params, body) -> Fn (params, expr (push_params (name :: scope) params) body)
+  | Fn (ps, body) ->
+    let scope = name :: scope in
+    Fn (params scope ps, expr (push_params scope ps) body)
   | Located (l, e) -> Located (l, rec_fn name scope e)
   | Annot (t, e) -> Annot (t, rec_fn name scope e)
   | e -> expr scope e
 
 and case scope (p, guard, body) =
   let inner = push_pat scope p in
-  (p, Option.map (expr inner) guard, expr inner body)
+  (pat scope p, Option.map (expr inner) guard, expr inner body)
 
 (* A top-level item. Past the item, the environment is the file's, which
    changes as the file runs, so nothing past it is resolved. *)
 let item (it : top_item) : top_item =
   match it with
   | TLLet (name, [], body) -> TLLet (name, [], expr [] body)
-  | TLLet (name, params, body) ->
-    TLLet (name, params, expr (push_params [name] params) body)
+  | TLLet (name, ps, body) ->
+    TLLet (name, params [name] ps, expr (push_params [name] ps) body)
   | TLLetRec bindings ->
     let names = List.fold_left (fun sc (n, _, _) -> n :: sc) [] bindings in
-    TLLetRec (List.map (fun (n, ps, b) -> (n, ps, expr (push_params names ps) b)) bindings)
+    TLLetRec (List.map (fun (n, ps, b) ->
+      (n, params names ps, expr (push_params names ps) b)) bindings)
   | TLLetPat (p, e) -> TLLetPat (p, expr [] e)
   | TLImplement (im, loc) ->
     TLImplement ({ im with im_binds = List.map (fun (n, ps, b, l) ->

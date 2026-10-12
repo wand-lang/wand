@@ -418,7 +418,7 @@ let rec emit_pat (p : pat) : string = match p with
   (* `Ok ()` and `Ok()` read alike; the span says which was written, so
      the one written is the one given back (#116). *)
   | PLocated (l, PConstrBare (c, [])) when unit_spaced l c -> c ^ " ()"
-  | PLocated (_, p) -> emit_pat p
+  | PLocated (_, p) | PCtor (_, p, _) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
        no identifier to pun into, so it always carries its pattern. *)
