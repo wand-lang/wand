@@ -202,3 +202,15 @@ test "an element that holds a quote stays one argument" (fn t ->
 test "a list between quotes is refused" (fn t -> t.raises (fn () -> in_double! ["a", "b"]))
 
 test "a list in a raw splice is refused" (fn t -> t.raises (fn () -> raw! ["a", "b"]))
+
+-- ── The author's own quoting ─────────────────────────────────────────────
+
+-- Inside single quotes the shell keeps a backslash and the newline after
+-- it. They are text there, not a line continuation.
+test "a backslash and a newline inside single quotes stay" (fn t ->
+  t.eq "[a\\\nb]" $(printf "[%s]" 'a\
+b'))
+
+test "a backslash and a newline outside quotes continue the line" (fn t ->
+  t.eq "[a][b]" $(printf "[%s]" a \
+    b))

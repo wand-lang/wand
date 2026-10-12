@@ -11,6 +11,10 @@
 - `String.words` is faster for a word longer than eight bytes (#163).
 - `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
 
+### Fixed
+
+- A `\` and a newline inside single quotes in a command stay in the command, as `sh` keeps them. Before, they were removed as a line continuation (#173).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added
