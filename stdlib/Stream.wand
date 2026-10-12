@@ -269,3 +269,28 @@ let unique s = stream_unique s
 -- >> Stream.of_list ["a", "b", "a"] |> Stream.tally
 -- {a = 2, b = 1} : Map Int
 let tally s = stream_tally s
+
+-- Read the source once and keep the n elements whose keys come first,
+-- smallest first.
+--
+-- The answer is what `List.smallest_by` gives for the same elements, ties
+-- included: elements with equal keys keep their order in the stream. Only n
+-- elements are held while it reads, so a file too big to hold still gives
+-- its n smallest. f is applied once to each element, in order. When n is 0
+-- or less the answer is [] and the source is not read.
+--
+-- >> Stream.of_list ["ccc", "a", "bb", "d"] |> Stream.smallest_by 2 String.length
+-- ["a", "d"] : List String
+let smallest_by n f s = stream_smallest_by n f s
+
+-- Read the source once and keep the n elements whose keys come last,
+-- greatest first.
+--
+-- Elements with equal keys keep their order in the stream, as in
+-- `List.greatest_by`. Only n elements are held while it reads. f is applied
+-- once to each element, in order. When n is 0 or less the answer is [] and
+-- the source is not read.
+--
+-- >> Stream.of_list ["bb", "a", "cc", "ddd"] |> Stream.greatest_by 2 String.length
+-- ["ddd", "bb"] : List String
+let greatest_by n f s = stream_greatest_by n f s

@@ -349,6 +349,43 @@ let test_foreign_member_with_a_choice () =
   Alcotest.(check bool) "List.mapi takes a function List.indexed does not" true
     (d.Diag.fix = None)
 
+(* The names other libraries give a top-n selection (#121). A name that
+   says which end it keeps is renamed; 'top', 'min_by' and 'max_by' are
+   only said. *)
+let test_top_n_members () =
+  let renamed src want =
+    let (fixed, _) = fix_clean src in
+    Alcotest.(check string) want want fixed
+  in
+  renamed "import List\nlet x = List.nlargest 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.greatest_by 2 (fn x -> x) [1]\n";
+  renamed "import List\nlet x = List.largest_by 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.greatest_by 2 (fn x -> x) [1]\n";
+  renamed "import List\nlet x = List.k_largest 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.greatest_by 2 (fn x -> x) [1]\n";
+  renamed "import List\nlet x = List.nsmallest 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.smallest_by 2 (fn x -> x) [1]\n";
+  renamed "import List\nlet x = List.least_by 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.smallest_by 2 (fn x -> x) [1]\n";
+  renamed "import List\nlet x = List.k_smallest 2 (fn x -> x) [1]\n"
+    "import List\nlet x = List.smallest_by 2 (fn x -> x) [1]\n";
+  renamed
+    "import Stream\nlet x = Stream.nlargest 2 (fn x -> x) (Stream.of_list [1])\n"
+    "import Stream\nlet x = Stream.greatest_by 2 (fn x -> x) (Stream.of_list [1])\n";
+  renamed
+    "import Stream\nlet x = Stream.k_smallest 2 (fn x -> x) (Stream.of_list [1])\n"
+    "import Stream\nlet x = Stream.smallest_by 2 (fn x -> x) (Stream.of_list [1])\n";
+  List.iter (fun (src, says) ->
+    let d = refuse src in
+    Alcotest.(check bool) ("says " ^ says) true (Lint.contains d.Diag.message says);
+    Alcotest.(check bool) "and carries no fix" true (d.Diag.fix = None))
+    [ "import List\nlet x = List.top 2 (fn x -> x) [1]\n",
+      "List.greatest_by n f xs for the n greatest";
+      "import List\nlet x = List.min_by (fn x -> x) [1]\n",
+      "List.smallest_by 1 f xs";
+      "import Stream\nlet x = Stream.max_by (fn x -> x) (Stream.of_list [1])\n",
+      "Stream.greatest_by 1 f xs" ]
+
 (* A member that differs from the written name only by its last `?` or
    `!` is certain; a guess by spelling is not. *)
 let test_suffix_member () =
@@ -841,6 +878,7 @@ let () =
       Alcotest.test_case "a foreign member" `Quick test_foreign_member_renamed;
       Alcotest.test_case "a member with a choice" `Quick
         test_foreign_member_with_a_choice;
+      Alcotest.test_case "a top-n member" `Quick test_top_n_members;
       Alcotest.test_case "a member's last ? or !" `Quick test_suffix_member;
       Alcotest.test_case "a foreign constructor" `Quick
         test_foreign_constructor_renamed;

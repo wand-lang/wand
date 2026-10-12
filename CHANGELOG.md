@@ -11,6 +11,11 @@
 - A list in `%{...}` between the author's own quotes is a type error (#113).
 - A list in `%!{...}` is a type error, and `wand t --fix` changes the `%!{` to `%{` (#113).
 - `wand t` reports a `%!{x}` in a command where `x` is not a `String`, such as a `Path`, as `V-SHELL4`, and `wand t --fix` changes it to `%{x}` (#123).
+- `List.smallest_by n f xs` gives the `n` elements with the smallest keys, smallest first, without a sort of the whole list. It gives the same answer as `List.sort_by f xs |> List.take n` (#121).
+- `List.greatest_by n f xs` gives the `n` elements with the greatest keys, greatest first. Elements with equal keys keep their input order (#121).
+- `Stream.smallest_by` and `Stream.greatest_by` do the same over a stream. They read the stream once and keep only `n` elements (#121).
+- `wand t --fix` changes `List.nsmallest`, `List.least_by` and `List.k_smallest` to `List.smallest_by`, and `List.nlargest`, `List.largest_by` and `List.k_largest` to `List.greatest_by`. The same names on `Stream` change to the `Stream` functions (#121).
+- `List.top`, `List.min_by` and `List.max_by`, and the same names on `Stream`, give a hint that names `smallest_by` or `greatest_by` (#121).
 
 ### Changed
 
@@ -19,6 +24,7 @@
 - `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
 - The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
 - The benchmark harness writes its long `claude -p` command over several lines (#114).
+- The speed benchmark task `03-slowest` uses `Stream.smallest_by` and does not sort all the lines (#121).
 
 ### Fixed
 
@@ -32,6 +38,7 @@
 - `wand f` writes a command that opens on the line under `$?(` with the `)` under the line that opens it, not to the left of the command (#114).
 - V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).
 - `V-SHELL1` says that a `%!{...}` splice can add words or commands, not that the first word is decided at run time, when the first word is a literal (#123).
+- The effects of the key function of `List.sort_by` are in the type of the call. Before, `List.sort_by` with a key that prints typechecked as pure (#121).
 
 ### Documentation
 

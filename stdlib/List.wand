@@ -245,6 +245,37 @@ let sort xs = list_sort xs
 -- ["a", "bb", "ccc"] : List String
 let sort_by f xs = list_sort_by f xs
 
+-- The n elements whose keys come first, smallest first.
+--
+-- The answer is `sort_by f xs |> take n`, ties included: elements with
+-- equal keys keep their order in xs. It keeps only n elements while it
+-- reads, so it does not sort the whole list. f is applied once to each
+-- element, left to right. When n is 0 or less the answer is [] and f is not
+-- applied. `Stream.smallest_by` is the same over a stream.
+--
+-- >> List.smallest_by 2 String.length ["ccc", "a", "bb", "d"]
+-- ["a", "d"] : List String
+--
+-- >> List.smallest_by 5 (fn x -> x) [3, 1, 2]
+-- [1, 2, 3] : List Int
+let smallest_by n f xs = list_smallest_by n f xs
+
+-- The n elements whose keys come last, greatest first.
+--
+-- Elements with equal keys keep their order in xs, so the answer is a
+-- stable sort by descending key, then `take n`. It is not
+-- `sort_by f xs |> reverse |> take n`, which turns ties around. It keeps
+-- only n elements while it reads. f is applied once to each element, left
+-- to right. When n is 0 or less the answer is [] and f is not applied.
+-- `Stream.greatest_by` is the same over a stream.
+--
+-- >> List.greatest_by 2 String.length ["bb", "a", "cc", "ddd"]
+-- ["ddd", "bb"] : List String
+--
+-- >> List.greatest_by 2 (fn p -> p.1) [("a", 1), ("b", 3), ("c", 2)]
+-- [("b", 3), ("c", 2)] : List (String, Int)
+let greatest_by n f xs = list_greatest_by n f xs
+
 -- Keep the first of each element, dropping the rest.
 --
 -- Two elements are the same when `==` says so, which reads a value rather

@@ -1715,6 +1715,22 @@ let foreign_member_hint ns member =
   | "Args", "parse_with" ->
     Some "use Args.read with a Parser; 'T.parser' makes one from a type"
   | "Int", "divmod" -> Some "write '(a / b, a % b)'"
+  (* The names other libraries give a top-n selection (#121): Python's
+     heapq.nsmallest and nlargest, and the k_smallest of Rust's itertools.
+     Each one says which end it keeps, so it has one wand name. *)
+  | ("List" | "Stream"), ("least_by" | "nsmallest" | "k_smallest") ->
+    Some (Printf.sprintf "use %s.smallest_by n f xs" ns)
+  | ("List" | "Stream"), ("largest_by" | "nlargest" | "k_largest") ->
+    Some (Printf.sprintf "use %s.greatest_by n f xs" ns)
+  (* 'top' does not say which end it keeps, and min_by and max_by give one
+     element in Ruby, Kotlin and Rust, where these give a list of n. *)
+  | ("List" | "Stream"), "top" ->
+    Some (Printf.sprintf "use %s.greatest_by n f xs for the n greatest \
+                          keys, or %s.smallest_by for the n smallest" ns ns)
+  | ("List" | "Stream"), ("min_by" | "max_by") ->
+    let which = if member = "min_by" then "smallest_by" else "greatest_by" in
+    Some (Printf.sprintf "use '%s.%s 1 f xs', which gives a list of at most \
+                          one element" ns which)
   | _ -> None
 
 (* The members of the table above whose hint names one wand name, and
@@ -1752,6 +1768,13 @@ let foreign_member_fix ns member =
         | _ -> None)
      | None -> None)
   | "Path", "dirname" -> Some "Path.parent"
+  (* Each of these names one end, so one wand name is right. Python's
+     nsmallest takes the key last; after the rename the typechecker says so
+     at the arguments. 'top', 'min_by' and 'max_by' stay text only. *)
+  | ("List" | "Stream"), ("least_by" | "nsmallest" | "k_smallest") ->
+    Some (ns ^ ".smallest_by")
+  | ("List" | "Stream"), ("largest_by" | "nlargest" | "k_largest") ->
+    Some (ns ^ ".greatest_by")
   | _ -> None
 
 (* The one member that `name` differs from only by a last `?` or `!`:
@@ -6765,6 +6788,20 @@ let stdlib_type_env : env = [
    let a = fresh () in
    let e = Effect_set.unknown () in
    generalize [] (TFun (TStream (e, a), TList a, e)));
+  ("stream_smallest_by",
+   let a = fresh () and b = fresh () in
+   let e = Effect_set.unknown () in
+   generalize []
+     (TInt @-> TFun (TFun (a, b, e),
+                     TFun (TStream (e, a), TList a, e),
+                     Effect_set.pure)));
+  ("stream_greatest_by",
+   let a = fresh () and b = fresh () in
+   let e = Effect_set.unknown () in
+   generalize []
+     (TInt @-> TFun (TFun (a, b, e),
+                     TFun (TStream (e, a), TList a, e),
+                     Effect_set.pure)));
   ("stream_tally",
    let e = Effect_set.unknown () in
    generalize [] (TFun (TStream (e, TString), TMap TInt, e)));
@@ -7102,8 +7139,25 @@ let stdlib_type_env : env = [
   ("list_get",     let a = fresh () in generalize [] ((TInt @-> (TList a @-> TApp (TName "Option", a)))));
   ("list_get_exn", let a = fresh () in generalize [] (TInt @-> effs [Effect_set.Raise] (TList a) (a)));
   ("list_sort",    let a = fresh () in generalize [] ((TList a @-> TList a)));
-  ("list_sort_by", let a = fresh () in let b = fresh () in
-                   generalize [] (((a @-> b) @-> (TList a @-> TList a))));
+  (* The key runs when the list arrives, so what it performs is what the
+     last arrow performs. Written with `@->` throughout, the key's effect
+     variable was its own, and `List.sort_by (fn x -> (IO.print "k"; x))`
+     typechecked as pure in a file with no manifest. *)
+  ("list_sort_by", let a = fresh () and b = fresh () in
+                   let e = Effect_set.unknown () in
+                   generalize [] (TFun (TFun (a, b, e),
+                                        TFun (TList a, TList a, e),
+                                        Effect_set.pure)));
+  ("list_smallest_by", let a = fresh () and b = fresh () in
+                   let e = Effect_set.unknown () in
+                   generalize [] (TInt @-> TFun (TFun (a, b, e),
+                                                 TFun (TList a, TList a, e),
+                                                 Effect_set.pure)));
+  ("list_greatest_by", let a = fresh () and b = fresh () in
+                   let e = Effect_set.unknown () in
+                   generalize [] (TInt @-> TFun (TFun (a, b, e),
+                                                 TFun (TList a, TList a, e),
+                                                 Effect_set.pure)));
   ("list_unique",  let a = fresh () in generalize [] ((TList a @-> TList a)));
   ("list_range",   generalize [] ((TInt @-> (TInt @-> TList TInt))));
   ("list_flatten", let a = fresh () in generalize [] ((TList (TList a) @-> TList a)));

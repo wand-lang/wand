@@ -24,8 +24,6 @@ let ms line =
 match Proc.args () with
 | [dir :: _] ->
   FS.stream_lines (Path.join (Path.of_string dir) ./app.log)
-  |> Stream.to_list
-  |> List.sort_by (fn line -> (0 - ms line, line))
-  |> List.take 20
+  |> Stream.smallest_by 20 (fn line -> (0 - ms line, line))
   |> List.each IO.println
 | [] -> Proc.exit 2

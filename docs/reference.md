@@ -249,7 +249,11 @@ in the declaration is the order they come back in. `Option` and `Result`
 declare their absent and failed cases first, so `None` sorts before `Some`
 and `Error` before `Ok`. Two functions have no order and say so.
 
-For an order the shape does not give, `List.sort_by` takes the key.
+For an order the shape does not give, `List.sort_by` takes the key. For
+only the first n in that order, `List.smallest_by n f xs` and
+`List.greatest_by n f xs` keep n elements while they read, and do not sort
+the whole list; `Stream.smallest_by` and `Stream.greatest_by` do the same
+over a stream, in the memory of n elements.
 
 **A comparison is on the value, not on the text it was written as.** A
 `Duration` is a sum of units, and a `DateTime` carries an offset, so one
@@ -4861,7 +4865,9 @@ drop_while : ('a -> Bool ! 'e) -> List 'a -> List 'a ! 'e
 each       : ('a -> 'b ! 'e) -> List 'a -> Unit ! 'e
 indexed    : List 'a -> List (Int, 'a)
 sort       : List 'a -> List 'a
-sort_by    : ('a -> 'b) -> List 'a -> List 'a
+sort_by    : ('a -> 'b ! 'e) -> List 'a -> List 'a ! 'e
+smallest_by : Int -> ('a -> 'b ! 'e) -> List 'a -> List 'a ! 'e
+greatest_by : Int -> ('a -> 'b ! 'e) -> List 'a -> List 'a ! 'e
 unique     : List 'a -> List 'a
 tally      : List String -> Map Int
 range      : Int -> Int -> List Int
@@ -5444,6 +5450,8 @@ sum       : Stream {..} ('a: Add) -> Option 'a ! 'e
 max       : Stream {..} ('a: Ord) -> Option 'a ! 'e
 min       : Stream {..} ('a: Ord) -> Option 'a ! 'e
 tally     : Stream {..} String -> Map Int ! 'e
+smallest_by : Int -> ('a -> 'b ! 'e) -> Stream {..} 'a -> List 'a ! 'e
+greatest_by : Int -> ('a -> 'b ! 'e) -> Stream {..} 'a -> List 'a ! 'e
 ```
 
 Read through a file, and do not read it into memory. A stream describes a
@@ -5461,6 +5469,17 @@ FS.stream_lines /var/log/app.log
 
 `take n` stops the read after n elements. The memory and the reading are
 both bounded. `to_list` reads everything. Its name says so.
+
+`smallest_by n f` and `greatest_by n f` read everything and keep n: the n
+elements whose keys come first, or last, in wand's order. The memory is
+bounded by n, so the twenty slowest requests in a large log need no
+`to_list` and no sort. Elements with equal keys keep their order in the
+stream.
+
+```ocaml
+FS.stream_lines /var/log/app.log
+|> Stream.greatest_by 20 ms
+```
 
 `take_while` is the same gate with a predicate: it stops at the first
 element the predicate refuses. `drop` and `drop_while` skip from the front,

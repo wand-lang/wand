@@ -5439,6 +5439,69 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     if !exhausted then flush_from stages;
     finish ~early:(not !exhausted))
 
+(* The `n` elements whose keys come first, for `List.smallest_by` and its
+   kin. `feed` gives each element to the function it is given, in order.
+
+   Each element is held as (key, input index, element). The order is the
+   key in wand's order -- reversed when `greatest` -- and then the index, so
+   two equal keys keep their input order whichever way the keys run. That
+   is what makes `smallest_by n f xs` exactly `sort_by f xs |> take n`.
+
+   A max-heap of at most `n` entries holds the best seen so far, with the
+   worst of them at the root: a new element goes in only when it comes
+   before the root, and then the root goes out. m elements cost
+   O(m log n), and the memory is the n kept, not the m read -- which is what
+   lets the stream form read a large file. Sorting 200,000 lines to keep 20
+   took most of the time of a speed task (#121). *)
+let select_by ~greatest (n : int) (f : value) (feed : (value -> unit) -> unit) : value =
+  if n <= 0 then VList []
+  else begin
+    let before (ka, ia, _) (kb, ib, _) =
+      let c = if greatest then wand_compare kb ka else wand_compare ka kb in
+      if c <> 0 then c < 0 else ia < ib
+    in
+    let heap = ref [||] in
+    let size = ref 0 in
+    let swap i j =
+      let h = !heap in
+      let t = h.(i) in h.(i) <- h.(j); h.(j) <- t
+    in
+    (* The root is the entry that comes last. *)
+    let rec up i =
+      if i > 0 then begin
+        let p = (i - 1) / 2 in
+        if before !heap.(p) !heap.(i) then (swap i p; up p)
+      end
+    in
+    let rec down i =
+      let l = 2 * i + 1 and r = 2 * i + 2 in
+      let worst = ref i in
+      if l < !size && before !heap.(!worst) !heap.(l) then worst := l;
+      if r < !size && before !heap.(!worst) !heap.(r) then worst := r;
+      if !worst <> i then (swap i !worst; down !worst)
+    in
+    let index = ref 0 in
+    feed (fun x ->
+      let e = (apply f x, !index, x) in
+      incr index;
+      if !size < n then begin
+        if !size = Array.length !heap then begin
+          let grown = Array.make (max 8 (min n (2 * !size))) e in
+          Array.blit !heap 0 grown 0 !size;
+          heap := grown
+        end;
+        !heap.(!size) <- e;
+        incr size;
+        up (!size - 1)
+      end else if before e !heap.(0) then begin
+        !heap.(0) <- e;
+        down 0
+      end);
+    let kept = Array.sub !heap 0 !size in
+    Array.stable_sort (fun a b -> if before a b then -1 else if before b a then 1 else 0) kept;
+    VList (Array.to_list (Array.map (fun (_, _, x) -> x) kept))
+  end
+
 (* What an item of `Par.each_stream` gives back when its work ends: a connection
    is closed. Set where connections are made. *)
 let each_par_release : (value -> unit) ref = ref (fun _ -> ())
@@ -5671,6 +5734,20 @@ let stream_builtins : env = [
       run_stream_terminal d ~on_item:(fun x -> acc := apply (apply f !acc) x);
       !acc
     | _ -> raise (EvalError "Stream.fold_left: expected Stream")))));
+  (* A stream that is asked for no elements is not read at all, like
+     `Stream.take 0`. *)
+  ("stream_smallest_by", VBuiltin (function
+    | VInt n -> VBuiltin (fun f -> VBuiltin (function
+      | VStream d ->
+        select_by ~greatest:false n f (fun k -> run_stream_terminal d ~on_item:k)
+      | _ -> raise (EvalError "Stream.smallest_by: expected Stream")))
+    | _ -> raise (EvalError "Stream.smallest_by: expected Int")));
+  ("stream_greatest_by", VBuiltin (function
+    | VInt n -> VBuiltin (fun f -> VBuiltin (function
+      | VStream d ->
+        select_by ~greatest:true n f (fun k -> run_stream_terminal d ~on_item:k)
+      | _ -> raise (EvalError "Stream.greatest_by: expected Stream")))
+    | _ -> raise (EvalError "Stream.greatest_by: expected Int")));
   ("stream_tally", VBuiltin (function
     | VStream d ->
       let acc = ref vmap_empty in
@@ -7641,6 +7718,16 @@ let stdlib_eval_env : env = [
           List.stable_sort (fun (ka, _) (kb, _) -> wand_compare ka kb) keyed in
         VList (List.map snd sorted)
       | _ -> raise (EvalError "list_sort_by: expected List"))));
+  ("list_smallest_by", VBuiltin (function
+    | VInt n -> VBuiltin (fun f -> VBuiltin (function
+      | VList xs -> select_by ~greatest:false n f (fun k -> List.iter k xs)
+      | _ -> raise (EvalError "List.smallest_by: expected List")))
+    | _ -> raise (EvalError "List.smallest_by: expected Int")));
+  ("list_greatest_by", VBuiltin (function
+    | VInt n -> VBuiltin (fun f -> VBuiltin (function
+      | VList xs -> select_by ~greatest:true n f (fun k -> List.iter k xs)
+      | _ -> raise (EvalError "List.greatest_by: expected List")))
+    | _ -> raise (EvalError "List.greatest_by: expected Int")));
   ("list_unique", VBuiltin (function
     | VList xs ->
       (* Membership is equality, and equality is what `==` answers with.

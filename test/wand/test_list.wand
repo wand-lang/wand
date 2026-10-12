@@ -1,7 +1,8 @@
-uses {FS.Read, FS.Write}
+uses {FS.Read, FS.Write, IO}
 
 let {test, group} = import Test
 import FS
+import IO
 import List
 import Map
 import Option
@@ -22,6 +23,41 @@ test "sort_by string length" (fn t ->
   t.eq ["fig", "kiwi", "banana"] (List.sort_by String.length ["banana", "kiwi", "fig"]))
 test "sort_by negate (descending)" (fn t ->
   t.eq [5, 4, 3, 1, 1] (List.sort_by (fn x -> 0 - x) [3, 1, 4, 1, 5]))
+
+-- ── smallest_by and greatest_by ─────────────────────────────────────────
+
+-- Keys from a small range, so ties are common, and each element carries its
+-- position, so a tie that came back in the wrong order shows.
+let _pairs = List.range 0 59 |> List.map (fn i -> ((i * 7 + i / 3) % 5, i))
+let _counts = [-2, 0, 1, 3, 10, 59, 60, 61, 100]
+
+test "smallest_by is sort_by then take, ties included" (fn t ->
+  t.eq
+    (List.map (fn n -> List.sort_by (fn p -> p.0) _pairs |> List.take n) _counts)
+    (List.map (fn n -> List.smallest_by n (fn p -> p.0) _pairs) _counts))
+test "greatest_by is a stable sort by descending key, then take" (fn t ->
+  t.eq
+    (List.map (fn n -> List.sort_by (fn p -> 0 - p.0) _pairs |> List.take n) _counts)
+    (List.map (fn n -> List.greatest_by n (fn p -> p.0) _pairs) _counts))
+test "greatest_by keeps equal keys in their input order" (fn t ->
+  t.eq ["bb", "cc", "a"] (List.greatest_by 3 String.length ["a", "bb", "cc", "d"]))
+test "smallest_by of nothing" (fn t ->
+  let empty : List Int = [];
+  t.eq [] (List.smallest_by 3 (fn x -> x) empty))
+test "smallest_by 0 and below give []" (fn t ->
+  t.eq ([], []) (
+    List.smallest_by 0 (fn x -> x) [1, 2],
+    List.greatest_by (0 - 1) (fn x -> x) [1, 2]
+  ))
+test "more than the list gives it all, sorted" (fn t ->
+  t.eq [3, 2, 1] (List.greatest_by 10 (fn x -> x) [2, 3, 1]))
+test "the key runs once per element, in order, under a handler" (fn t ->
+  let outcome =
+    handle List.smallest_by 2 (fn x -> (IO.print "%{x}"; x)) [3, 1, 2] with
+    | IO!print s k -> (let (seen, xs) = k (); (s ++ seen, xs))
+    | return xs -> ("", xs)
+  in
+  t.eq ("312", [1, 2]) outcome)
 
 -- ── unique ──────────────────────────────────────────────────────────────
 

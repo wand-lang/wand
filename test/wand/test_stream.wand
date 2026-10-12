@@ -1,10 +1,13 @@
-uses {FS.Read, FS.Write}
+uses {FS.Read, FS.Write, IO}
 
 import List
 import Map
 import Test
 let {test} = import Test
 import FS
+import Int
+import IO
+import Option
 import Path
 import Stream
 import String
@@ -327,3 +330,43 @@ test "tally counts what the stages let through" (fn t ->
 test "a constructor is a function over a file's stream (#120)" (fn t ->
   let count log = FS.stream_lines log |> Stream.filter_map Some |> Stream.count;
   t.eq 3 (Test.with_lines ./mock.log ["a", "b", "c"] (fn () -> count ./mock.log)))
+
+-- ── smallest_by and greatest_by ─────────────────────────────────────────
+
+-- Each element carries its position, so a tie that came back in the wrong
+-- order shows.
+let _pairs = List.range 0 59 |> List.map (fn i -> ((i * 7 + i / 3) % 5, i))
+
+test "smallest_by agrees with List.smallest_by, ties included" (fn t ->
+  let counts = [0, 1, 3, 10, 60, 100];
+  t.eq
+    (List.map (fn n -> List.smallest_by n (fn p -> p.0) _pairs) counts)
+    (List.map (fn n -> Stream.of_list _pairs |> Stream.smallest_by n (fn p -> p.0)) counts))
+
+test "greatest_by agrees with List.greatest_by, ties included" (fn t ->
+  let counts = [0, 1, 3, 10, 60, 100];
+  t.eq
+    (List.map (fn n -> List.greatest_by n (fn p -> p.0) _pairs) counts)
+    (List.map (fn n -> Stream.of_list _pairs |> Stream.greatest_by n (fn p -> p.0)) counts))
+
+test "the source is read once, and the key runs once per element" (fn t ->
+  let outcome =
+    handle (Stream.of_list [3, 1, 2]
+    |> Stream.map (fn x -> (IO.print "r"; x))
+    |> Stream.greatest_by 2 (fn x -> (IO.print "k"; x))) with
+    | IO!print s k -> (let (seen, xs) = k (); (s ++ seen, xs))
+    | return xs -> ("", xs)
+  in
+  t.eq ("rkrkrk", [3, 2]) outcome)
+
+test "the greatest lines of a file" (fn t ->
+  with FS.temp_dir "st_" as d -> (
+    let log = Path.join d ./app.log;
+    FS.write_file! log "ms=40 a\nms=7 b\nms=300 c\nms=40 d\n";
+    let ms line =
+      String.word 0 line |> Option.default "" |> String.replace "ms=" "" |> Int.of_string!;
+    t.eq ["ms=300 c", "ms=40 a", "ms=40 d"] (FS.stream_lines log |> Stream.greatest_by 3 ms)
+  ))
+
+test "asked for nothing, the source is not read" (fn t ->
+  t.eq [] (FS.stream_lines ./does-not-exist.log |> Stream.smallest_by 0 String.length))
