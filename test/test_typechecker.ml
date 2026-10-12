@@ -2766,7 +2766,8 @@ let test_tuple_index () =
 
 (* A read of `p.N` from a value whose type is not known yet waits for it,
    and is settled when the type becomes known later in the same top-level
-   item. A read still waiting at the item's end is the error (#147). *)
+   item (#147), or in a later one (#154). A read still waiting at the end
+   of the file is the error. *)
 let test_tuple_index_later () =
   ok "the else branch gives a fold step its type"
     "import List\n\
@@ -2801,10 +2802,11 @@ let test_tuple_index_later () =
     "let step acc = acc.0 + 1"
     "'acc' needs its type before '.0' can be read: write its tuple type, \
      such as '(acc: (A, B))'";
-  err_contains "a result alone does not give the argument's type"
+  (* A use further down the file gives the type (#154). *)
+  ok "a later use gives the argument's type"
     "import List\nlet step acc x = (acc.0 + x, acc.1 + 1)\n\
      List.fold_left step (0, 0) [1]"
-    "'acc' needs its type before '.0' can be read";
+    "(1, 1)";
   err_contains "the type comes later, and is too short"
     "let f acc = if true then acc else (acc.2 + 1, acc.1)"
     "a tuple of 2 has elements .0 to .1";
@@ -2822,11 +2824,53 @@ let test_tuple_index_later () =
      if true then p else (1, 2)"
     "expected String, got Int"
 
+(* A read that its own definition does not settle waits for the uses
+   below it in the file (#154). The definition is not generalised over the
+   read's variables, so it has one type in the file: the first use gives
+   it, and a use that gives a different one is an error. *)
+let test_tuple_index_later_in_file () =
+  ok "the issue's render"
+    "import List\n\
+     let render e = \"%{e.1} %{e.0}\"\n\
+     List.map (fn e -> render e) [(\"a\", 1)]"
+    {|["1 a"]|};
+  ok "a call in a later definition"
+    "let first p = p.0\nlet a = first (1, 2)\na + 1" "2";
+  ok "through a definition that calls it"
+    "let first p = p.0\nlet g q = first q\ng (\"x\", 2)" "x";
+  ok "two uses that agree"
+    "let first p = p.0\nlet a = first (1, 2)\nlet b = first (3, 4)\na + b" "4";
+  err_contains "two uses with different tuple types"
+    "let render e = \"%{e.1} %{e.0}\"\nlet a = render (\"a\", 1)\n\
+     let b = render (1, \"a\")"
+    "3:9: expected String, got Int";
+  err_contains "one element type, not two"
+    "import String\nlet first p = p.0\nlet a = first (1, 2) + 1\n\
+     let b = String.length (first (\"a\", 2))"
+    "expected Int, got String";
+  err_contains "never settled: the error is at the read"
+    "let render e = \"%{e.1}\"\nlet a = 1"
+    "1:16: 'e' needs its type before '.1' can be read";
+  err_contains "the use is not a tuple"
+    "let f p = p.0 + 1\nlet a = f \"x\""
+    "1:11: '.0' reads an element of a tuple, and this is String \
+     (the type comes from the use on line 2)";
+  err_contains "the use is too short"
+    "let f p = p.2\nlet a = f (1, 2)"
+    "1:11: a tuple of 2 has elements .0 to .1 (the type comes from the use \
+     on line 2)";
+  err_contains "the element of the use does not fit the read"
+    "let f p = p.0 + 1\nlet a = f (\"x\", 2)"
+    "1:11: String and Int are not the same type (the type comes from the \
+     use on line 2)"
+
 let () =
   Alcotest.run "Typechecker" [
     "tuple index", [
       Alcotest.test_case "p.N" `Quick test_tuple_index;
       Alcotest.test_case "p.N known later" `Quick test_tuple_index_later;
+      Alcotest.test_case "p.N known later in the file" `Quick
+        test_tuple_index_later_in_file;
     ];
     "recursion", [
       Alcotest.test_case "a group member called before its body" `Quick

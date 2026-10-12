@@ -59,3 +59,14 @@ test "the else branch gives the step its type" (fn t ->
 
 test "a lambda given straight to the fold" (fn t ->
   t.eq (6, 3) (List.fold_left (fn acc x -> (acc.0 + x, acc.1 + 1)) (0, 0) [1, 2, 3]))
+
+-- ── or later in the file (#154) ─────────────────────────────────────────
+--
+-- An interpolation takes a value of any type, so `render` alone does not
+-- say what `e` is. The test below gives it a pair of a String and an Int,
+-- and that is the one type `render` has in this file.
+
+let render e = "%{e.1} %{e.0}"
+
+test "a use further down the file gives the type" (fn t ->
+  t.eq ["1 a", "2 b"] (List.map (fn e -> render e) [("a", 1), ("b", 2)]))

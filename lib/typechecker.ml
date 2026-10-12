@@ -225,6 +225,12 @@ let with_current_fn name f =
    after inference finishes. *)
 let local_binders : (int * (string * typ)) list ref = ref []
 let current_item = ref (-1)
+
+(* Where the check is, for the errors it records rather than raises. A
+   raised one is located by the `Located` it passes on the way out; a
+   recorded one never leaves, so it reads the position here. *)
+let cur_loc : Token.loc option ref = ref None
+
 let record_local name t =
   local_binders := (!current_item, (name, t)) :: !local_binders
 
@@ -1477,9 +1483,14 @@ let unify_now t1 t2 =
 
    A variable with a read waiting on it is never generalised (see
    `generalize`): the element's type is not yet tied to the tuple's, so a
-   scheme over either would let two uses disagree about one value. The read
-   that is still waiting when its top-level item ends can never be settled,
-   and gives the error that asks for the type. *)
+   scheme over either would let two uses disagree about one value. So a
+   top-level definition with a read still waiting keeps one type for those
+   variables, and a use further down the file can settle the read:
+   `let render e = "%{e.1}"` and then `render ("a", 1)` (#154). Each use
+   gives its type to the same variables, so a second use with a different
+   tuple is a type error. The read that is still waiting at the end of the
+   file can never be settled, and gives the error that asks for the
+   type. *)
 type pending_element = {
   pe_tuple : typ;               (* the value read from *)
   pe_index : int;
@@ -1487,6 +1498,7 @@ type pending_element = {
   pe_label : string;            (* the index as written *)
   pe_subject : string option;   (* the name read from, when it is a name *)
   pe_at : Token.loc option;     (* where the read is *)
+  pe_item : int;                (* the top-level item the read is in *)
 }
 
 let pending_elements : pending_element list ref = ref []
@@ -1495,6 +1507,19 @@ let raise_element_at pe msg =
   match pe.pe_at with
   | Some l -> raise (TypeErrorAt (l, msg))
   | None -> raise (TypeError msg)
+
+(* A read that a use in a later item settles fails at the read, and the
+   message says which line gave the type (#154): the read itself is not
+   wrong, so the reader needs both places. *)
+let raise_settled_at pe msg =
+  let msg =
+    match !cur_loc with
+    | Some l when !current_item <> pe.pe_item ->
+      Printf.sprintf "%s (the type comes from the use on line %d)"
+        msg l.Token.line
+    | _ -> msg
+  in
+  raise_element_at pe msg
 
 (* The error for a read whose value has no known type. The size of the
    tuple is not known, nor the type of each element, so no annotation is
@@ -1553,10 +1578,10 @@ let solve_pending_elements () =
             pending_elements := List.filter (fun x -> x != pe) !pending_elements;
             progress := true;
             (try unify_now ti pe.pe_elem
-             with TypeError msg -> raise_element_at pe msg)
+             with TypeError msg -> raise_settled_at pe msg)
           | exception TypeError msg ->
             pending_elements := List.filter (fun x -> x != pe) !pending_elements;
-            raise_element_at pe msg)
+            raise_settled_at pe msg)
           (List.rev !pending_elements)
       done)
   end
@@ -1577,16 +1602,19 @@ let unify t1 t2 =
   if !pending_elements <> [] then solve_pending_elements ()
 
 (* For a site that knows which side the reader wrote: an annotation, a
-   condition, an argument, an arm of a `match`. *)
+   condition, an argument, an arm of a `match`. A read the new knowledge
+   gives a type is settled here too, so a read that a use settles fails
+   while the check is at that use. *)
 let unify_expected ~expected ~got =
-  try unify_ expected got with
-  | Mismatch (a, b) ->
-    let (sa, sb) = disambiguate a b in
-    failed_to_unify (Printf.sprintf "expected %s, got %s" sa sb)
-  | Effect_set.Conflict (a, b) ->
-    failed_to_unify ~effects:true
-      (effects_conflict_message ~expected:"the type" ~got:"the body" a b)
-  | TypeError msg -> failed_to_unify msg
+  (try unify_ expected got with
+   | Mismatch (a, b) ->
+     let (sa, sb) = disambiguate a b in
+     failed_to_unify (Printf.sprintf "expected %s, got %s" sa sb)
+   | Effect_set.Conflict (a, b) ->
+     failed_to_unify ~effects:true
+       (effects_conflict_message ~expected:"the type" ~got:"the body" a b)
+   | TypeError msg -> failed_to_unify msg);
+  if !pending_elements <> [] then solve_pending_elements ()
 
 (* ── Schemes and environment ──────────────────────────────────────────────── *)
 
@@ -1790,11 +1818,6 @@ let suffix_member name members =
   match List.filter (fun m -> m <> name && base m = base name) members with
   | [m] -> Some m
   | _ -> None
-
-(* Where the check is, for the errors it records rather than raises. A
-   raised one is located by the `Located` it passes on the way out; a
-   recorded one never leaves, so it reads the position here. *)
-let cur_loc : Token.loc option ref = ref None
 
 (* Record the offer for `x` when it was given where a String is expected and
    its type is one with a module of its own name: `Path`, `Int`. Whether
@@ -5336,7 +5359,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
        let subject = match strip_located e with Var n -> Some n | _ -> None in
        pending_elements :=
          { pe_tuple = t; pe_index = i; pe_elem = elem; pe_label = label;
-           pe_subject = subject; pe_at = !cur_loc } :: !pending_elements;
+           pe_subject = subject; pe_at = !cur_loc;
+           pe_item = !current_item } :: !pending_elements;
        elem)
   | Field (e, label) ->
     (* Namespace access: Ns.member — check before falling into regular field inference *)
@@ -8370,10 +8394,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
   let (env, last_t) =
   Fun.protect ~finally:(fun () ->
     defined_below := saved_below; bound_in_item := saved_bound) @@ fun () ->
-  List.fold_left (fun acc item ->
-  (* A tuple element read inside the item is settled by the item's end, or
-     never (#147). *)
-  let after = (fun (env, last_t) item ->
+  List.fold_left (fun (env, last_t) item ->
     incr item_index;
     current_item := !item_index;
     defined_below := below_each.(!item_index);
@@ -8539,10 +8560,13 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       in
       (env', last_t)
     | TLType _ | TLImport _ | TLInterface _ -> (env, last_t)
-  ) acc item in
-  fail_pending_elements ();
-  after) (base_env, TUnit) prog.items
+  ) (base_env, TUnit) prog.items
   in
+  (* A tuple element read is settled by a use anywhere in the file, or
+     never (#147, #154). A definition with a read still waiting is not
+     generalised over its variables, so the uses below it all give one
+     type to them, and the first use settles the read. *)
+  fail_pending_elements ();
   let n_own = List.length env - List.length base_env in
   let own_env = List.filteri (fun i _ -> i < n_own) env in
   (* What this module claims, under a name no file can write, so it rides in
