@@ -2528,6 +2528,17 @@ let unbound_variable name env =
   raise (EvalError (Printf.sprintf "unbound variable '%s'%s"
     name (Util.hint name (env_names env))))
 
+(* A call would go past the depth a `Wand.limit` allows, or past what the
+   stack can hold. Kept out of the call itself, which only compares. *)
+let too_deep (c : loc_cell) =
+  if c.depth >= c.depth_cap then
+    raise (Limit_reached (c.depth_owner, Printf.sprintf
+      "went deeper than %d nested calls" c.depth_asked));
+  raise (EvalError
+    "too many nested calls -- only a call in tail position runs to any \
+     depth; carry the result in an argument instead of waiting on the \
+     call")
+
 let rec eval (env : env) (e : expr) : value = eval_in (loc_cell ()) false env e
 
 (* Evaluate in tail position: the value of `e` is the value of whatever
@@ -2687,9 +2698,24 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     (match if payload_shape x then nullary_payload env x else None with
      | Some (ctor, arg) -> eval_in c tail env (App (App (f, ctor), arg))
      | None ->
-       let vf = eval_in c false env f in
-       let vx = eval_in c false env x in
-       if tail then apply_tail_c c vf vx else apply_c c vf vx)
+       match f with
+       (* `g a x`: a closure of two parameters is called with both without
+          the closure `g a` gave back between them. See `app2_c`. *)
+       | App (g, a) when not (payload_shape a) ->
+         let vg = eval_in c false env g in
+         let va = eval_in c false env a in
+         (match vg with
+          | VFun (fenv, [p1; p2], body) -> app2_c c tail env fenv p1 p2 body va x
+          | VFix (name, fenv, [p1; p2], body) ->
+            app2_c c tail env ((name, vg) :: fenv) p1 p2 body va x
+          | _ ->
+            let vf = apply_c c vg va in
+            let vx = eval_in c false env x in
+            if tail then apply_tail_c c vf vx else apply_c c vf vx)
+       | _ ->
+         let vf = eval_in c false env f in
+         let vx = eval_in c false env x in
+         if tail then apply_tail_c c vf vx else apply_c c vf vx)
   | Let (p, e1, e2, _) ->
     let v1 = eval_in c false env e1 in
     (* `let f = fn ...` is recursive: the function sees itself. Only a
@@ -3295,7 +3321,9 @@ and eval_constr_app env c fields allow =
 
 and apply vf vx = apply_c (loc_cell ()) vf vx
 
-(* `apply` with the task's cell already in hand. *)
+(* `apply` with the task's cell already in hand. A builtin that calls the
+   function it was given once for each element reads the cell once, where
+   it starts, and calls through this; see `list_hof`. *)
 and apply_c c vf vx =
   (* The call is left with work to do after this returns -- it is a builtin
      applying a function it was handed, or a caller evaluating the rest of
@@ -3304,14 +3332,7 @@ and apply_c c vf vx =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
   then check_interrupt_now ();
   let line = c.at_line and col = c.at_col in
-  if c.depth >= c.depth_cap then
-    raise (Limit_reached (c.depth_owner, Printf.sprintf
-      "went deeper than %d nested calls" c.depth_asked));
-  if c.depth >= max_call_depth then
-    raise (EvalError
-      "too many nested calls -- only a call in tail position runs to any \
-       depth; carry the result in an argument instead of waiting on the \
-       call");
+  if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
   c.depth <- c.depth + 1;
   let v = (try apply_tail_c c vf vx with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
@@ -3352,6 +3373,55 @@ and apply_tail_c c vf vx =
   | VPartialConstr (name, 1, args) -> VConstr (name, args @ [vx])
   | VPartialConstr (name, n, args) -> VPartialConstr (name, n - 1, args @ [vx])
   | _ -> raise (EvalError "cannot apply a non-function")
+
+(* A closure of two parameters, called with both. Applied one argument at
+   a time, the first call binds the first parameter and gives back a closure
+   for the second, which does not outlive the second call. These make the
+   first call without that closure and the second without the dispatch on
+   it, and make each check the two calls made, in the same order.
+
+   The first call evaluates nothing, so it takes no step and the position
+   it puts back is the one it found: all it can do is take an interrupt,
+   refuse for depth, or fail to bind. That is `bind_first_c`.
+
+   `apply2_c c vf a b` is `apply_c c (apply_c c vf a) b`, the call a fold
+   makes. *)
+and apply2_c c vf a b =
+  match vf with
+  | VFun (fenv, [p1; p2], body) -> call1_c c (bind_first_c c fenv p1 a) p2 body b
+  | VFix (name, fenv, [p1; p2], body) ->
+    call1_c c (bind_first_c c ((name, vf) :: fenv) p1 a) p2 body b
+  | _ -> apply_c c (apply_c c vf a) b
+
+and bind_first_c c fenv p a =
+  if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+  then check_interrupt_now ();
+  if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
+  bind_pat p a fenv
+
+(* `apply_c c (VFun (env, [p], body)) vx`, without the closure. *)
+and call1_c c env p body vx =
+  if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
+  then check_interrupt_now ();
+  let line = c.at_line and col = c.at_col in
+  if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
+  c.depth <- c.depth + 1;
+  let v =
+    (try eval_in c true (bind_pat p vx env) body
+     with e -> c.depth <- c.depth - 1; raise e) in
+  c.depth <- c.depth - 1;
+  c.at_line <- line;
+  c.at_col  <- col;
+  v
+
+(* `f a x` in the source, with `f a` evaluated to a closure of two
+   parameters: the two calls as `App` makes them, the argument `x`
+   evaluated between them as it was. *)
+and app2_c c tail env fenv p1 p2 body va x =
+  let env1 = bind_first_c c fenv p1 va in
+  let vx = eval_in c false env x in
+  if tail then eval_in c true (bind_pat p2 vx env1) body
+  else call1_c c env1 p2 body vx
 
 and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
   match p with
@@ -3482,7 +3552,11 @@ and eval_binop c (env : env) op a b : value =
      | _ -> raise (EvalError "'||' requires bools"))
   | "|>" ->
     let va = eval_in c false env a in
-    (match Ast.strip_located b with
+    (match b with
+     | Located (loc, App (g, x)) when not (payload_shape x) ->
+       pipe_app_c c env loc g x va
+     | _ ->
+    match Ast.strip_located b with
      | RunCmd (e, allow) ->
        let cmd = command_line env e allow "$(…)" in
        let stdin = to_text va in
@@ -3495,6 +3569,33 @@ and eval_binop c (env : env) op a b : value =
        let vf = eval_in c false env b in
        apply_c c vf va)
   | op -> raise (EvalError (Printf.sprintf "unknown operator '%s'" op))
+
+(* `va |> g x`, where the parser has put a position around `g x`: the
+   step and the position `Located` takes for it, then the calls as
+   `app2_c` makes them, with the position put back between the two as
+   `Located` put it back. *)
+and pipe_app_c c env loc g x va =
+  take_step c;
+  let line = c.at_line and col = c.at_col in
+  mark_loc c loc;
+  let vg = eval_in c false env g in
+  let vx = eval_in c false env x in
+  match vg with
+  | VFun (fenv, [p1; p2], body) ->
+    let env1 = bind_first_c c fenv p1 vx in
+    c.at_line <- line;
+    c.at_col <- col;
+    call1_c c env1 p2 body va
+  | VFix (name, fenv, [p1; p2], body) ->
+    let env1 = bind_first_c c ((name, vg) :: fenv) p1 vx in
+    c.at_line <- line;
+    c.at_col <- col;
+    call1_c c env1 p2 body va
+  | _ ->
+    let vf = apply_c c vg vx in
+    c.at_line <- line;
+    c.at_col <- col;
+    apply_c c vf va
 
 (* Builtins that reach outside the program perform an effect rather than
    acting directly, so a handler can see, log, or replace what they do.
@@ -5558,6 +5659,9 @@ type live_stage =
   | LUnique    of (value, value list) Hashtbl.t * unit StrTbl.t
 
 let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
+  (* The cell of the task that runs the read, for every call a stage makes;
+     see `list_hof`. *)
+  let c = loc_cell () in
   let (pull, close) = stream_provider desc.s_source in
   let stages = List.map (function
     | StMap f       -> LMap f
@@ -5585,28 +5689,28 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
   (* One item into one stage, and out comes what that stage passes on. *)
   let step st x =
     match st with
-    | LMap f -> [apply f x]
-    | LFilter f -> if bool_of "filter" (apply f x) then [x] else []
+    | LMap f -> [apply_c c f x]
+    | LFilter f -> if bool_of "filter" (apply_c c f x) then [x] else []
     | LFilterMap f ->
-      (match apply f x with
+      (match apply_c c f x with
        | VConstr (c, [v]) when Ctor.name c = "Some" -> [v]
        | VConstr (c, []) when Ctor.name c = "None" -> []
        | _ -> raise (EvalError "Stream.filter_map: the function must return an Option"))
     | LFlatMap f ->
-      (match apply f x with
+      (match apply_c c f x with
        | VList vs -> vs
        | _ -> raise (EvalError "Stream.flat_map: the function must return a List"))
     | LTake r -> if !r <= 0 then (stop := true; []) else (decr r;
                    if !r <= 0 then stop := true; [x])
-    | LTakeWhile f -> if bool_of "take_while" (apply f x) then [x]
+    | LTakeWhile f -> if bool_of "take_while" (apply_c c f x) then [x]
                       else (stop := true; [])
     | LDrop r -> if !r > 0 then (decr r; []) else [x]
     | LDropWhile (f, dropping) ->
       if not !dropping then [x]
-      else if bool_of "drop_while" (apply f x) then []
+      else if bool_of "drop_while" (apply_c c f x) then []
       else (dropping := false; [x])
     | LIndexed i -> let n = !i in incr i; [VTuple [VInt n; x]]
-    | LScan (f, acc) -> acc := apply (apply f !acc) x; [!acc]
+    | LScan (f, acc) -> acc := apply2_c c f !acc x; [!acc]
     | LChunks (n, held) ->
       held := x :: !held;
       if List.length !held >= n then
@@ -5654,10 +5758,10 @@ let run_stream_terminal (desc : stream_desc) ~(on_item : value -> unit) : unit =
     | [] -> on_item x
     | st :: rest ->
       (match st with
-       | LMap f -> push_one rest (apply f x)
-       | LFilter f -> if bool_of "filter" (apply f x) then push_one rest x
+       | LMap f -> push_one rest (apply_c c f x)
+       | LFilter f -> if bool_of "filter" (apply_c c f x) then push_one rest x
        | LFilterMap f ->
-         (match apply f x with
+         (match apply_c c f x with
           | VConstr (c, [v]) when Ctor.name c = "Some" -> push_one rest v
           | VConstr (c, []) when Ctor.name c = "None" -> ()
           | _ -> raise (EvalError "Stream.filter_map: the function must return an Option"))
@@ -5738,8 +5842,9 @@ let select_by ~greatest (n : int) (f : value) (feed : (value -> unit) -> unit) :
       if !worst <> i then (swap i !worst; down !worst)
     in
     let index = ref 0 in
+    let c = loc_cell () in
     feed (fun x ->
-      let e = (apply f x, !index, x) in
+      let e = (apply_c c f x, !index, x) in
       incr index;
       if !size < n then begin
         if !size = Array.length !heap then begin
@@ -5988,7 +6093,8 @@ let stream_builtins : env = [
   ("stream_fold", VBuiltin (fun f -> VBuiltin (fun init -> VBuiltin (function
     | VStream d ->
       let acc = ref init in
-      run_stream_terminal d ~on_item:(fun x -> acc := apply (apply f !acc) x);
+      let c = loc_cell () in
+      run_stream_terminal d ~on_item:(fun x -> acc := apply2_c c f !acc x);
       !acc
     | _ -> raise (EvalError "Stream.fold_left: expected Stream")))));
   (* A stream that is asked for no elements is not read at all, like
@@ -6035,7 +6141,8 @@ let stream_builtins : env = [
     | _ -> raise (EvalError "FS.write_lines_atomic: expected a Stream"))));
   ("stream_each", VBuiltin (fun f -> VBuiltin (function
     | VStream d ->
-      run_stream_terminal d ~on_item:(fun x -> ignore (apply f x));
+      let c = loc_cell () in
+      run_stream_terminal d ~on_item:(fun x -> ignore (apply_c c f x));
       VUnit
     | _ -> raise (EvalError "Stream.each: expected Stream"))));
   ("stream_each_par", VBuiltin (fun limit -> VBuiltin (fun f -> VBuiltin (function
@@ -6076,18 +6183,14 @@ let stream_builtins : env = [
    The loop itself takes one step for each element, as an evaluated
    expression does: a step limit still bounds it, an interrupt still stops
    it, and a fiber still yields, when the function it calls is a builtin
-   that takes no steps of its own. *)
-let list_step () =
-  check_interrupt ();
-  let c = loc_cell () in
-  c.budget <- c.budget - 1;
-  if c.budget <= 0 then fiber_turn c;
-  let f = c.fuel in
-  if f != unlimited then begin
-    f.left <- f.left - 1;
-    if f.left < 0 then out_of_steps f
-  end
+   that takes no steps of its own.
 
+   Each builtin reads the task's cell once, when it is given its last
+   argument, and makes every step and every call with that cell: `take_step
+   c` and `apply_c c`. A domain-local read for each element cost a call and
+   a bounds check, twice. This is safe for the reason `eval_in` gives: a
+   task always runs with its own cell, and a fiber that yields while the
+   loop runs gets the same cell back when it is resumed. *)
 let list_of name = function
   | VList xs -> xs
   | _ -> raise (EvalError (name ^ ": expected List"))
@@ -6097,128 +6200,134 @@ let bool_of name = function
   | _ -> raise (EvalError (name ^ ": the function must return a Bool"))
 
 (* A builtin of a function and a list. *)
-let list_hof name (go : value -> value list -> value) =
-  VBuiltin (fun f -> VBuiltin (fun xs -> go f (list_of name xs)))
+let list_hof name (go : loc_cell -> value -> value list -> value) =
+  VBuiltin (fun f -> VBuiltin (fun xs -> go (loc_cell ()) f (list_of name xs)))
 
 let list_hof_builtins : env = [
-  ("list_map", list_hof "List.map" (fun f xs ->
+  ("list_map", list_hof "List.map" (fun c f xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)
-      | h :: t -> list_step (); let v = apply f h in go (v :: acc) t
+      | h :: t -> take_step c; let v = apply_c c f h in go (v :: acc) t
     in
     go [] xs));
-  ("list_filter", list_hof "List.filter" (fun p xs ->
+  ("list_filter", list_hof "List.filter" (fun c p xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)
       | h :: t ->
-        list_step ();
-        if bool_of "List.filter" (apply p h) then go (h :: acc) t else go acc t
+        take_step c;
+        if bool_of "List.filter" (apply_c c p h) then go (h :: acc) t else go acc t
     in
     go [] xs));
-  ("list_filter_map", list_hof "List.filter_map" (fun f xs ->
+  ("list_filter_map", list_hof "List.filter_map" (fun c f xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)
       | h :: t ->
-        list_step ();
-        (match apply f h with
+        take_step c;
+        (match apply_c c f h with
          | VConstr (Ctor.Builtin "Some", [v]) -> go (v :: acc) t
          | VConstr (Ctor.Builtin "None", []) -> go acc t
          | _ -> raise (EvalError "List.filter_map: the function must return an Option"))
     in
     go [] xs));
-  ("list_flat_map", list_hof "List.flat_map" (fun f xs ->
+  ("list_flat_map", list_hof "List.flat_map" (fun c f xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)
       | h :: t ->
-        list_step ();
-        let ys = list_of "List.flat_map" (apply f h) in
+        take_step c;
+        let ys = list_of "List.flat_map" (apply_c c f h) in
         charge (List.length ys);
         go (List.rev_append ys acc) t
     in
     go [] xs));
   ("list_fold_left", VBuiltin (fun f -> VBuiltin (fun init -> VBuiltin (fun xs ->
+    let c = loc_cell () in
     let rec go acc = function
       | [] -> acc
-      | h :: t -> list_step (); go (apply (apply f acc) h) t
+      | h :: t -> take_step c; go (apply2_c c f acc h) t
     in
     go init (list_of "List.fold_left" xs)))));
   (* The wand definition folds left over the list turned round, so the list
      is turned round here too: a right fold that recursed on the tail first
      ran out of stack on a long list. *)
   ("list_fold_right", VBuiltin (fun f -> VBuiltin (fun xs -> VBuiltin (fun init ->
+    let c = loc_cell () in
     let rec go acc = function
       | [] -> acc
-      | h :: t -> list_step (); go (apply (apply f h) acc) t
+      | h :: t -> take_step c; go (apply2_c c f h acc) t
     in
     go init (List.rev (list_of "List.fold_right" xs))))));
-  ("list_any", list_hof "List.any?" (fun p xs ->
+  ("list_any", list_hof "List.any?" (fun c p xs ->
     let rec go = function
       | [] -> VBool false
-      | h :: t -> list_step (); if bool_of "List.any?" (apply p h) then VBool true else go t
+      | h :: t -> take_step c; if bool_of "List.any?" (apply_c c p h) then VBool true else go t
     in
     go xs));
-  ("list_all", list_hof "List.all?" (fun p xs ->
+  ("list_all", list_hof "List.all?" (fun c p xs ->
     let rec go = function
       | [] -> VBool true
-      | h :: t -> list_step (); if bool_of "List.all?" (apply p h) then go t else VBool false
+      | h :: t -> take_step c; if bool_of "List.all?" (apply_c c p h) then go t else VBool false
     in
     go xs));
-  ("list_find", list_hof "List.find" (fun p xs ->
+  ("list_find", list_hof "List.find" (fun c p xs ->
     let rec go = function
       | [] -> v_none
       | h :: t ->
-        list_step ();
-        if bool_of "List.find" (apply p h) then VConstr (Ctor.Builtin "Some", [h])
+        take_step c;
+        if bool_of "List.find" (apply_c c p h) then VConstr (Ctor.Builtin "Some", [h])
         else go t
     in
     go xs));
-  ("list_take_while", list_hof "List.take_while" (fun p xs ->
+  ("list_take_while", list_hof "List.take_while" (fun c p xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)
       | h :: t ->
-        list_step ();
-        if bool_of "List.take_while" (apply p h) then go (h :: acc) t
+        take_step c;
+        if bool_of "List.take_while" (apply_c c p h) then go (h :: acc) t
         else VList (List.rev acc)
     in
     go [] xs));
-  ("list_drop_while", list_hof "List.drop_while" (fun p xs ->
+  ("list_drop_while", list_hof "List.drop_while" (fun c p xs ->
     let rec go = function
       | [] -> VList []
       | h :: t as l ->
-        list_step ();
-        if bool_of "List.drop_while" (apply p h) then go t else VList l
+        take_step c;
+        if bool_of "List.drop_while" (apply_c c p h) then go t else VList l
     in
     go xs));
-  ("list_each", list_hof "List.each" (fun f xs ->
+  ("list_each", list_hof "List.each" (fun c f xs ->
     let rec go = function
       | [] -> VUnit
-      | h :: t -> list_step (); ignore (apply f h); go t
+      | h :: t -> take_step c; ignore (apply_c c f h); go t
     in
     go xs));
   (* No function to call, but each was a wand loop all the same. *)
   ("list_contains", VBuiltin (fun x -> VBuiltin (fun xs ->
+    let c = loc_cell () in
     let rec go = function
       | [] -> VBool false
-      | h :: t -> list_step (); if wand_equal h x then VBool true else go t
+      | h :: t -> take_step c; if wand_equal h x then VBool true else go t
     in
     go (list_of "List.contains?" xs))));
   ("list_indexed", VBuiltin (fun xs ->
+    let c = loc_cell () in
     let rec go i acc = function
       | [] -> VList (List.rev acc)
-      | h :: t -> list_step (); go (i + 1) (VTuple [VInt i; h] :: acc) t
+      | h :: t -> take_step c; go (i + 1) (VTuple [VInt i; h] :: acc) t
     in
     go 0 [] (list_of "List.indexed" xs)));
   ("list_zip", VBuiltin (fun xs -> VBuiltin (fun ys ->
+    let c = loc_cell () in
     let rec go acc xs ys =
       match xs, ys with
-      | a :: t, b :: u -> list_step (); go (VTuple [a; b] :: acc) t u
+      | a :: t, b :: u -> take_step c; go (VTuple [a; b] :: acc) t u
       | _ -> VList (List.rev acc)
     in
     go [] (list_of "List.zip" xs) (list_of "List.zip" ys))));
   ("list_take", VBuiltin (function
     | VInt n -> VBuiltin (fun xs ->
+      let c = loc_cell () in
       let rec go n acc = function
-        | h :: t when n > 0 -> list_step (); go (n - 1) (h :: acc) t
+        | h :: t when n > 0 -> take_step c; go (n - 1) (h :: acc) t
         | _ -> VList (List.rev acc)
       in
       go n [] (list_of "List.take" xs))
@@ -8135,7 +8244,8 @@ let stdlib_eval_env : env = list_hof_builtins @ [
            interpreted calls to order 200k rows. Compute each key once, sort
            the pairs, drop the keys. `f` now runs exactly once per element,
            left to right. *)
-        let keyed = List.map (fun x -> (apply f x, x)) xs in
+        let c = loc_cell () in
+        let keyed = List.map (fun x -> (apply_c c f x, x)) xs in
         let sorted =
           List.stable_sort (fun (ka, _) (kb, _) -> wand_compare ka kb) keyed in
         VList (List.map snd sorted)
@@ -8294,13 +8404,16 @@ let map_builtins : env = [
     | _ -> raise (EvalError "map_merge: expected Map")));
   ("map_map", VBuiltin (function
     | f -> VBuiltin (function
-      | VMap m -> VMap (vmap_map (fun v -> apply f v) m)
+      | VMap m ->
+        let c = loc_cell () in
+        VMap (vmap_map (fun v -> apply_c c f v) m)
       | _ -> raise (EvalError "map_map: expected Map"))));
   ("map_filter", VBuiltin (function
     | f -> VBuiltin (function
       | VMap m ->
+        let c = loc_cell () in
         VMap (vmap_filter (fun v ->
-          match apply f v with VBool b -> b | _ -> false) m)
+          match apply_c c f v with VBool b -> b | _ -> false) m)
       | _ -> raise (EvalError "map_filter: expected Map"))));
 ]
 
