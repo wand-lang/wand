@@ -2338,7 +2338,7 @@ let run_item ?modul env item =
       incr position;
       let field_names = List.map fst ctor.Ast.fields in
       let ident = ident ctor.Ast.name in
-      Hashtbl.replace Evaluator.constr_fields ident field_names;
+      Evaluator.set_constr_fields ident field_names;
       Hashtbl.replace Evaluator.constr_defaults ident ctor.Ast.defaults;
       if ctor.Ast.defaults <> [] then
         Hashtbl.replace Evaluator.constr_default_env ident env;
@@ -4413,7 +4413,7 @@ let run_session ?(evaluate = true) (sess : session) (src : string)
                   | [] -> VConstr (ident, [])
                   | fs -> VPartialConstr (ident, List.length fs, []))
                   :: !env_ref;
-                Hashtbl.replace constr_fields ident (List.map fst ctor.Ast.fields);
+                set_constr_fields ident (List.map fst ctor.Ast.fields);
                 Hashtbl.replace constr_defaults ident ctor.Ast.defaults;
                 if ctor.Ast.defaults <> [] then
                   Hashtbl.replace constr_default_env ident !env_ref;

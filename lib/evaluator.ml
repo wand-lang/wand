@@ -17,6 +17,14 @@ end)
 
 let constr_fields : (Ctor.t, string option list) Hashtbl.t = Hashtbl.create 16
 
+(* Counts the changes to `constr_fields` after the built-ins, so what a
+   pattern worked out from it can say whether it still holds. *)
+let constr_fields_gen = ref 0
+
+let set_constr_fields c names =
+  Hashtbl.replace constr_fields c names;
+  incr constr_fields_gen
+
 (* The defaults a constructor declares, by field name. A construction that
    leaves a field out takes its value from here, and so does a derived
    decoder reading a document with nothing under that name. *)
@@ -2247,168 +2255,294 @@ let ctor_matches env name vname =
      match. The two halves are the same as before, in the other order. *)
   Ctor.named vname name || Ctor.equal (ctor_in_scope env name) vname
 
-let rec try_match ?(prefix = false) (p : pat) v (env : env) : env option =
-  match p, v with
-  | PVar name, v          -> Some ((name, v) :: env)
-  | Wild, _               -> Some env
-  | Int n,    VInt m      when n = m -> Some env
-  | Float f,  VFloat g    when f = g -> Some env
-  | String s, VString t   when s = t -> Some env
-  | Bool b,   VBool c     when b = c -> Some env
-  | Unit,     VUnit                  -> Some env
-  | PTuple ps, VTuple vs when same_length ps vs ->
-    List.fold_left2
-      (fun acc p v -> match acc with
-        | None     -> None
-        | Some env -> try_match ~prefix p v env)
-      (Some env) ps vs
-  | PList ps, VList vs ->
-    let rec go acc ps vs =
-      match acc, ps, vs with
-      | None, _, _                 -> None
-      | Some env, [], []           -> Some env
-      | Some env, [], _ :: _       -> if prefix then Some env else None
-      | Some _, _ :: _, []         -> None
-      | Some env, p :: ps, v :: vs -> go (try_match ~prefix p v env) ps vs
-    in
-    go (Some env) ps vs
+(* What a pattern that does not match answers: a list of its own, compared
+   by address. A match answered with an option, so each pattern that
+   matched built a `Some`, and each sub-pattern was a call with an optional
+   argument, which built another. A match that fails is told apart from
+   one that binds nothing by this address, so a match allocates only the
+   bindings it makes. *)
+let no_match : env = [("\000no match", VUnit)]
+
+(* What a `PConstrBare` pattern does with one constructor; see
+   `plan_bare`. *)
+type bare_plan =
+  | Bare_never
+  | Bare_positional of pat list
+  | Bare_fields of (int * pat) list
+
+(* Match [p] against [v], and give [env] with the names [p] binds in
+   front, in the order `Resolve.pattern_names` gives; or `no_match`. With
+   [prefix], a list pattern also matches a longer list. *)
+let rec match_pat prefix (p : pat) v (env : env) : env =
+  match p with
+  | PVar name -> (name, v) :: env
+  | Wild -> env
+  (* A constructor of the value's own name settles it with no lookup:
+     `Some`, `None`, `Ok` and `Error` are most of the arms a script
+     writes. *)
+  | PConstr (name, pats) ->
+    (match v with
+     | VConstr (vname, vals)
+       when ctor_matches env name vname && same_length pats vals ->
+       match_list prefix pats vals env
+     | _ -> no_match)
+  | PCons (hp, tp) ->
+    (match v with
+     | VList (x :: rest) ->
+       let env = match_pat prefix hp x env in
+       if env == no_match then no_match
+       else (match tp with
+             | Wild -> env
+             | _ -> match_pat prefix tp (VList rest) env)
+     | _ -> no_match)
+  | PTuple ps ->
+    (match v with
+     | VTuple vs | VConstr (_, vs) when same_length ps vs ->
+       match_list prefix ps vs env
+     | _ -> no_match)
+  | PList ps ->
+    (match v with
+     | VList vs -> match_elements prefix ps vs env
+     | _ -> no_match)
+  | Int n -> (match v with VInt m when n = m -> env | _ -> no_match)
+  | Float f -> (match v with VFloat g when f = g -> env | _ -> no_match)
+  | String s -> (match v with VString t when s = t -> env | _ -> no_match)
+  | Bool b -> (match v with VBool c when b = c -> env | _ -> no_match)
+  | Unit -> (match v with VUnit -> env | _ -> no_match)
   (* A type annotation says nothing about which values match: it is checked
      before the program runs, and the pattern under it does the matching. *)
-  | PAnnot (p, _), v -> try_match ~prefix p v env
-  | PLocated (_, p), v -> try_match ~prefix p v env
-  | PCons (hp, tp), VList (v :: vs) ->
-    (match try_match ~prefix hp v env with
-     | None      -> None
-     | Some env' -> try_match ~prefix tp (VList vs) env')
-  | PCons _, VList [] -> None
-  | PTuple ps, VConstr (_, vals) when same_length ps vals ->
-    List.fold_left2
-      (fun acc p v -> match acc with
-        | None     -> None
-        | Some env -> try_match ~prefix p v env)
-      (Some env) ps vals
-  | PConstr (name, pats), VConstr (vname, vals)
-    when ctor_matches env name vname && same_length pats vals ->
-    List.fold_left2
-      (fun acc p v -> match acc with
-        | None     -> None
-        | Some env -> try_match ~prefix p v env)
-      (Some env) pats vals
-  (* The declaration decides which of the two readings this is, exactly as
-     it does when the pattern is checked. *)
-  (* `one.Live`: the module's namespace holds the constructor, so its
-     identity comes from there. The pattern under the qualifier then matches
-     the value as any other would. *)
+  | PAnnot (p, _) | PLocated (_, p) -> match_pat prefix p v env
+  (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
+     its type, matched as a bare one is. *)
+  | PQualified (m, inner)
+    when (match v with VConstr _ -> true | _ -> false)
+         && (match lookup_var m env with Some (VRecord _) -> false | _ -> true)
+         && Ast.qualify_ctor_pat m inner <> None ->
+    match_pat prefix (Option.get (Ast.qualify_ctor_pat m inner)) v env
   (* `one.Live`: the module's namespace holds the constructor, so its identity
      comes from there. What is under the qualifier is matched against the
      value's fields directly -- resolving its bare name again would consult
      the index, where one name holds one constructor and another module may
      have registered it. *)
-  (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
-     its type, matched as a bare one is. *)
-  | PQualified (m, inner), VConstr _
-    when (match lookup_var m env with Some (VRecord _) -> false | _ -> true)
-         && Ast.qualify_ctor_pat m inner <> None ->
-    try_match ~prefix (Option.get (Ast.qualify_ctor_pat m inner)) v env
-  | PQualified (m, inner), VConstr (vc, vals) ->
-    (* `m.T.Ctor`: the module's record holds the constructor under `T.Ctor`. *)
-    let inner =
-      match inner with
-      | PQualified (t, p) ->
-        (match Ast.qualify_ctor_pat t p with Some q -> q | None -> inner)
-      | _ -> inner
-    in
-    let cname = pat_ctor_name inner in
-    let owner =
-      match lookup_var m env with
-      | Some (VRecord vr_) -> let kvs = vr_.r_fields in
-        (match List.assoc_opt cname kvs with
-         | Some (VConstr (c, _)) | Some (VPartialConstr (c, _, _)) -> Some c
-         (* A module's alias is not a value in its record -- a record
-            constructor never is -- so the module hands back nothing under
-            that name. The identity was registered when the alias was read,
-            the same fallback construction takes, so `M.Response(...)`
-            matches where `M.Response(...)` builds. *)
-         | _ -> Hashtbl.find_opt ctor_of_name cname)
-      | _ -> None
-    in
-    (match owner with
-     | Some c when Ctor.equal c vc ->
-       let fields () = match Hashtbl.find_opt constr_fields vc with
-         | Some names -> names
-         | None -> []
+  | PQualified (m, inner) ->
+    (match v with
+     | VConstr (vc, vals) ->
+       (* `m.T.Ctor`: the module's record holds the constructor under
+          `T.Ctor`. *)
+       let inner =
+         match inner with
+         | PQualified (t, p) ->
+           (match Ast.qualify_ctor_pat t p with Some q -> q | None -> inner)
+         | _ -> inner
        in
-       let named bindings =
-         List.fold_left (fun acc (fname, p) ->
-           match acc with
-           | None -> None
-           | Some env ->
-             (match find_field_index (fields ()) fname with
-              | None -> None
-              | Some i ->
-                (match List.nth_opt vals i with
-                 | None -> None
-                 | Some v -> try_match ~prefix p v env))) (Some env) bindings
+       let cname = pat_ctor_name inner in
+       let owner =
+         match lookup_var m env with
+         | Some (VRecord vr_) -> let kvs = vr_.r_fields in
+           (match List.assoc_opt cname kvs with
+            | Some (VConstr (c, _)) | Some (VPartialConstr (c, _, _)) -> Some c
+            (* A module's alias is not a value in its record -- a record
+               constructor never is -- so the module hands back nothing under
+               that name. The identity was registered when the alias was read,
+               the same fallback construction takes, so `M.Response(...)`
+               matches where `M.Response(...)` builds. *)
+            | _ -> Hashtbl.find_opt ctor_of_name cname)
+         | _ -> None
        in
-       (match inner with
-        | PConstr (_, pats) when same_length pats vals ->
-          List.fold_left2 (fun acc p v ->
-            match acc with
-            | None -> None
-            | Some env -> try_match ~prefix p v env) (Some env) pats vals
-        | PConstr (_, _) -> None
-        | PConstrNamed (_, bindings) -> named bindings
-        | PConstrBare (_, ids) ->
-          (match Ast.constr_bare_reading ~fields:(fields ())
-                   ~arity:(List.length vals) "" ids with
-           | PConstrNamed (_, bindings) -> named bindings
+       (match owner with
+        | Some c when Ctor.equal c vc ->
+          let fields () = match Hashtbl.find_opt constr_fields vc with
+            | Some names -> names
+            | None -> []
+          in
+          (match inner with
            | PConstr (_, pats) when same_length pats vals ->
-             List.fold_left2 (fun acc p v ->
-               match acc with
-               | None -> None
-               | Some env -> try_match ~prefix p v env) (Some env) pats vals
-           | _ -> None)
-        | _ -> None)
-     | _ -> None)
-  | PQualified (_, _), _ -> None
-  | PConstrBare (name, ids), _ ->
+             match_list prefix pats vals env
+           | PConstr (_, _) -> no_match
+           | PConstrNamed (_, bindings) ->
+             match_named prefix (fields ()) bindings vals env
+           | PConstrBare (_, ids) ->
+             (match Ast.constr_bare_reading ~fields:(fields ())
+                      ~arity:(List.length vals) "" ids with
+              | PConstrNamed (_, bindings) ->
+                match_named prefix (fields ()) bindings vals env
+              | PConstr (_, pats) when same_length pats vals ->
+                match_list prefix pats vals env
+              | _ -> no_match)
+           | _ -> no_match)
+        | _ -> no_match)
+     | _ -> no_match)
+  (* The declaration decides which of the two readings this is, exactly as
+     it does when the pattern is checked. *)
+  | PConstrBare (name, ids) ->
     let fields =
       match Hashtbl.find_opt constr_fields (ctor_in_scope env name) with
       | Some fields -> fields
       | None -> []
     in
     let arity = match v with VConstr (_, vals) -> List.length vals | _ -> 0 in
-    try_match ~prefix (Ast.constr_bare_reading ~fields ~arity name ids) v env
-  | PConstrNamed (name, bindings), VConstr (vname, vals)
-    when ctor_matches env name vname ->
+    match_pat prefix (Ast.constr_bare_reading ~fields ~arity name ids) v env
+  | PConstrNamed (name, bindings) ->
+    (match v with
+     | VConstr (vname, vals) when ctor_matches env name vname ->
+       (match Hashtbl.find_opt constr_fields vname with
+        | None -> no_match
+        | Some field_names -> match_named prefix field_names bindings vals env)
+     | _ -> no_match)
+  | PMap bindings ->
+    (match v with
+     | VMap _ | VRecord _ ->
+       let kvs = (match v with
+         | VMap m      -> vmap_list m
+         | VRecord r    -> r.r_fields
+         | _           -> []) in
+       let rec go bindings env =
+         match bindings with
+         | [] -> env
+         | (key, p) :: rest ->
+           (match List.assoc_opt key kvs with
+            | None -> no_match
+            | Some v ->
+              let env = match_pat prefix p v env in
+              if env == no_match then no_match else go rest env)
+       in
+       go bindings env
+     | _ -> no_match)
+  | Path _ | DateTime _ | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _
+  | Version _ | Size _ -> no_match
+  (* The same three forms, with the constructor's name looked up as a
+     `Global` is, which keeps the answer. *)
+  | PCtor (g, PConstr (name, pats), _) ->
+    (match v with
+     | VConstr (vname, vals)
+       when (Ctor.named vname name || Ctor.equal (ctor_at g env) vname)
+            && same_length pats vals ->
+       match_list prefix pats vals env
+     | _ -> no_match)
+  | PCtor (g, PConstrNamed (name, bindings), _) ->
+    (match v with
+     | VConstr (vname, vals)
+       when Ctor.named vname name || Ctor.equal (ctor_at g env) vname ->
+       (match Hashtbl.find_opt constr_fields vname with
+        | None -> no_match
+        | Some field_names -> match_named prefix field_names bindings vals env)
+     | _ -> no_match)
+  (* `Sale(region, amount)`: which reading it is, and the place of each
+     field, depend only on the constructor the name means, the value's
+     constructor and how many values it carries, and on the declarations.
+     So they are worked out once and kept in [plan], against all four. *)
+  | PCtor (g, PConstrBare (name, ids), plan) ->
+    (match v with
+     | VConstr (vname, vals) ->
+       let c = ctor_at g env in
+       let arity = List.length vals in
+       let gen = !constr_fields_gen in
+       let hit = plan.Ast.hit in
+       let p =
+         if Obj.is_block hit
+            && (Obj.obj (Obj.field hit 0) : Ctor.t) == c
+            && (Obj.obj (Obj.field hit 1) : Ctor.t) == vname
+            && (Obj.obj (Obj.field hit 2) : int) = arity
+            && (Obj.obj (Obj.field hit 3) : int) = gen
+         then (Obj.obj (Obj.field hit 4) : bare_plan)
+         else begin
+           let p = plan_bare c vname name ids arity in
+           plan.Ast.hit <- Obj.repr (c, vname, arity, gen, p);
+           p
+         end
+       in
+       (match p with
+        | Bare_never -> no_match
+        | Bare_positional pats -> match_list prefix pats vals env
+        | Bare_fields fs -> match_places prefix fs vals env)
+     | _ -> no_match)
+  | PCtor (_, p, _) -> match_pat prefix p v env
+
+(* What `PConstrBare (name, ids)` does with a value of constructor [vname]
+   that carries [arity] values, where [name] means [c]: what its reading
+   matches by position, or the place of each named field, or that it
+   cannot match. The same answers the reading gives when it is matched. *)
+and plan_bare c vname name ids arity =
+  let fields =
+    match Hashtbl.find_opt constr_fields c with
+    | Some fields -> fields
+    | None -> []
+  in
+  match Ast.constr_bare_reading ~fields ~arity name ids with
+  | PConstr (name, pats) ->
+    if (Ctor.named vname name || Ctor.equal c vname)
+       && List.length pats = arity
+    then Bare_positional pats else Bare_never
+  | PConstrNamed (name, bindings)
+    when Ctor.named vname name || Ctor.equal c vname ->
     (match Hashtbl.find_opt constr_fields vname with
-     | None -> None
+     | None -> Bare_never
      | Some field_names ->
-       List.fold_left (fun acc (fname, p) ->
-         match acc with
-         | None -> None
-         | Some env ->
+       let rec places acc = function
+         | [] -> Bare_fields (List.rev acc)
+         | (fname, p) :: rest ->
            (match find_field_index field_names fname with
-            | None -> None
-            | Some i ->
-              (match List.nth_opt vals i with
-               | None -> None
-               | Some v -> try_match ~prefix p v env))
-       ) (Some env) bindings)
-  | PMap bindings, (VMap _ | VRecord _) ->
-    let kvs = (match v with
-      | VMap m      -> vmap_list m
-      | VRecord r    -> r.r_fields
-      | _           -> []) in
-    List.fold_left (fun acc (key, p) ->
-      match acc with
-      | None -> None
-      | Some env ->
-        (match List.assoc_opt key kvs with
-         | None   -> None
-         | Some v -> try_match ~prefix p v env)
-    ) (Some env) bindings
-  | _ -> None
+            | Some i when i < arity -> places ((i, p) :: acc) rest
+            | _ -> Bare_never)
+       in
+       places [] bindings)
+  | _ -> Bare_never
+
+(* Each pattern against the value at its place. *)
+and match_places prefix fs vals env =
+  match fs with
+  | [] -> env
+  | (i, p) :: rest ->
+    let env = match_pat prefix p (List.nth vals i) env in
+    if env == no_match then no_match else match_places prefix rest vals env
+
+(* The constructor a resolved pattern's name means here: what
+   `ctor_in_scope` answers, from the binding `lookup_global` finds. *)
+and ctor_at g env =
+  let found = lookup_global g env in
+  if check_slots then check_slot g.Ast.g_name env found;
+  match found with
+  | VConstr (c, _) | VPartialConstr (c, _, _) -> c
+  | _ -> ctor_named g.Ast.g_name
+
+(* Each pattern against the value in its place; the two lists are the same
+   length. *)
+and match_list prefix ps vs env =
+  match ps, vs with
+  | p :: ps, v :: vs ->
+    let env = match_pat prefix p v env in
+    if env == no_match then no_match else match_list prefix ps vs env
+  | _ -> env
+
+(* A list pattern's elements. With [prefix], elements past the patterns
+   are left over and match. *)
+and match_elements prefix ps vs env =
+  match ps, vs with
+  | [], [] -> env
+  | [], _ :: _ -> if prefix then env else no_match
+  | _ :: _, [] -> no_match
+  | p :: ps, v :: vs ->
+    let env = match_pat prefix p v env in
+    if env == no_match then no_match else match_elements prefix ps vs env
+
+(* Named fields, each against the value in the field's place. *)
+and match_named prefix field_names bindings vals env =
+  match bindings with
+  | [] -> env
+  | (fname, p) :: rest ->
+    (match find_field_index field_names fname with
+     | None -> no_match
+     | Some i ->
+       (match List.nth_opt vals i with
+        | None -> no_match
+        | Some v ->
+          let env = match_pat prefix p v env in
+          if env == no_match then no_match
+          else match_named prefix field_names rest vals env))
+
+let try_match ?(prefix = false) (p : pat) v (env : env) : env option =
+  let env = match_pat prefix p v env in
+  if env == no_match then None else Some env
 
 (* ── Evaluation ───────────────────────────────────────────────────────────── *)
 
@@ -3429,26 +3563,27 @@ and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
      building the option `try_match` answers with. *)
   | PVar name | PLocated (_, PVar name) -> (name, v) :: env
   | _ ->
-    match try_match ~prefix p v env with
-    | Some env' -> env'
-    | None      -> raise (EvalError "pattern match failure")
+    let env' = match_pat prefix p v env in
+    if env' == no_match then raise (EvalError "pattern match failure")
+    else env'
 
 and eval_match c (tail : bool) (env : env) sv cases =
   match cases with
   | [] -> raise (EvalError "non-exhaustive match")
   | (p, guard, body) :: rest ->
-    (match try_match p sv env with
-     | None      -> eval_match c tail env sv rest
-     | Some env' ->
-       let passes = match guard with
-         | None   -> true
-         | Some g ->
-           (match eval_in c false env' g with
-            | VBool b -> b
-            | _       -> raise (EvalError "guard must evaluate to a bool"))
-       in
-       if passes then eval_in c tail env' body
-       else eval_match c tail env sv rest)
+    let env' = match_pat false p sv env in
+    if env' == no_match then eval_match c tail env sv rest
+    else begin
+      let passes = match guard with
+        | None   -> true
+        | Some g ->
+          (match eval_in c false env' g with
+           | VBool b -> b
+           | _       -> raise (EvalError "guard must evaluate to a bool"))
+      in
+      if passes then eval_in c tail env' body
+      else eval_match c tail env sv rest
+    end
 
 and eval_binop c (env : env) op a b : value =
   match op with

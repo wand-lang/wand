@@ -36,7 +36,8 @@ let rec pat_names acc (p : pat) =
   | PConstrNamed (n, fs) ->
     List.fold_left (fun acc (f, p) -> pat_names (f :: acc) p) (n :: acc) fs
   | PConstrBare (n, ids) -> n :: ids @ acc
-  | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) -> pat_names acc p
+  | PQualified (_, p) | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) ->
+    pat_names acc p
   | PMap fs -> List.fold_left (fun acc (k, p) -> pat_names (k :: acc) p) acc fs
   | Int _ | Float _ | String _ | Bool _ | Unit | Path _ | DateTime _
   | Duration _ | URL _ | IPv4 _ | CIDR _ | Port _ | Version _ | Size _
@@ -86,6 +87,7 @@ let uses (prog : program) item_locs =
   in
   let rec pat at = function
     | PLocated (l, p) -> pat (Some l) p
+    | PCtor (_, p, _) -> pat at p
     | PQualified (m, p) ->
       if not (builtin_ctor_type m) then note m at;
       pat at p

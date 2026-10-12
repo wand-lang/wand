@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- A pattern finds its constructor one time and keeps it, which makes pattern matching faster (#166).
+
 ## [0.106.0] - 2026-10-12
 
 ### Added

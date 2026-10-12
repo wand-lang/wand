@@ -1,0 +1,76 @@
+import List
+import Option
+import Result
+
+let {test} = import Test
+
+-- A constructor in a pattern is looked up where the pattern stands, and the
+-- answer is kept. These pin that one arm gives the same answers for values
+-- of each constructor, in any order, and under the names bound before it.
+
+type Shape = Circle(r: Int) | Rect(w: Int, h: Int) | Dot
+
+type Pair = Pair (Int, Int)
+
+type Sale(id: Int, region: String, amount: Int)
+
+let area s =
+  match s with
+  | Circle(r) -> 3 * r * r
+  | Rect(w, h) -> w * h
+  | Dot -> 0
+
+let first_some xs =
+  match xs with
+  | [None :: rest] -> first_some rest
+  | [Some x :: _] -> x
+  | [] -> 0
+
+let nested p =
+  match p with
+  | (a, Some(b, Ok c)) -> a + b + c
+  | (a, Some(b, Error _)) -> a + b
+  | (a, None) -> a
+
+let sum_pair (Pair(a, b)) = a - b
+
+let net (Sale(amount, id)) = amount - id
+
+test "one arm, each constructor in turn" (fn t ->
+  t.eq
+    [3, 6, 0, 12, 0, 6]
+    (List.map area [
+      Circle(r = 1),
+      Rect(w = 2, h = 3),
+      Dot,
+      Circle(r = 2),
+      Dot,
+      Rect(w = 3, h = 2)
+    ]))
+
+test "an arm that does not match, then one that does" (fn t ->
+  t.eq 7 (first_some [None, None, Some 7, None]))
+
+test "constructors under names the pattern binds first" (fn t ->
+  t.eq
+    [6, 3, 1]
+    (List.map nested [(1, Some (2, Ok 3)), (1, Some (2, Error "e")), (1, None)]))
+
+test "a bare pattern over a tuple payload" (fn t ->
+  t.eq [1, -4] (List.map sum_pair [Pair (3, 2), Pair (1, 5)]))
+
+test "a bare pattern over named fields, in another order" (fn t ->
+  t.eq
+    [9, 18]
+    (List.map net [
+      Sale(id = 1, region = "a", amount = 10),
+      Sale(id = 2, region = "b", amount = 20)
+    ]))
+
+test "Option and Result arms" (fn t ->
+  t.eq [5, 0, 2, 0] [
+    Option.default 0 (Some 5),
+    Option.default 0 None,
+    Result.default 0 (Ok 2),
+    Result.default 0 (Error "no")
+  ])

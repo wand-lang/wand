@@ -81,6 +81,40 @@ let test_module_field () =
     [("List.length", "field"); ("xs", "0")]
     (resolved "import List\nlet f xs = List.length xs")
 
+(* Each constructor a pattern names, and how many bindings are in front of
+   it where it is checked: the scope of the arm, and what the pattern has
+   bound before it. *)
+let rec pat_ctors (p : pat) =
+  match p with
+  | PCtor (g, inner, _) -> (g.g_name, string_of_int g.g_depth) :: pat_ctors inner
+  | PConstr (_, ps) | PTuple ps | PList ps -> List.concat_map pat_ctors ps
+  | PConstrNamed (_, kvs) | PMap kvs -> List.concat_map (fun (_, p) -> pat_ctors p) kvs
+  | PCons (h, t) -> pat_ctors h @ pat_ctors t
+  | PLocated (_, p) | PAnnot (p, _) -> pat_ctors p
+  | _ -> []
+
+let test_pattern_constructors () =
+  let arms src =
+    match List.rev (items src) with
+    | last :: _ ->
+      (match Resolve.item last with
+       | TLLet (_, ps, b) ->
+         List.concat_map pat_ctors ps
+         @ (match strip_located b with
+            | Match (_, cases) -> List.concat_map (fun (p, _, _) -> pat_ctors p) cases
+            | _ -> [])
+       | _ -> Alcotest.fail "expected a definition")
+    | [] -> Alcotest.fail "no items"
+  in
+  (* `f` and `x` are in front of each arm; `a` is bound before `Some`, and
+     `a` and `b` before `Ok`. *)
+  Alcotest.check pairs "constructors in arms"
+    [("Some", "3"); ("Ok", "4"); ("None", "3")]
+    (arms "let f x =\n  match x with\n  | (a, Some (b, Ok c)) -> c\n  | (a, None) -> a");
+  Alcotest.check pairs "a parameter's constructor"
+    [("Some", "1")]
+    (arms "let f (Some x) = x")
+
 (* A place the environment does not hold -- the shape changed after the
    pass ran -- answers with the lookup by name. *)
 let eval_with env e = Evaluator.eval env e
@@ -139,6 +173,13 @@ let session_lines lines =
 let test_session () =
   Alcotest.(check string) "a later line sees an earlier one" "3"
     (session_lines ["let x = 2"; "let f y = x + y"; "f 1"]);
+  (* A pattern keeps where a record's fields are. A type declared again
+     with its fields in another order moves them, and the pattern reads
+     them from the new places. *)
+  Alcotest.(check string) "a type declared again" "4"
+    (session_lines ["type T(a: Int, b: Int)"; "let f (T(a, b)) = a - b";
+                    "f (T(a = 5, b = 1))"; "type T(b: Int, a: Int)";
+                    "f (T(a = 5, b = 1))"]);
   Alcotest.(check string) "equations given one at a time" "120"
     (session_lines ["let fact 0 = 1"; "let fact n = n * fact (n - 1)"; "fact 5"])
 
@@ -154,7 +195,8 @@ let checked_files = [
   "test_effects.wand"; "test_eval.wand"; "test_generics.wand";
   "test_group.wand"; "test_imports.wand"; "test_interfaces.wand";
   "test_lambda_params.wand"; "test_list.wand"; "test_list_callbacks.wand";
-  "test_list_patterns.wand"; "test_operations.wand"; "test_ordering.wand";
+  "test_list_patterns.wand"; "test_match_places.wand";
+  "test_operations.wand"; "test_ordering.wand";
   "test_par.wand"; "test_par_race.wand"; "test_resource.wand";
   "test_result.wand"; "test_shared.wand"; "test_stream.wand";
   "test_tuple_index.wand"; "test_typedef.wand"; "test_wand_limit.wand";
@@ -183,6 +225,7 @@ let () =
       Alcotest.test_case "patterns" `Quick test_patterns;
       Alcotest.test_case "a handler" `Quick test_handler;
       Alcotest.test_case "a module's member" `Quick test_module_field;
+      Alcotest.test_case "constructors in patterns" `Quick test_pattern_constructors;
     ];
     "a wrong place", [
       Alcotest.test_case "a slot" `Quick test_wrong_place_falls_back;

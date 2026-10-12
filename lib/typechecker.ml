@@ -4198,6 +4198,8 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
          type of the whole definition instead: let f : 'a -> 'a = ...");
     unify_expected ~expected:t ~got:(type_of_te te);
     infer_pat tenv inner t env
+  (* Written by the resolver, which runs after this. *)
+  | PCtor (_, inner, _) -> infer_pat tenv inner t env
 
 (* for let bindings: PVar gets the generalized scheme, rest are monomorphic *)
 let infer_pat_let tenv (p : pat) t scheme (env : env) : env =

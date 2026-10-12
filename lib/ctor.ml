@@ -45,7 +45,14 @@ let modul = function
   | Builtin _ | Local _ -> None
   | Owned (m, _) -> Some m
 
-let equal (a : t) (b : t) = a == b || a = b
+(* Field by field, which is what `=` answered, without the runtime's
+   generic compare: a constructor pattern that does not match asks this. *)
+let equal (a : t) (b : t) =
+  a == b
+  || (match a, b with
+      | Builtin x, Builtin y | Local x, Local y -> String.equal x y
+      | Owned (m, k), Owned (m', k') -> String.equal m m' && String.equal k k'
+      | _ -> false)
 
 (* Whether a pattern's constructor name names [c]: its key where the name
    holds a dot, `T.Ctor`, and its bare name otherwise. The same answer as
