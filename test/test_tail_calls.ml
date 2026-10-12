@@ -172,6 +172,46 @@ let test_the_default_bound_allows_it () =
   Alcotest.(check int) "runs under the default bound" 0 code;
   Alcotest.(check string) "and the answer is right" "5000" out
 
+(* ── The List functions that take a function ───────────────────────────── *)
+
+(* `List.map`, `find` and their kin are builtins (#122). Each walks the list
+   in a loop of its own, and that loop must be flat as a wand tail call is:
+   two million elements, in a stack that holds a few thousand frames. *)
+let long_list_script = {|uses {IO}
+import IO
+import List
+let xs = List.range 1 2000000
+let ys = List.map (fn x -> x + 1) xs
+let evens = List.filter (fn x -> x % 2 == 0) ys
+let some = List.filter_map (fn x -> if x % 4 == 0 then Some x else None) xs
+let flat = List.flat_map (fn x -> [x]) xs
+let total = List.fold_left (fn a x -> a + x) 0 xs
+let back = List.fold_right (fn x acc -> x :: acc) xs []
+let found = List.find (fn x -> x == 2000000) xs
+let all = List.all? (fn x -> x > 0) xs
+let any = List.any? (fn x -> x < 0) xs
+let kept = List.take_while (fn x -> x > 0) xs
+let left = List.drop_while (fn x -> x < 1999999) xs
+let pairs = List.zip xs (List.indexed xs)
+let has = List.contains? 2000000 xs
+List.each (fn _ -> ()) xs
+IO.println "%{List.length ys} %{List.length evens} %{List.length some} %{List.length flat} %{total} %{List.length back} %{found} %{all} %{any} %{List.length kept} %{left} %{List.length pairs} %{has}"
+|}
+
+let test_long_lists_are_flat () =
+  let (code, out) = run ~env:tiny_stack long_list_script in
+  Alcotest.(check int) "two million elements in a 4096-word stack" 0 code;
+  Alcotest.(check string) "and the answers are right"
+    "2000000 1000000 500000 2000000 2000001000000 2000000 Some(2000000) true \
+     false 2000000 [1999999, 2000000] 2000000 true"
+    out
+
+let test_loc_after_a_list_builtin_raised () =
+  (* The raise is inside the function `List.find` was given, so the position
+     is in that function, not in the builtin and not at the call. *)
+  at "import List\nlet main () =\n  List.find (fn x -> List.head! [] == x) [1]\nmain ()\n"
+    "3:22" "inside the function a List builtin called"
+
 let () =
   Alcotest.run "tail calls" [
     "a tail call does not grow the stack", [
@@ -197,5 +237,10 @@ let () =
       Alcotest.test_case "after a caught raise" `Quick test_loc_after_a_caught_raise;
       Alcotest.test_case "inside a tail recursion" `Quick
         test_loc_inside_a_deep_tail_recursion;
+      Alcotest.test_case "inside the function a List builtin called" `Quick
+        test_loc_after_a_list_builtin_raised;
+    ];
+    "a List builtin walks a long list in a flat loop", [
+      Alcotest.test_case "two million elements" `Quick test_long_lists_are_flat;
     ];
   ]

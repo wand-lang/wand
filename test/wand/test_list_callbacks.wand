@@ -1,0 +1,107 @@
+uses {IO}
+
+-- The `List` functions that take a function call it on the same elements,
+-- in the same order, as a loop written in wand does, and stop where it
+-- stops. These hold that in place: what the function performs reaches a
+-- handler around the call, a raise reaches a `try` around it, and a
+-- function that is not called again is not called (#122).
+
+import Int
+import IO
+import List
+import Result
+import Wand
+
+let {test, group} = import Test
+
+-- What the code printed, in order, and nothing of what it answered.
+let printed body =
+  handle (let _ = body (); "") with
+  | IO!print s k -> s ++ k ()
+  | return _ -> ""
+
+let say x = IO.print "%{x} "
+
+group "the function is called in order" (fn () -> [
+  test "map" (fn t ->
+    t.eq "1 2 3 " (printed (fn () -> List.map (fn x -> (say x; x * 2)) [1, 2, 3]))),
+  test "filter" (fn t ->
+    t.eq "1 2 3 " (printed (fn () -> List.filter (fn x -> (say x; x > 1)) [1, 2, 3]))),
+  test "filter_map" (fn t ->
+    t.eq "1 2 3 " (printed (fn () -> List.filter_map (fn x -> (say x; Some x)) [1, 2, 3]))),
+  test "flat_map" (fn t ->
+    t.eq "1 2 3 " (printed (fn () -> List.flat_map (fn x -> (say x; [x])) [1, 2, 3]))),
+  test "fold_left" (fn t ->
+    t.eq "1 2 3 " (printed (fn () -> List.fold_left (fn a x -> (say x; a + x)) 0 [1, 2, 3]))),
+  test "fold_right" (fn t ->
+    t.eq
+      "3 2 1 "
+      (printed (fn () -> List.fold_right (fn x a -> (say x; a + x)) [1, 2, 3] 0))),
+  test "each" (fn t -> t.eq "1 2 3 " (printed (fn () -> List.each say [1, 2, 3])))
+])
+
+group "a function that answers early stops the walk" (fn () -> [
+  test "find" (fn t ->
+    t.eq "1 2 " (printed (fn () -> List.find (fn x -> (say x; x == 2)) [1, 2, 3]))),
+  test "any?" (fn t ->
+    t.eq "1 2 " (printed (fn () -> List.any? (fn x -> (say x; x == 2)) [1, 2, 3]))),
+  test "all?" (fn t ->
+    t.eq "1 2 " (printed (fn () -> List.all? (fn x -> (say x; x < 2)) [1, 2, 3]))),
+  test "take_while" (fn t ->
+    t.eq "1 2 " (printed (fn () -> List.take_while (fn x -> (say x; x < 2)) [1, 2, 3]))),
+  test "drop_while" (fn t ->
+    t.eq "1 2 " (printed (fn () -> List.drop_while (fn x -> (say x; x < 2)) [1, 2, 3])))
+])
+
+group "the answers" (fn () -> [
+  test "find gives the first match" (fn t ->
+    t.eq (Some 2) (List.find (fn x -> x > 1) [1, 2, 3])),
+  test "find gives None" (fn t -> t.eq None (List.find (fn x -> x > 9) [1, 2, 3])),
+  test "fold_right folds from the right" (fn t ->
+    t.eq [1, 2, 3] (List.fold_right (fn x acc -> x :: acc) [1, 2, 3] [])),
+  test "take_while keeps the run" (fn t ->
+    t.eq [1, 2] (List.take_while (fn x -> x < 3) [1, 2, 3, 1])),
+  test "drop_while keeps the rest" (fn t ->
+    t.eq [3, 1] (List.drop_while (fn x -> x < 3) [1, 2, 3, 1])),
+  test "contains? reads the value" (fn t -> t.eq true (List.contains? 1min [60s])),
+  test "indexed" (fn t -> t.eq [(0, "a"), (1, "b")] (List.indexed ["a", "b"])),
+  test "zip stops at the shorter" (fn t -> t.eq [(1, "a")] (List.zip [1, 2] ["a"])),
+  test "take of more than there is" (fn t -> t.eq [1, 2] (List.take 5 [1, 2]))
+])
+
+group "what the function does reaches around the call" (fn () -> [
+  test "a handler that answers in place of the print" (fn t ->
+    let found =
+      handle List.filter (fn x -> (say x; x > 1)) [1, 2, 3] with
+      | IO!print _ k -> k ()
+      | return xs -> xs
+    in
+    t.eq [2, 3] found),
+  test "a handler that does not resume stops the walk" (fn t ->
+    let first =
+      handle (List.each say [1, 2, 3]; "all") with
+      | IO!print s _ -> s
+      | return s -> s
+    in
+    t.eq "1 " first),
+  test "a handler that resumes twice is refused, as in a wand loop" (fn t ->
+    t.raises (fn () ->
+      handle List.map (fn x -> (say x; x)) [1, 2] with
+      | IO!print _ k -> (let _ = k (); k ())
+      | return xs -> xs)),
+  test "a raise in the function reaches a try around the call" (fn t ->
+    t.eq
+      true
+      (Result.error? (try List.map (fn x -> if x == 2 then List.head! [] else x) [1, 2, 3]))),
+  test "a raise stops the walk" (fn t ->
+    t.eq
+      "1 2 "
+      (printed (fn () ->
+        try List.each (fn x -> if x == 2 then (say x; List.head! []) else say x) [1, 2, 3])))
+])
+
+test "a step limit bounds a walk that calls a builtin" (fn t ->
+  t.eq
+    (Error "ran out of steps after 1000")
+    (Wand.limit Wand.Limits(steps = 1000) (fn () ->
+      List.length (List.map Int.to_string (List.range 1 100000)))))

@@ -256,6 +256,15 @@ let find_field_index names label =
 
 (* ── Values ───────────────────────────────────────────────────────────────── *)
 
+(* A table keyed by a name. The generic `Hashtbl` compares keys with the
+   runtime's polymorphic compare, and a name is looked up on almost every
+   step: that compare was 5-10% of the time in the slow speed tasks. *)
+module StrTbl = Hashtbl.Make (struct
+  type t = string
+  let equal = String.equal
+  let hash (s : string) = Hashtbl.hash s
+end)
+
 type value =
   | VInt      of int
   | VFloat    of float
@@ -404,7 +413,7 @@ type value =
      It is a hint, not an authority: a miss keeps walking. That way an
      environment can be appended to, sliced, or carry several indexes without
      any of it having to know. *)
-  | VEnvIndex      of (string, value) Hashtbl.t
+  | VEnvIndex      of value StrTbl.t
 
 and conn = {
   c_fd : Unix.file_descr;
@@ -678,9 +687,9 @@ let regex_literals : (string * string, Re.re) Hashtbl.t Domain.DLS.key =
 let env_index_key = "\000index"
 
 let index_env (base : env) : env =
-  let tbl = Hashtbl.create (List.length base * 2 + 16) in
+  let tbl = StrTbl.create (List.length base * 2 + 16) in
   (* First binding wins, as walking the list would. *)
-  List.iter (fun (k, v) -> if not (Hashtbl.mem tbl k) then Hashtbl.add tbl k v) base;
+  List.iter (fun (k, v) -> if not (StrTbl.mem tbl k) then StrTbl.add tbl k v) base;
   (env_index_key, VEnvIndex tbl) :: base
 
 (* Every name an environment can reach, for a "did you mean" hint. *)
@@ -688,7 +697,7 @@ let rec env_names (e : env) =
   match e with
   | [] -> []
   | (k, VEnvIndex tbl) :: rest when k = env_index_key ->
-    Hashtbl.fold (fun k _ acc -> k :: acc) tbl [] @ env_names rest
+    StrTbl.fold (fun k _ acc -> k :: acc) tbl [] @ env_names rest
   | (k, _) :: rest -> k :: env_names rest
 
 (* Re-index as a file's own definitions pile up, so a lookup never walks more
@@ -701,10 +710,16 @@ let rec lookup_var name (e : env) =
   match e with
   | [] -> None
   | (k, VEnvIndex tbl) :: rest when k = env_index_key ->
-    (match Hashtbl.find_opt tbl name with
+    (match StrTbl.find_opt tbl name with
      | Some _ as found -> found
      | None -> lookup_var name rest)
-  | (k, v) :: rest -> if String.equal k name then Some v else lookup_var name rest
+  (* The length first: it is read here, where `String.equal` is a call into
+     the runtime, and most names that do not match differ in length. *)
+  | (k, v) :: rest ->
+    if k == name
+       || (String.length k = String.length name && String.equal k name)
+    then Some v
+    else lookup_var name rest
 
 (* A definition that only forwards.
 
@@ -1380,7 +1395,11 @@ let loc_cell () = Domain.DLS.get current_loc
 let mark_loc (c : loc_cell) (l : Token.loc) =
   c.at_line <- l.Token.line;
   c.at_col  <- l.Token.col;
-  c.at_file <- l.Token.file
+  (* A string is a pointer, and writing a pointer into a mutable field goes
+     through the write barrier: 7% of a loop that calls a function, paid on
+     every position it passed. The file changes only when a call crosses
+     into another file, so the write is kept for then. *)
+  if c.at_file != l.Token.file then c.at_file <- l.Token.file
 
 (* Prefix a runtime error with where it was raised, unless it says already. *)
 (* The file a run was asked for. A position in that file needs no name --
@@ -1934,6 +1953,10 @@ let functional = function
 
 let rec wand_equal a b =
   match a, b with
+  (* The two that `==` compares most, answered without the runtime's
+     general compare, which is what the last case below reaches. *)
+  | VInt x, VInt y -> Int.equal x y
+  | VString x, VString y -> String.equal x y
   | _ when functional a || functional b ->
     raise (EvalError "cannot compare functions for equality")
   | _ when normalized a && normalized b ->
@@ -2406,6 +2429,15 @@ let check_request_host allow value =
    parser's form of it is not wand, and an error never prints it. *)
 let contract_text e = Doc.to_string (Formatter.emit_splice 0 e)
 
+(* Whether an argument has the shape `nullary_payload` looks for: a
+   constructor applied to something, under any positions and qualifiers. A
+   necessary condition only -- whether the constructor takes nothing is
+   read from the environment there. *)
+let rec payload_shape = function
+  | Located (_, inner) | Qualified (_, inner) -> payload_shape inner
+  | App (f, _) -> (match strip_located f with Constr _ -> true | _ -> false)
+  | _ -> false
+
 let rec eval (env : env) (e : expr) : value = eval_at false env e
 
 (* Evaluate in tail position: the value of `e` is the value of whatever
@@ -2507,20 +2539,24 @@ and eval_at (tail : bool) (env : env) (e : expr) : value =
     raise (EvalError (Printf.sprintf "unknown operator '%s'" op))
   | BinOp (op, a, b) -> eval_binop env op a b
   | Fn (params, body) -> VFun (env, params, body)
-  | App (f, x) when nullary_payload env x <> None ->
+  | App (f, x) ->
     (* The other half of the typechecker's rule: a bracket after a
        constructor is its payload, and one that takes no payload hands the
        bracket back to the call around it. Both sides have to agree, or a
        file typechecks and then fails at run time -- which is what happened
        when only the checker knew. `test_typechecker` runs what it checks,
-       so the two are pinned together there. *)
-    (match nullary_payload env x with
+       so the two are pinned together there.
+
+       Only an argument that is itself a constructor applied to something
+       can be that, which the syntax says without a lookup. Asking every
+       call cost 6% of a loop that calls a function, and comparing the
+       answer with `<> None` went out to the runtime's compare each time. *)
+    (match if payload_shape x then nullary_payload env x else None with
      | Some (ctor, arg) -> eval_at tail env (App (App (f, ctor), arg))
-     | None -> assert false)
-  | App (f, x) ->
-    let vf = eval env f in
-    let vx = eval env x in
-    if tail then apply_tail vf vx else apply vf vx
+     | None ->
+       let vf = eval env f in
+       let vx = eval env x in
+       if tail then apply_tail vf vx else apply vf vx)
   | Let (p, e1, e2, _) ->
     let v1 = eval env e1 in
     let v1 = match p, v1 with
@@ -3170,9 +3206,14 @@ and apply_tail vf vx =
   | _ -> raise (EvalError "cannot apply a non-function")
 
 and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
-  match try_match ~prefix p v env with
-  | Some env' -> env'
-  | None      -> raise (EvalError "pattern match failure")
+  match p with
+  (* A parameter that is a name, which is most of them, binds without
+     building the option `try_match` answers with. *)
+  | PVar name | PLocated (_, PVar name) -> (name, v) :: env
+  | _ ->
+    match try_match ~prefix p v env with
+    | Some env' -> env'
+    | None      -> raise (EvalError "pattern match failure")
 
 and eval_match (tail : bool) (env : env) sv cases =
   match cases with
@@ -5871,7 +5912,172 @@ let stream_builtins : env = [
     | _ -> raise (EvalError "Stream.to_list: expected Stream")));
 ]
 
-let stdlib_eval_env : env = [
+(* ── List functions that take a function ───────────────────────────────── *)
+
+(* `List.find`, `map`, `filter` and their kin were written in wand, and each
+   element cost a wand call to the loop as well as the call to the function
+   it was given: about 400ns an element, which was most of the time in a
+   script that looks for one word in the words of every line (#122).
+
+   Each one below calls the function it is given with `apply`, once for each
+   element the wand definition called it on, in the same order, and stops
+   where the wand definition stopped. So an effect the function performs
+   reaches the same handler, a raise passes out through the same `try`, and
+   the call depth is what it was.
+
+   The loop itself takes one step for each element, as an evaluated
+   expression does: a step limit still bounds it, an interrupt still stops
+   it, and a fiber still yields, when the function it calls is a builtin
+   that takes no steps of its own. *)
+let list_step () =
+  check_interrupt ();
+  let c = loc_cell () in
+  c.budget <- c.budget - 1;
+  if c.budget <= 0 then fiber_turn c;
+  let f = c.fuel in
+  if f != unlimited then begin
+    f.left <- f.left - 1;
+    if f.left < 0 then out_of_steps f
+  end
+
+let list_of name = function
+  | VList xs -> xs
+  | _ -> raise (EvalError (name ^ ": expected List"))
+
+let bool_of name = function
+  | VBool b -> b
+  | _ -> raise (EvalError (name ^ ": the function must return a Bool"))
+
+(* A builtin of a function and a list. *)
+let list_hof name (go : value -> value list -> value) =
+  VBuiltin (fun f -> VBuiltin (fun xs -> go f (list_of name xs)))
+
+let list_hof_builtins : env = [
+  ("list_map", list_hof "List.map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t -> list_step (); let v = apply f h in go (v :: acc) t
+    in
+    go [] xs));
+  ("list_filter", list_hof "List.filter" (fun p xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        if bool_of "List.filter" (apply p h) then go (h :: acc) t else go acc t
+    in
+    go [] xs));
+  ("list_filter_map", list_hof "List.filter_map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        (match apply f h with
+         | VConstr (Ctor.Builtin "Some", [v]) -> go (v :: acc) t
+         | VConstr (Ctor.Builtin "None", []) -> go acc t
+         | _ -> raise (EvalError "List.filter_map: the function must return an Option"))
+    in
+    go [] xs));
+  ("list_flat_map", list_hof "List.flat_map" (fun f xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        let ys = list_of "List.flat_map" (apply f h) in
+        charge (List.length ys);
+        go (List.rev_append ys acc) t
+    in
+    go [] xs));
+  ("list_fold_left", VBuiltin (fun f -> VBuiltin (fun init -> VBuiltin (fun xs ->
+    let rec go acc = function
+      | [] -> acc
+      | h :: t -> list_step (); go (apply (apply f acc) h) t
+    in
+    go init (list_of "List.fold_left" xs)))));
+  (* The wand definition folds left over the list turned round, so the list
+     is turned round here too: a right fold that recursed on the tail first
+     ran out of stack on a long list. *)
+  ("list_fold_right", VBuiltin (fun f -> VBuiltin (fun xs -> VBuiltin (fun init ->
+    let rec go acc = function
+      | [] -> acc
+      | h :: t -> list_step (); go (apply (apply f h) acc) t
+    in
+    go init (List.rev (list_of "List.fold_right" xs))))));
+  ("list_any", list_hof "List.any?" (fun p xs ->
+    let rec go = function
+      | [] -> VBool false
+      | h :: t -> list_step (); if bool_of "List.any?" (apply p h) then VBool true else go t
+    in
+    go xs));
+  ("list_all", list_hof "List.all?" (fun p xs ->
+    let rec go = function
+      | [] -> VBool true
+      | h :: t -> list_step (); if bool_of "List.all?" (apply p h) then go t else VBool false
+    in
+    go xs));
+  ("list_find", list_hof "List.find" (fun p xs ->
+    let rec go = function
+      | [] -> v_none
+      | h :: t ->
+        list_step ();
+        if bool_of "List.find" (apply p h) then VConstr (Ctor.Builtin "Some", [h])
+        else go t
+    in
+    go xs));
+  ("list_take_while", list_hof "List.take_while" (fun p xs ->
+    let rec go acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t ->
+        list_step ();
+        if bool_of "List.take_while" (apply p h) then go (h :: acc) t
+        else VList (List.rev acc)
+    in
+    go [] xs));
+  ("list_drop_while", list_hof "List.drop_while" (fun p xs ->
+    let rec go = function
+      | [] -> VList []
+      | h :: t as l ->
+        list_step ();
+        if bool_of "List.drop_while" (apply p h) then go t else VList l
+    in
+    go xs));
+  ("list_each", list_hof "List.each" (fun f xs ->
+    let rec go = function
+      | [] -> VUnit
+      | h :: t -> list_step (); ignore (apply f h); go t
+    in
+    go xs));
+  (* No function to call, but each was a wand loop all the same. *)
+  ("list_contains", VBuiltin (fun x -> VBuiltin (fun xs ->
+    let rec go = function
+      | [] -> VBool false
+      | h :: t -> list_step (); if wand_equal h x then VBool true else go t
+    in
+    go (list_of "List.contains?" xs))));
+  ("list_indexed", VBuiltin (fun xs ->
+    let rec go i acc = function
+      | [] -> VList (List.rev acc)
+      | h :: t -> list_step (); go (i + 1) (VTuple [VInt i; h] :: acc) t
+    in
+    go 0 [] (list_of "List.indexed" xs)));
+  ("list_zip", VBuiltin (fun xs -> VBuiltin (fun ys ->
+    let rec go acc xs ys =
+      match xs, ys with
+      | a :: t, b :: u -> list_step (); go (VTuple [a; b] :: acc) t u
+      | _ -> VList (List.rev acc)
+    in
+    go [] (list_of "List.zip" xs) (list_of "List.zip" ys))));
+  ("list_take", VBuiltin (function
+    | VInt n -> VBuiltin (fun xs ->
+      let rec go n acc = function
+        | h :: t when n > 0 -> list_step (); go (n - 1) (h :: acc) t
+        | _ -> VList (List.rev acc)
+      in
+      go n [] (list_of "List.take" xs))
+    | _ -> raise (EvalError "List.take: expected Int")));
+]
+
+let stdlib_eval_env : env = list_hof_builtins @ [
   ("io_print",   VBuiltin (fun v -> perform_wand ("IO!print",   v)));
   ("io_println", VBuiltin (fun v -> perform_wand ("IO!println", v)));
   ("proc_exit",  performing "Proc!exit" (function VInt n -> raise (Interrupted n) | _ -> raise (EvalError "exit: expected Int")));

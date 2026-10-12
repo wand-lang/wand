@@ -31,6 +31,8 @@
 - `Stream.unique` over a stream of `String` is faster (#122).
 - A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
 - A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
+- `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
+- A call to a wand function is approximately 15% faster (#122).
 
 ### Fixed
 
@@ -45,6 +47,7 @@
 - V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).
 - `V-SHELL1` says that a `%!{...}` splice can add words or commands, not that the first word is decided at run time, when the first word is a literal (#123).
 - The effects of the key function of `List.sort_by` are in the type of the call. Before, `List.sort_by` with a key that prints typechecked as pure (#121).
+- `List.contains?` on a list of more than 1,000,000 elements no longer stops with "too many nested calls" (#122).
 
 ### Documentation
 
