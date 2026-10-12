@@ -3,7 +3,9 @@ open Ast
 module StrMap = Map.Make (String)
 
 (* A hash table keyed by text, which hashes and compares the bytes directly
-   rather than through the generic functions every value goes through. *)
+   rather than through the generic functions every value goes through. A
+   name is looked up on almost every step, and the generic compare was 5-10%
+   of the time in the slow speed tasks. *)
 module StrTbl = Hashtbl.Make (struct
   type t = string
   let equal = String.equal
@@ -255,15 +257,6 @@ let find_field_index names label =
   in go 0 names
 
 (* ── Values ───────────────────────────────────────────────────────────────── *)
-
-(* A table keyed by a name. The generic `Hashtbl` compares keys with the
-   runtime's polymorphic compare, and a name is looked up on almost every
-   step: that compare was 5-10% of the time in the slow speed tasks. *)
-module StrTbl = Hashtbl.Make (struct
-  type t = string
-  let equal = String.equal
-  let hash (s : string) = Hashtbl.hash s
-end)
 
 type value =
   | VInt      of int
