@@ -193,8 +193,67 @@ let test_an_early_stop_ends_the_whole_command () =
     ignore (Sys.command (Printf.sprintf "pkill -f '%s'" pat));
   Alcotest.(check int) "nothing it started is left" 0 left
 
+(* A command longer than the system takes in one command line is refused
+   with E2BIG. The refusal escaped as a fatal `Unix_error` that `try`
+   could not see (#171): on the direct path, through `/bin/sh -c`, under
+   `Shell.in_dir`, on stdin and in a stream. Now each is an error the
+   script catches. 1.2MB is past the whole limit on macOS (1MB) and past
+   the limit for one argument on Linux (128KB). *)
+let test_too_long_is_an_error_a_script_catches () =
+  let (code, out, err) =
+    finished "a command longer than the system limit"
+      (run_script
+         {|uses {FS.Read, IO, Shell(cat, printf)}
+import IO
+import List
+import Path
+import Shell
+import Stream
+import String
+let big = String.repeat 1200000 "x"
+let said r =
+  match r with
+  | Ok _ -> "ran"
+  | Error why -> if String.contains? "longer than the system allows" why then "refused" else why
+IO.println (said (try $(printf %{big})))
+IO.println (said (try $(printf %{big} | cat)))
+IO.println (said (try Shell.inspect! (Shell.in_dir (Path.of_string ".") $*(printf %{big}))))
+IO.println (said (try ("in" |> $(cat %{big}))))
+IO.println (said (try (Shell.stream $*(printf %{big}) |> Stream.to_list)))
+IO.println $(printf ok)|})
+  in
+  Alcotest.(check string) "no fatal error" "" err;
+  Alcotest.(check int) "the script ran to the end" 0 code;
+  Alcotest.(check string) "each spawn is refused and caught"
+    "refused\nrefused\nrefused\nrefused\nrefused\nok\n" out
+
+(* A refused spawn closes the pipes it opened for the command, so a script
+   that catches the refusal in a loop does not run out of descriptors. *)
+let test_a_refused_spawn_closes_its_pipes () =
+  let open_fds () = Array.length (Sys.readdir "/dev/fd") in
+  let cmd = "printf " ^ String.make 1_200_000 'x' in
+  let refused f =
+    match f () with
+    | _ -> Alcotest.fail "the spawn was not refused"
+    | exception Wand.Evaluator.EvalError _ -> ()
+  in
+  let before = open_fds () in
+  refused (fun () -> ignore (Wand.Runner.spawn_in cmd));
+  refused (fun () -> ignore (Wand.Runner.spawn_quiet cmd));
+  refused (fun () -> ignore (Wand.Runner.spawn_stdin cmd));
+  refused (fun () -> ignore (Wand.Runner.spawn_full cmd));
+  refused (fun () -> ignore (Wand.Runner.spawn_argv [| "printf"; String.make 1_200_000 'x' |] ""));
+  refused (fun () -> ignore (Wand.Runner.stream_command cmd));
+  Alcotest.(check int) "no descriptor is left open" before (open_fds ())
+
 let () =
   Alcotest.run "Subprocess" [
+    "a spawn the system refuses", [
+      Alcotest.test_case "is an error a script catches" `Quick
+        test_too_long_is_an_error_a_script_catches;
+      Alcotest.test_case "closes its pipes" `Quick
+        test_a_refused_spawn_closes_its_pipes;
+    ];
     "neither stream waits on the other", [
       Alcotest.test_case "stderr past the pipe buffer" `Quick
         test_captured_stderr_past_the_buffer;

@@ -1529,6 +1529,11 @@ holds bytes and a NUL reaches one from a command's output, a file read or
 catches. The byte is rejected, never dropped: nothing runs with the value
 cut short.
 
+A command line also has a length limit (`getconf ARG_MAX`; on Linux, 128KB
+for one argument too). A command that is longer is refused by the kernel,
+and wand raises, which `try` catches. Give a large value on stdin with
+`|>`, or in a file.
+
 **One argument is not one that the command reads as data.** `%{x}` decides
 where the argument ends. It does not decide how the command reads it, and a
 value that begins with `-` is read as an option by most of them:

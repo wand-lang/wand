@@ -210,6 +210,29 @@ let stop_children signal =
    missing being the common case -- is retried through sh, which reports
    it exactly as it always has (its own line on stderr, exit 127) instead
    of surfacing a Unix_error the sh path never raised. *)
+(* A spawn the system refused, as an error the script can catch. The
+   refusal used to escape as a fatal `Unix_error` that neither `try` nor
+   `$?()` could see (#171). E2BIG is the one a script makes: a value
+   spliced into a command that is longer than the system takes in one
+   command line. *)
+let unstartable prog = function
+  | Unix.E2BIG ->
+    Evaluator.EvalError
+      "this command is longer than the system allows for one command line \
+       -- give a large value on stdin with `|>`, or in a file"
+  | e ->
+    Evaluator.EvalError (Printf.sprintf "the command could not start: %s: %s"
+      prog (Unix.error_message e))
+
+let start_process prog argv stdin stdout stderr =
+  try Unix.create_process prog argv stdin stdout stderr
+  with Unix.Unix_error (e, _, _) -> raise (unstartable prog e)
+
+(* Close the ends a spawn was to hand over when the spawn did not happen,
+   so a refused command does not keep its pipes open. *)
+let closing_on_failure fds f =
+  try f () with e -> List.iter Unix.close fds; raise e
+
 let create_process_for cmd stdin stdout stderr =
   (* A wand String is a byte string, and a NUL can arrive in one from a
      command's output, a file read or `Base64.decode!`. A command line
@@ -223,8 +246,7 @@ let create_process_for cmd stdin stdout stderr =
       "this command holds a NUL byte, which no command line can carry -- \
        take it out of the value before splicing it in");
   let via_sh () =
-    Unix.create_process "/bin/sh" [| "/bin/sh"; "-c"; cmd |]
-      stdin stdout stderr
+    start_process "/bin/sh" [| "/bin/sh"; "-c"; cmd |] stdin stdout stderr
   in
   match Domain.DLS.get Evaluator.ambient_shell_dir with
   | Some dir ->
@@ -246,7 +268,7 @@ let create_process_for cmd stdin stdout stderr =
         [| "/bin/sh"; "-c"; "cd -- \"$1\" && exec /bin/sh -c \"$2\""; "wand";
            dir; cmd |]
     in
-    Unix.create_process "/bin/sh" argv stdin stdout stderr
+    start_process "/bin/sh" argv stdin stdout stderr
   | None ->
   match Shell_scan.direct_words cmd with
   | Some (w0 :: _ as ws) ->
@@ -261,7 +283,8 @@ let create_process_for cmd stdin stdout stderr =
    are duplicated onto the child's stdio, which clears the flag. *)
 let spawn_in cmd =
   let (r, w) = Unix.pipe ~cloexec:true () in
-  let pid = create_process_for cmd Unix.stdin w Unix.stderr in
+  let pid = closing_on_failure [r; w] (fun () ->
+    create_process_for cmd Unix.stdin w Unix.stderr) in
   Unix.close w;
   remember pid;
   (pid, r)
@@ -302,8 +325,10 @@ let spawn_grouped ~stdout ~stderr cmd =
   let stdin = Option.value devnull ~default:Unix.stdin in
   let pid =
     Fun.protect ~finally:(fun () -> Option.iter Unix.close devnull) (fun () ->
-      Spawn.spawn ~cwd ~prog:"/bin/sh" ~argv:["/bin/sh"; "-c"; cmd]
-        ~stdin ~stdout ~stderr ~setpgid:Spawn.Pgid.new_process_group ())
+      try
+        Spawn.spawn ~cwd ~prog:"/bin/sh" ~argv:["/bin/sh"; "-c"; cmd]
+          ~stdin ~stdout ~stderr ~setpgid:Spawn.Pgid.new_process_group ()
+      with Unix.Unix_error (e, _, _) -> raise (unstartable "/bin/sh" e))
   in
   remember_group pid;
   remember pid;
@@ -314,7 +339,8 @@ let spawn_grouped ~stdout ~stderr cmd =
    has one thing to wait for. *)
 let spawn_quiet cmd =
   let devnull = Unix.openfile "/dev/null" [Unix.O_WRONLY; Unix.O_CLOEXEC] 0o666 in
-  let pid = create_process_for cmd Unix.stdin devnull Unix.stderr in
+  let pid = closing_on_failure [devnull] (fun () ->
+    create_process_for cmd Unix.stdin devnull Unix.stderr) in
   Unix.close devnull;
   remember pid;
   pid
@@ -326,7 +352,8 @@ let spawn_quiet cmd =
 let spawn_stdin cmd =
   let (out_r, out_w) = Unix.pipe ~cloexec:true () in
   let (in_r,  in_w)  = Unix.pipe ~cloexec:true () in
-  let pid = create_process_for cmd in_r out_w Unix.stderr in
+  let pid = closing_on_failure [out_r; out_w; in_r; in_w] (fun () ->
+    create_process_for cmd in_r out_w Unix.stderr) in
   Unix.close out_w; Unix.close in_r;
   remember pid;
   (pid, out_r, in_w)
@@ -335,7 +362,8 @@ let spawn_full cmd =
   let (out_r, out_w) = Unix.pipe ~cloexec:true () in
   let (err_r, err_w) = Unix.pipe ~cloexec:true () in
   let (in_r,  in_w)  = Unix.pipe ~cloexec:true () in
-  let pid = create_process_for cmd in_r out_w err_w in
+  let pid = closing_on_failure [out_r; out_w; err_r; err_w; in_r; in_w] (fun () ->
+    create_process_for cmd in_r out_w err_w) in
   Unix.close out_w; Unix.close err_w; Unix.close in_r;
   remember pid;
   (pid, out_r, err_r, in_w)
@@ -510,9 +538,10 @@ let stream_command ?(err = false) cmd =
   let (pid, out_r) =
     let (r, w) = Unix.pipe ~cloexec:true () in
     let pid =
-      Fun.protect ~finally:(fun () -> Unix.close w) (fun () ->
-        if err then spawn_grouped ~stdout:Unix.stdout ~stderr:w cmd
-        else spawn_grouped ~stdout:w ~stderr:Unix.stderr cmd)
+      closing_on_failure [r] (fun () ->
+        Fun.protect ~finally:(fun () -> Unix.close w) (fun () ->
+          if err then spawn_grouped ~stdout:Unix.stdout ~stderr:w cmd
+          else spawn_grouped ~stdout:w ~stderr:Unix.stderr cmd))
     in
     (pid, r)
   in
@@ -1370,9 +1399,8 @@ let spawn_argv argv stdin_text =
   let (out_r, out_w) = Unix.pipe ~cloexec:true () in
   let (err_r, err_w) = Unix.pipe ~cloexec:true () in
   let (in_r,  in_w)  = Unix.pipe ~cloexec:true () in
-  let pid =
-    Unix.create_process argv.(0) argv in_r out_w err_w
-  in
+  let pid = closing_on_failure [out_r; out_w; err_r; err_w; in_r; in_w] (fun () ->
+    start_process argv.(0) argv in_r out_w err_w) in
   Unix.close out_w; Unix.close err_w; Unix.close in_r;
   remember pid;
   let (out, err, _) =
