@@ -3494,7 +3494,16 @@ and apply_c c vf vx =
   let line = c.at_line and col = c.at_col in
   if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
   c.depth <- c.depth + 1;
-  let v = (try apply_tail_c c vf vx with e -> c.depth <- c.depth - 1; raise e) in
+  let v =
+    (try
+       (* A closure of one parameter, which is most calls, is entered here
+          and not through `apply_tail_c`, one call further in. *)
+       match vf with
+       | VFun (fenv, [p], body) -> eval_in c true (bind_param p vx fenv) body
+       | VFix (name, fenv, [p], body) ->
+         eval_in c true (bind_param p vx ((name, vf) :: fenv)) body
+       | _ -> apply_tail_c c vf vx
+     with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
   c.at_line <- line;
   c.at_col  <- col;
@@ -3511,9 +3520,9 @@ and apply_tail_c c vf vx =
   | VFun (fenv, params, body) ->
     (match params with
      | []      -> raise (EvalError "function with no parameters")
-     | [p]     -> eval_in c true (bind_pat p vx fenv) body
+     | [p]     -> eval_in c true (bind_param p vx fenv) body
      | p :: rest ->
-       let env' = bind_pat p vx fenv in
+       let env' = bind_param p vx fenv in
        VFun (env', rest, body))
   | VFix (name, fenv, params, body) ->
     (* `vf` is the value being bound, so binding it costs nothing to build.
@@ -3523,8 +3532,8 @@ and apply_tail_c c vf vx =
     let fenv' = (name, vf) :: fenv in
     (match params with
      | []        -> raise (EvalError "function with no parameters")
-     | [p]       -> eval_in c true (bind_pat p vx fenv') body
-     | p :: rest -> VFun (bind_pat p vx fenv', rest, body))
+     | [p]       -> eval_in c true (bind_param p vx fenv') body
+     | p :: rest -> VFun (bind_param p vx fenv', rest, body))
   | VFixGroup (bindings, fenv, my_name) ->
     let fenv' = List.fold_left (fun acc (n, _, _) ->
       (n, VFixGroup (bindings, fenv, n)) :: acc) fenv bindings in
@@ -3557,7 +3566,7 @@ and bind_first_c c fenv p a =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
   then check_interrupt_now ();
   if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
-  bind_pat p a fenv
+  bind_param p a fenv
 
 (* `apply_c c (VFun (env, [p], body)) vx`, without the closure. *)
 and call1_c c env p body vx =
@@ -3567,7 +3576,7 @@ and call1_c c env p body vx =
   if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
   c.depth <- c.depth + 1;
   let v =
-    (try eval_in c true (bind_pat p vx env) body
+    (try eval_in c true (bind_param p vx env) body
      with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
   c.at_line <- line;
@@ -3580,8 +3589,18 @@ and call1_c c env p body vx =
 and app2_c c tail env fenv p1 p2 body va x =
   let env1 = bind_first_c c fenv p1 va in
   let vx = eval_in c false env x in
-  if tail then eval_in c true (bind_pat p2 vx env1) body
+  if tail then eval_in c true (bind_param p2 vx env1) body
   else call1_c c env1 p2 body vx
+
+(* `bind_pat` for a parameter: no list is a prefix, and there is no
+   optional argument, which made each call two. *)
+and bind_param (p : pat) v (env : env) : env =
+  match p with
+  | PVar name -> (name, v) :: env
+  | _ ->
+    let env' = match_pat false p v env in
+    if env' == no_match then raise (EvalError "pattern match failure")
+    else env'
 
 and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
   match p with
