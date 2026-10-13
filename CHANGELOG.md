@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.107.2] - 2026-10-13
+
+### Changed
+
+- `wand h p` shortens each help text to fit on one line.
+
 ## [0.107.1] - 2026-10-13
 
 ### Fixed
