@@ -2535,6 +2535,17 @@ Several functions can share one operation. `FS.read_file` and
 `FS.read_file!` both perform `FS!read_file`, so a test mocks reading a file
 once rather than once per wrapper.
 
+One case can intercept more than one operation. Write each operation after
+a `|` before the `->`. Each one names the continuation with the same name,
+and binds the same names with the same types:
+
+```ocaml
+| FS!write_file _ k | FS!append _ k | FS!create_file _ k -> k ()
+```
+
+A `return` case cannot share a case with an operation. [Several patterns in
+one arm](#several-patterns-in-one-arm) gives the full rule.
+
 A name that is not an operation is a type error, with the nearest real one
 suggested. A mistyped case would otherwise intercept nothing, and the effect
 it was written to hold back would run for real.
