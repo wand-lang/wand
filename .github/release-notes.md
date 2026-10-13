@@ -1,90 +1,74 @@
-## 0.106.0 - 2026-10-12
+## 0.107.0 - 2026-10-12
 
-This release makes wand faster. On the speed benchmark, the task
-`03-slowest` is about four times as fast as in 0.105.0, and `02-top-ips` and
-`09-distinct` are about two times as fast. wand is faster than Python on six
-of the fifteen tasks. The evaluator finds each variable by its position,
-reads the task state less often, reads stream lines in blocks, and makes
-fewer string copies. A list in `%{xs}` gives one command argument for each
-element. `List.smallest_by` and `List.greatest_by` give the first `n`
-elements by a key, without a sort.
+This release makes the evaluator faster and closes holes in how values go
+into a command. On the speed benchmark, each task now takes less than two
+times as long as Python. Nine fixes from an audit of the shell quoting
+against zx and Bun stop a value from being read as shell source: in
+arithmetic, between the author's double quotes, through a raw splice, and
+as an option. A `match` arm can have more than one pattern, and
+`Regex.capture` gives an `Option`.
 
 ### Upgrading
 
-- `%{xs}` with a `List` in a command gives one argument for each element,
-  not one argument that holds the text of the list. To keep one argument,
-  join the list first: `%{String.join " " xs}` (#113).
-- A `List` in `%!{...}` is a type error. Run `wand t --fix`, which changes
-  it to `%{...}` (#113).
-- A list of lists in `%{...}`, or a list between your own quotes in a
-  command, is a type error. Join the list to a `String` first (#113).
-- `List.sort_by` with a key function that has effects now has those effects
-  in its type. Run `wand t --fix` to add them to the manifest (#121).
-- A package that uses `Run(a)` with one name, `Ok ()` as a pattern, a list
-  in `%{...}`, `List.smallest_by` or `List.greatest_by` must require this
-  release in `wand.pkg`.
+- `HTTP.request` refuses a header name that is not an RFC 7230 token, and a
+  header value with a CR, LF or NUL byte. Use a token name, and remove line
+  breaks from values (#167).
+- A `%{x}` that bash reads as arithmetic (`-eq` and the other number tests
+  in `[[ ]]`, `let`, `declare`, `typeset`, `local`) must be an `Int`.
+  Convert the value with `Int.of_string` first. A `%{x}` after `-v` or
+  inside `( )` in `[[ ]]`, alone in `[[ ]]`, or as an argument of `unset`
+  is an error (#169).
+- A `%{x}` in the assignment of a variable that the same command reads as
+  arithmetic, as in `X=%{y}; echo $((X))`, must be an `Int`. Convert the
+  value with `Int.of_string` first (#177).
+- A command whose `%!{...}` text opens a quote and leaves it open, or
+  closes your quote, is refused. Close each quote in the same `%!{...}`
+  text (#170).
+- `Shell.in_dir` does not use `CDPATH`, and `-` is a directory named `-`.
+  Give the directory that you mean (#172).
+- A `Command` in `%{...}` or `%!{...}` is a type error. Run it with
+  `Shell.run!` and splice the `String`, or write both in one `$(...)`
+  (#174).
+- A `Path` that starts with `-` goes in as `./-...` where it starts a word.
+  A script that gave such a `Path` as an option must give a `String`
+  (#175).
+- `Regex.capture` gives an `Option (List String)`. Run `wand t --fix`,
+  which adds `|> Option.default []` after an old use and keeps what it did
+  (#126).
+- A package that uses an arm with more than one pattern must require this
+  release in `wand.pkg` (#141).
 
 ### Added
 
-- One name alone in a constructor's brackets puns, in a pattern and in a construction: `Run(a)` is `Run(a = a)` when `a` is a field of `Run` (#115).
-- `Ok ()`, `Some ()`, `Error ()` and a constructor of your own whose payload is `Unit` match `()` as the payload: `| Ok () -> ...` (#116).
-- `%{xs}` in a command with a `List` gives one quoted argument for each element, as `"$@"` does, and an empty list gives no argument (#113).
-- A list that holds lists in `%{...}` is a type error (#113).
-- A list in `%{...}` between the author's own quotes is a type error (#113).
-- A list in `%!{...}` is a type error, and `wand t --fix` changes the `%!{` to `%{` (#113).
-- `wand t` reports a `%!{x}` in a command where `x` is not a `String`, such as a `Path`, as `V-SHELL4`, and `wand t --fix` changes it to `%{x}` (#123).
-- `List.smallest_by n f xs` gives the `n` elements with the smallest keys, smallest first, without a sort of the whole list. It gives the same answer as `List.sort_by f xs |> List.take n` (#121).
-- `List.greatest_by n f xs` gives the `n` elements with the greatest keys, greatest first. Elements with equal keys keep their input order (#121).
-- `Stream.smallest_by` and `Stream.greatest_by` do the same over a stream. They read the stream once and keep only `n` elements (#121).
-- `wand t --fix` changes `List.nsmallest`, `List.least_by` and `List.k_smallest` to `List.smallest_by`, and `List.nlargest`, `List.largest_by` and `List.k_largest` to `List.greatest_by`. The same names on `Stream` change to the `Stream` functions (#121).
-- `List.top`, `List.min_by` and `List.max_by`, and the same names on `Stream`, give a hint that names `smallest_by` or `greatest_by` (#121).
+- `bench/serve.wand` measures the requests per second of `HTTP.serve!` against two Python servers (#155).
+- A `match` arm can have more than one pattern, `| p1 | p2 -> body`, also inside a pattern as `Some (1 | 2)`. A `handle` arm can name more than one operation (#141).
+- `V-ARM1` warns about a pattern of an arm that the patterns before it already match (#141).
 
 ### Changed
 
-- Stream lines are read in blocks, which makes line streams faster (#158).
-- A `;` at the end of a line inside a `( ... )` block continues an arm or branch body when the next line is at the body's column, as a newline does (#119).
-- In a construction of a record of one field, one name that is not the field fills that field: `B(x)` is `B(n = x)` (#115).
-- `wand f` keeps one name in a constructor's brackets as it is written, `Some(x)`, and no longer writes it as `Some x` (#115).
-- The benchmark harness gives a case's arguments to the program with one list splice, and takes any number of them (#113).
-- The benchmark harness writes its long `claude -p` command over several lines (#114).
-- The speed benchmark task `03-slowest` uses `Stream.smallest_by` and does not sort all the lines (#121).
-- `String.words` is faster (#122).
-- `String.split` with a delimiter of one character is faster (#122).
-- `String.lines` is faster (#122).
-- `String.words` does not copy a text that is one word (#160).
-- `String.slice` is faster (#160).
-- `String.starts_with?` is faster (#160).
-- `Int.of_string` is faster (#160).
-- `Stream.unique` over a stream of `String` is faster (#122).
-- A stream with `map`, `filter` or `filter_map` stages is faster for each element (#122).
-- A decoder derived from a type, as `JSON.decode Event.decoder`, is faster (#122).
-- `List.map`, `filter`, `filter_map`, `flat_map`, `fold_left`, `fold_right`, `find`, `any?`, `all?`, `take_while`, `drop_while`, `each`, `contains?`, `indexed`, `zip` and `take` are builtins. `List.find` over a long list is approximately seven times faster, and it calls the function on the same elements in the same order (#122).
-- A call to a wand function is approximately 15% faster (#122).
-- Each step of evaluation is cheaper. A loop that calls a function is approximately 25% faster, and a program that runs for ever still stops at once on Ctrl-C (#157).
-- A name that a function binds, such as a parameter or a `let`, is found by its place, and a name from outside the function is found once and kept. Speed tasks 02, 03 and 09 are approximately 30% faster (#156).
-- A builtin that calls a function for each element, such as `List.fold_left`, is faster (#159).
-- A call that gives two arguments to a function of two parameters, as in a fold or after `|>`, is faster (#159).
+- A pattern finds its constructor one time and keeps it, which makes pattern matching faster (#166).
+- The evaluator reads a variable or a module member with less work (#165).
+- The evaluator calls a function of one parameter with less work (#164).
+- The evaluator does less work at each position in the source (#162).
+- `String.words` is faster for a word longer than eight bytes (#163).
+- `String.words`, `String.slice`, `String.lines` and `String.split` copy a short piece of text faster (#163).
+- A `Command` in `%{...}` or `%!{...}`, also as a list element, is a type error. Before, it gave its source text (#174).
+- A `p.N` read can get the type of its tuple from a use further down the file. Before, the type had to come from the definition that reads the element (#154).
+- `wand t --fix` changes a bare constructor of a standard library module, such as `Sha256`, to `Digest.Sha256` when only one module has that constructor. When more than one module has it, the error names each one (#153).
+- `Regex.capture` gives an `Option (List String)`: `None` when the pattern does not match. Before, it gave `[]` (#126).
+- When an old use of `Regex.capture` is a type error, the error says that the value can be `None`, and `wand t --fix` adds `|> Option.default []` after the call. This keeps what the old use did (#126).
 
 ### Fixed
 
-- A function value bound by `let`, such as `let inc = add 1`, no longer sees its own new name inside the function it came from. A program where that name hid another one now runs as it typechecks (#156).
-- A constructor used as a function value, such as `Stream.filter_map Some`, is accepted over a stream that reads a file, as a lambda is (#120).
-- An effect mismatch on the left of a `|>` no longer gives the hint about `|>` taking the whole call (#120).
-- An unbound name that the same definition binds in another scope gives "'x' is bound at line N, but that binding is not in scope here", not the `wand d` hint (#119).
-- An error in a constructor pattern has a line and a column in a parameter and in a `let`, as it has in a `match` arm (#115).
-- An error in a constructor pattern inside another pattern points at the inner constructor (#115).
-- `wand f` keeps `Ok ()` with its space, and puts it in brackets where it is an argument: `f (Ok ()) x` (#116).
-- `wand f` keeps each `\` line continuation in a command and its line break, and indents the continued lines (#114).
-- `wand f` writes a command that opens on the line under `$?(` with the `)` under the line that opens it, not to the left of the command (#114).
-- V-SHELL2 does not report a newline before the first word or after the last word of a command (#114).
-- `V-SHELL1` says that a `%!{...}` splice can add words or commands, not that the first word is decided at run time, when the first word is a literal (#123).
-- The effects of the key function of `List.sort_by` are in the type of the call. Before, `List.sort_by` with a key that prints typechecked as pure (#121).
-- `List.contains?` on a list of more than 1,000,000 elements no longer stops with "too many nested calls" (#122).
-
-### Documentation
-
-- The reference says that one name alone puns (#115).
-- The reference shows `| Ok () ->` as a pattern (#116).
-- The reference tells how a list goes into a command (#113).
-- The reference tells how `wand f` writes a command that continues over lines (#114).
-- The reference and the `Shell.in_dir` doc say that a command, and a relative `dir`, use the current directory of the process, not the directory of the script (#118).
+- A `%{x}` value between the author's double quotes cannot end the quote in a Big5, GBK or GB18030 locale. The value goes in single-quoted between the two double-quoted parts (#168).
+- A `Path` that starts with `-` in `%{...}` at the start of a word, also as a list element, goes in with `./` in front, so that no command reads it as an option (#175).
+- `HTTP.request` refuses a header name that is not an RFC 7230 token and a header value with a CR, LF or NUL byte (#167).
+- A command longer than the system limit raises an error that `try` catches, and does not stop the script with a fatal error (#171).
+- `Shell.in_dir` does not use `CDPATH` and does not read `-` as `$OLDPWD`, so it runs a command in the same directory as `Shell.stream` (#172).
+- A command whose `%!{...}` text changes the quoting around a `%{...}` value is refused when it is built. Before, a raw `"` could put the value where the shell read it (#170).
+- A `%{x}` value that bash reads as arithmetic, as an operand of `-eq` and the other number tests in `[[ ]]` or as an argument of `let`, `declare`, `typeset` or `local`, must be an `Int`. Before, a value such as `a[$(cmd)]` ran `cmd` (#169).
+- A `%{x}` value after `-v` or inside `( )` in `[[ ]]`, alone in `[[ ]]`, or as an argument of `unset` is an error (#169).
+- The error for a value that is not an `Int` in arithmetic is at the value, and says why (#169).
+- A `\` and a newline inside single quotes in a command stay in the command, as `sh` keeps them. Before, they were removed as a line continuation (#173).
+- The check of a command at spawn takes a time in proportion to the length of the command. Before, a value of 900 KB added about 0.1 s, and a value with many `'` characters added minutes (#176).
+- A `%{x}` value in the assignment of a variable that the same command reads as arithmetic, as in `X=%{y}; echo $((X))`, must be an `Int`. Before, a value such as `a[$(cmd)]` ran `cmd` (#177).

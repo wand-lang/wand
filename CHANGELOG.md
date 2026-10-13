@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.107.0] - 2026-10-12
+
 ### Added
 
 - `bench/serve.wand` measures the requests per second of `HTTP.serve!` against two Python servers (#155).
