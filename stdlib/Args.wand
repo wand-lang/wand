@@ -197,6 +197,5 @@ let read : Parser 'a -> List String -> Result String 'a =
 -- false : Bool
 let help? args =
   match args with
-  | [] -> false
-  | ["--" :: _] -> false
+  | [] | ["--" :: _] -> false
   | [a :: rest] -> if a == "--help" then true else help? rest

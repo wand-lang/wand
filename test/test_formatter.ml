@@ -564,6 +564,39 @@ let ok_after_format label src expected =
 let fmt_eq label src expected =
   Alcotest.(check string) label (expected ^ "\n") (fmt src)
 
+(* The alternatives of an arm (#141): on one line when it fits, and one on
+   each line, each with its `|`, when it does not. Either way the output
+   parses, settles and runs as the source did. *)
+let test_or_patterns () =
+  let src =
+    "let f c =\n  match c with\n  | Some 1 | Some 2 -> \"low\"\n  | Some (3 | 4) -> \"mid\"\n  | _ -> \"high\"\n\n[f (Some 2), f (Some 4), f None]"
+  in
+  fmt_eq "one line where it fits" src src;
+  let narrow =
+    "let f c =\n  match c with\n  | Some 1\n  | Some 2 -> \"low\"\n  | Some (3 | 4) -> \"mid\"\n  | _ -> \"high\"\n\n[\n  f (Some 2),\n  f (Some 4),\n  f None\n]\n"
+  in
+  Alcotest.(check string) "one on each line where it does not"
+    narrow (Formatter.with_width 20 (fun () -> fmt src));
+  formats_and_parses "alternatives at a narrow margin" 20 src;
+  let joined =
+    "let f c =\n  match c with\n  | Some 1\n  | Some 2 -> \"low\"\n  | _ -> \"high\"\n\nf (Some 2)"
+  in
+  fmt_eq "joined again where they fit"
+    joined "let f c =\n  match c with\n  | Some 1 | Some 2 -> \"low\"\n  | _ -> \"high\"\n\nf (Some 2)";
+  let guarded = "match Ok 3 with\n| Ok x | Error x if x > 2 -> x\n| _ -> 0" in
+  fmt_eq "a guard after the last alternative" guarded guarded;
+  let handler =
+    "import FS\n\nlet quiet thunk =\n  handle thunk () with\n  | FS!write_file _ k | FS!append _ k -> k ()"
+  in
+  fmt_eq "operations that share a handle arm" handler handler;
+  Alcotest.(check string) "operations, one on each line"
+    "import FS\n\nlet quiet thunk =\n  handle thunk () with\n  | FS!write_file _ k\n  | FS!append _ k -> k ()\n"
+    (Formatter.with_width 30 (fun () -> fmt handler));
+  let run s = Runner.run_string s in
+  List.iter (fun w ->
+    Alcotest.(check (result string string)) (Printf.sprintf "runs the same at %d" w)
+      (run src) (run (Formatter.with_width w (fun () -> fmt src)))) [12; 22; 92]
+
 (* A constructor takes the bracket written after it, so `f None (x)` and
    `f (None (x))` are one tree to a reader that does not mark the second's
    brackets, and the formatter wrote the first as the second (#78). Both
@@ -2303,6 +2336,7 @@ let () =
   Alcotest.run "Formatter" [
     "idempotency", [
       Alcotest.test_case "snippets" `Quick test_idempotent_snippets;
+      Alcotest.test_case "or-patterns" `Quick test_or_patterns;
       Alcotest.test_case "byte escapes" `Quick test_byte_escapes_round_trip;
       Alcotest.test_case "stdlib"   `Quick test_idempotent_stdlib;
       Alcotest.test_case "parses at any margin" `Slow test_output_parses_at_any_margin;

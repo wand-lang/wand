@@ -2224,7 +2224,7 @@ let observed f =
 let clock_handlers = Atomic.make 0
 
 let clock_handled cases f =
-  if List.exists (fun (n, _, _, _) -> n = "Clock!sleep") cases then begin
+  if List.exists (fun (n, _, _, _, _) -> n = "Clock!sleep") cases then begin
     Atomic.incr clock_handlers;
     Fun.protect ~finally:(fun () -> Atomic.decr clock_handlers) f
   end else f ()
@@ -2465,6 +2465,22 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
         | Bare_fields fs -> match_places prefix fs vals env)
      | _ -> no_match)
   | PCtor (_, p, _) -> match_pat prefix p v env
+  (* The first alternative that matches. One after the first leaves its
+     names in the first one's order, which is where the resolver looks for
+     them. *)
+  | POr [] -> no_match
+  | POr (first :: rest) ->
+    let matched = match_pat prefix first v env in
+    if matched != no_match then matched
+    else match_alternatives prefix (Resolve.pattern_names first) rest v env
+
+and match_alternatives prefix names alts v env =
+  match alts with
+  | [] -> no_match
+  | p :: rest ->
+    let matched = match_pat prefix p v env in
+    if matched == no_match then match_alternatives prefix names rest v env
+    else in_order names matched env
 
 (* What `PConstrBare (name, ids)` does with a value of constructor [vname]
    that carries [arity] values, where [name] means [c]: what its reading
@@ -2547,6 +2563,12 @@ and match_named prefix field_names bindings vals env =
           let env = match_pat prefix p v env in
           if env == no_match then no_match
           else match_named prefix field_names rest vals env))
+
+(* [base] with [names] in front of it, in that order, each with the value
+   [matched] binds it to. [matched] is [base] with an alternative's names in
+   front, in the alternative's own order (#141). *)
+and in_order names matched base =
+  List.fold_left (fun acc n -> (n, List.assoc n matched) :: acc) base names
 
 let try_match ?(prefix = false) (p : pat) v (env : env) : env option =
   let env = match_pat prefix p v env in
@@ -3248,9 +3270,15 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     let cmd = command_line env e allow "$?(…)" in
     perform_shell "Shell!capture" allow (VString cmd)
   | Handle (body_expr, cases) ->
-    let effect_cases = List.filter_map (function
-      | Ast.EffectCase (n, p, k, b) -> Some (n, p, k, b)
-      | _ -> None) cases in
+    (* One entry for each operation an arm names. An operation after the
+       first carries the first one's names, the order its body was
+       resolved for. *)
+    let effect_cases = List.concat_map (function
+      | Ast.EffectCase ((_, first) :: _ as alts, k, b) ->
+        List.mapi (fun i (n, p) ->
+          (n, p, k, b,
+           if i = 0 then None else Some (Resolve.pattern_names first))) alts
+      | _ -> []) cases in
     let return_case = List.find_opt (function
       | Ast.ReturnCase _ -> true | _ -> false) cases in
     let apply_return v =
@@ -3289,12 +3317,16 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
             | WandEffect (op, arg) ->
               let rec try_cases = function
                 | [] -> (None : ((a, value) Effect.Deep.continuation -> value) option)
-                | (name, arg_pat, cont_name, case_body) :: rest ->
+                | (name, arg_pat, cont_name, case_body, names) :: rest ->
                   if name <> op then try_cases rest
                   else
                     match try_match arg_pat arg env with
                     | None -> try_cases rest
                     | Some env' ->
+                      let env' = match names with
+                        | None -> env'
+                        | Some names -> in_order names env' env
+                      in
                       Some (fun (k : (a, value) Effect.Deep.continuation) ->
                         (* A case that answers without resuming ends the body
                            it was handling. The body may be holding something

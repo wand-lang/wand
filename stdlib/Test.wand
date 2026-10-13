@@ -192,12 +192,12 @@ let shell_calls thunk =
 -- false : Bool
 let without_writes thunk =
   handle thunk () with
-  | FS!write_file _ k -> k ()
-  | FS!write_atomic _ k -> k ()
-  | FS!append _ k -> k ()
-  | FS!create_file _ k -> k ()
-  | FS!write_lines _ k -> k ()
-  | FS!append_lines _ k -> k ()
+  | FS!write_file _ k
+  | FS!write_atomic _ k
+  | FS!append _ k
+  | FS!create_file _ k
+  | FS!write_lines _ k
+  | FS!append_lines _ k
   | FS!write_lines_atomic _ k -> k ()
 
 -- Return the paths `thunk` would write contents to, in order, without
@@ -215,12 +215,13 @@ let without_writes thunk =
 -- [./pub.txt] : List Path
 let writes thunk =
   handle thunk () with
-  | FS!write_file arg k -> (let (path, _) = arg; let rest = k (); path :: rest)
-  | FS!write_atomic arg k -> (let (path, _) = arg; let rest = k (); path :: rest)
-  | FS!append arg k -> (let (path, _) = arg; let rest = k (); path :: rest)
-  | FS!create_file path k -> (let rest = k (); path :: rest)
-  | FS!write_lines path k -> (let rest = k (); path :: rest)
-  | FS!append_lines path k -> (let rest = k (); path :: rest)
+  | FS!write_file (path, _) k | FS!write_atomic (path, _) k | FS!append (path, _) k -> (
+    let rest = k ();
+    path :: rest
+  )
+  | FS!create_file path k
+  | FS!write_lines path k
+  | FS!append_lines path k
   | FS!write_lines_atomic path k -> (let rest = k (); path :: rest)
   | return _ -> []
 
@@ -301,8 +302,7 @@ let with_lock thunk =
 -- "stood down" : String
 let with_lock_held thunk =
   handle thunk () with
-  | FS!lock _ k -> k None
-  | FS!lock_wait _ k -> k None
+  | FS!lock _ k | FS!lock_wait _ k -> k None
   | FS!unlock _ k -> k ()
 
 -- Return the paths `thunk` would lock, in order, taking each one. What was

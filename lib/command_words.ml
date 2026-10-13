@@ -54,7 +54,7 @@ let children (e : Ast.expr) : Ast.expr list =
   | CmdInterp (parts, _) -> List.map (fun (_, e, _) -> e) parts
   | Handle (b, cases) ->
     b :: List.map (function
-      | Ast.EffectCase (_, _, _, x) | Ast.ReturnCase (_, x) -> x) cases
+      | Ast.EffectCase (_, _, x) | Ast.ReturnCase (_, x) -> x) cases
   | _ -> []
 
 (* The name `e` refers to, as the file writes it: `f`, or `K.f`. *)

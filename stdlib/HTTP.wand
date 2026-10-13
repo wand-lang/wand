@@ -282,8 +282,7 @@ let _header_pairs lines =
   lines
   |> List.filter_map (fn line ->
     match String.split ":" line with
-    | [] -> None
-    | [_] -> None
+    | [] | [_] -> None
     | [name :: rest] -> Some (
       String.lower (String.trim name),
       String.trim (String.join ":" rest)

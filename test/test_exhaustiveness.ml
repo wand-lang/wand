@@ -201,6 +201,40 @@ let test_witness_copyable () =
     "let f o = match o with | Some [] -> 0 | None -> 1"
     "missing case, e.g. Some [_ :: _] -- add an arm for it: | Some [_ :: _] -> ..."
 
+(* ── Or-patterns (#141) ─────────────────────────────────────────────────── *)
+
+(* The check reads each alternative as an arm of its own, and each binds the
+   same names with the same types. *)
+let test_or_patterns () =
+  ok "alternatives cover every constructor"
+    "let f o = match o with | Some _ | None -> 1; f None" "1";
+  ok "nested alternatives cover a payload"
+    "let f o = match o with | Some (true | false) -> 1 | None -> 0; f (Some true)" "1";
+  err_contains "an alternative short of a case"
+    "let f o = match o with | Some 1 | None -> 1"
+    "missing case, e.g. Some _";
+  err_contains "a nested alternative short of a case"
+    "let f o = match o with | Some (Ok _ | Error 1) -> 1 | None -> 0"
+    "missing case, e.g. Some (Error _)";
+  err_contains "a guarded arm covers nothing, whatever its alternatives"
+    "let f o = match o with | Some x | Some x if x > 0 -> 1 | None -> 0"
+    "missing case, e.g. Some _";
+  err_contains "a name one alternative leaves out"
+    "let f r = match r with | Ok y | Error z -> 1"
+    "`Ok y` binds 'y' and `Error z` does not";
+  err_contains "a name the first alternative leaves out"
+    "let f r = match r with | Ok _ | Error z -> 1"
+    "`Error z` binds 'z' and `Ok _` does not";
+  err_contains "a name with two types"
+    "let f (r : Result String Int) = match r with | Ok y | Error y -> 1"
+    "'y' is Int in `Ok y` and String in `Error y`";
+  err_contains "the error points at the alternative"
+    "let f r =\n  match r with\n  | Ok y | Error z -> 1"
+    "3:12: the alternatives of a pattern bind the same names";
+  err_contains "the operations of one handle arm bind with one type"
+    "import FS\nlet q b = handle b () with | FS!write_file a k | FS!create_file a k -> k ()"
+    "'a' is (Path, String) in `FS!write_file a k` and Path in `FS!create_file a k`"
+
 (* ── Suite ────────────────────────────────────────────────────────────────── *)
 
 let () =
@@ -213,4 +247,5 @@ let () =
     "adt", [ Alcotest.test_case "adt" `Quick test_adt ];
     "map", [ Alcotest.test_case "map" `Quick test_map ];
     "witness", [ Alcotest.test_case "witness is copyable" `Quick test_witness_copyable ];
+    "or-patterns", [ Alcotest.test_case "or-patterns" `Quick test_or_patterns ];
   ]

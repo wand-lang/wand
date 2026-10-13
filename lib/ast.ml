@@ -100,6 +100,13 @@ type pat =
      constraint on the pattern under it, not a pattern of its own. *)
   | PAnnot        of pat * type_expr
   | PMap          of (string * pat) list
+  (* `p1 | p2 | ...`: matches when one of its alternatives matches, tried
+     in the order written. Each alternative binds the same names with the
+     same types, which the typechecker holds it to, so the body sees one set
+     of names whichever alternative matched. At the top of an arm the parser
+     wraps each alternative in a `PLocated` of its own, so a finding about
+     one alternative can point at it. Always two or more. *)
+  | POr           of pat list
   (* A `match` arm's pattern and where it was written. A pattern has no
      position of its own, so V-CTOR1 searched the source for the name and
      could find it in a guard instead (#109). Only an arm's pattern is
@@ -246,7 +253,12 @@ type expr =
 and case = pat * expr option * expr
 
 and handle_case =
-  | EffectCase of string * pat * string * expr  (* op, arg_pat, cont_name, body *)
+  (* The operations and the pattern each one's argument is matched with,
+     then the continuation's name and the body. One operation for an arm
+     written `| FS!append p k -> ...`; several for `| FS!append p k |
+     FS!write_file p k -> ...`, which share the continuation and the body
+     and bind the same names. *)
+  | EffectCase of (string * pat) list * string * expr
   | ReturnCase of pat * expr
 
 (* Which reading `PConstrBare` carries, once the declaration says whether the
@@ -349,6 +361,8 @@ let rec pat_names (p : pat) =
     List.concat_map (fun (_, p) -> pat_names p) kvs
   | PConstrBare (_, ids) -> ids
   | PAnnot (p, _) | PLocated (_, p) | PCtor (_, p, _) -> pat_names p
+  (* Every alternative binds the same names; the first says which. *)
+  | POr (p :: _) -> pat_names p
   | _ -> []
 
 (* The position a `Field` label names when it is the index of a tuple
@@ -409,6 +423,7 @@ let rec show_pat : pat -> string = function
   | PMap kvs ->
     "{" ^ String.concat ", " (List.map (fun (k, p) -> k ^ " = " ^ show_pat p) kvs) ^ "}"
   | PAnnot (p, _)  -> show_pat p
+  | POr ps         -> "(" ^ String.concat " | " (List.map show_pat ps) ^ ")"
   | PLocated (_, p) | PCtor (_, p, _) -> show_pat p
 
 let rec show : expr -> string = function
@@ -510,8 +525,11 @@ let rec show : expr -> string = function
     Buffer.contents buf
   | Handle (body, cases) ->
     let show_handle_case = function
-      | EffectCase (op, p, k, b) ->
-        Printf.sprintf "(| %s %s %s -> %s)" op (show_pat p) k (show b)
+      | EffectCase (alts, k, b) ->
+        Printf.sprintf "(| %s -> %s)"
+          (String.concat " | "
+             (List.map (fun (op, p) -> Printf.sprintf "%s %s %s" op (show_pat p) k) alts))
+          (show b)
       | ReturnCase (p, b) ->
         Printf.sprintf "(| return %s -> %s)" (show_pat p) (show b)
     in

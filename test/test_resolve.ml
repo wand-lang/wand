@@ -29,7 +29,7 @@ let rec slots (e : expr) : (string * string) list =
   | Tuple es | List es -> List.concat_map s es
   | Handle (b, cases) ->
     s b @ List.concat_map (function
-      | EffectCase (_, _, _, b) | ReturnCase (_, b) -> s b) cases
+      | EffectCase (_, _, b) | ReturnCase (_, b) -> s b) cases
   | With (r, _, b) -> s r @ s b
   | LetRec (bs, b, _) -> List.concat_map (fun (_, _, x) -> s x) bs @ s b
   | Interp (parts, _) -> List.concat_map (fun (_, e) -> s e) parts

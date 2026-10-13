@@ -5,6 +5,8 @@
 ### Added
 
 - `bench/serve.wand` measures the requests per second of `HTTP.serve!` against two Python servers (#155).
+- A `match` arm can have more than one pattern, `| p1 | p2 -> body`, also inside a pattern as `Some (1 | 2)`. A `handle` arm can name more than one operation (#141).
+- `V-ARM1` warns about a pattern of an arm that the patterns before it already match (#141).
 
 ### Changed
 

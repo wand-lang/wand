@@ -496,7 +496,7 @@ let walk_expr ?(spine = false) start_loc (e : Ast.expr) : finding list =
       go b;
       List.iter (function
         | Ast.ReturnCase (_, x) -> go x
-        | Ast.EffectCase (_, _, _, x) -> go x) cases
+        | Ast.EffectCase (_, _, x) -> go x) cases
     | Ast.Contract (reqs, ens, body) ->
       List.iter go reqs; List.iter go ens; go body
     | _ -> ()
@@ -559,8 +559,9 @@ let rec names_of_expr (e : Ast.expr) : string list =
     names_of_expr b
     @ List.concat_map (function
         | Ast.ReturnCase (p, x) -> names_of_pat p @ names_of_expr x
-        | Ast.EffectCase (op, p, _, x) ->
-          op :: names_of_pat p @ names_of_expr x) cases
+        | Ast.EffectCase (alts, _, x) ->
+          List.concat_map (fun (op, p) -> op :: names_of_pat p) alts
+          @ names_of_expr x) cases
   | Ast.With (r, p, b) -> names_of_expr r @ names_of_pat p @ names_of_expr b
 
 and names_of_pat (p : Ast.pat) : string list =
@@ -574,6 +575,7 @@ and names_of_pat (p : Ast.pat) : string list =
   | Ast.PMap kvs -> List.concat_map (fun (_, p) -> names_of_pat p) kvs
   | Ast.PAnnot (p, te) -> names_of_pat p @ names_of_type_expr te
   | Ast.PLocated (_, p) -> names_of_pat p
+  | Ast.POr ps -> List.concat_map names_of_pat ps
   (* A binder introduces a name rather than using one, so it contributes
      nothing: an import is not kept alive by something else shadowing it. *)
   | _ -> []
@@ -658,7 +660,8 @@ let names_of_item_types (item : Ast.top_item) : string list =
       te_of_expr b
       @ List.concat_map (function
           | Ast.ReturnCase (p, x) -> te_of_pat p @ te_of_expr x
-          | Ast.EffectCase (_, p, _, x) -> te_of_pat p @ te_of_expr x) cases
+          | Ast.EffectCase (alts, _, x) ->
+            List.concat_map (fun (_, p) -> te_of_pat p) alts @ te_of_expr x) cases
     | Ast.With (r, p, b) -> te_of_expr r @ te_of_pat p @ te_of_expr b
     | _ -> []
   and te_of_pat (p : Ast.pat) =
@@ -669,6 +672,7 @@ let names_of_item_types (item : Ast.top_item) : string list =
     | Ast.PCons (h, t) -> te_of_pat h @ te_of_pat t
     | Ast.PConstrNamed (_, kvs) | Ast.PMap kvs ->
       List.concat_map (fun (_, p) -> te_of_pat p) kvs
+    | Ast.POr ps -> List.concat_map te_of_pat ps
     | _ -> []
   in
   match item with
@@ -799,12 +803,22 @@ let ctor1_findings ?source () =
         text; fix = None })
     !Typechecker.relaxed_ctors
 
+(* V-ARM1: the alternatives the typechecker found that the patterns before
+   them already match. A definition the checker reads twice reports one
+   twice, so each place is said once. *)
+let arm1_findings () =
+  List.map (fun (loc, alternative) ->
+    { rule = Lint_rules.V_ARM1;
+      loc = (match loc with Some l -> l | None -> Token.point 1 1 0);
+      text = Lint_rules.arm1 ~alternative; fix = None })
+    (List.sort_uniq compare !Typechecker.redundant_alternatives)
+
 (* `expression` is an answer asked for -- `wand t --expr`, the REPL -- rather
    than a file: its last value is what was asked, a function or not. *)
 let rec check ?source ?(expression = false) (prog : Ast.program)
     (item_locs : (Token.loc * Token.loc) list)
     (own_env : Typechecker.env) : finding list =
-  bidi_findings ?source () @ ctor1_findings ?source ()
+  bidi_findings ?source () @ ctor1_findings ?source () @ arm1_findings ()
   @ check_items ?source ~expression prog item_locs own_env
 
 and check_items ?source ~expression (prog : Ast.program) (item_locs : (Token.loc * Token.loc) list)
