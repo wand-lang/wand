@@ -496,12 +496,14 @@ let test_large_values () =
     (timed "assignment" 1.0 (fun () ->
        words ("X=" ^ q (String.make 200_000 '\'') ^ " git log")));
   (* The same, end to end, under a narrowed manifest, which is where the
-     spawn scans the line. *)
+     spawn scans the line. Linux takes at most 128 KiB in one argument, and
+     the whole line is one argument of `bash -c`, so the value is smaller
+     here: 20,000 quotes are about 80 KB when quoted. *)
   run "a long value of quotes reaches the command whole"
     "uses {Shell(printf, wc)}\nimport String\n\
-     let v = String.repeat 200000 \"'\"\n\
+     let v = String.repeat 20000 \"'\"\n\
      String.trim $(printf %s %{v} | wc -c)"
-    "200000"
+    "20000"
 
 let () =
   Alcotest.run "shell scan" [
