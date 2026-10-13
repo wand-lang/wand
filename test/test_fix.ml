@@ -627,6 +627,67 @@ let test_empty_list_sum_of_a_parameter () =
         on it");
   Alcotest.(check bool) "and no fix" true (d.Diag.fix = None)
 
+(* `Regex.capture` gives an Option since #126; it gave `[]` for no match.
+   A use written for the List does not typecheck, and the fix adds
+   `|> Option.default []`, which keeps what the use meant: a match always
+   has the whole match first, so the answer is never `Some []`. *)
+let old_captures = {|import List
+import Regex
+let host line =
+  match Regex.capture r/^(\w+)@(\w+)$/ line with
+  | [_, _, h] -> h
+  | _ -> "none"
+let count s = List.length (Regex.capture r/\d+/ s)
+let first s = s |> Regex.capture r/(\d+)/ |> List.head
+let groups = List.length (Regex.capture r/(a)(b)?/ "a")
+let missed = Regex.capture r/x/ "abc" == []
+(host "u@h", host "nope", count "abc", count "a1", first "x9", first "x", groups, missed)
+|}
+
+let test_capture_hint () =
+  let d = type_error old_captures in
+  Alcotest.(check bool) "the match names the change" true
+    (Lint.contains d.Diag.message
+       "expected Option (List String), got List 'a; Regex.capture gives \
+        None when the pattern does not match: match on Some and None, or \
+        add |> Option.default []")
+
+let test_capture_fix () =
+  let (fixed, applied) = fix_clean old_captures in
+  Alcotest.(check string) "each old use gets Option.default []"
+    {|import List
+import Option
+import Regex
+let host line =
+  match (Regex.capture r/^(\w+)@(\w+)$/ line |> Option.default []) with
+  | [_, _, h] -> h
+  | _ -> "none"
+let count s = List.length (Regex.capture r/\d+/ s |> Option.default [])
+let first s = (s |> Regex.capture r/(\d+)/ |> Option.default []) |> List.head
+let groups = List.length (Regex.capture r/(a)(b)?/ "a" |> Option.default [])
+let missed = (Regex.capture r/x/ "abc" |> Option.default []) == []
+(host "u@h", host "nope", count "abc", count "a1", first "x9", first "x", groups, missed)
+|}
+    fixed;
+  Alcotest.(check bool) "by the E-TYPE fix" true
+    (List.mem "E-TYPE" (codes applied));
+  Alcotest.(check (result string string)) "and it runs as the old code did"
+    (Ok {|("h", "none", 0, 1, Some("9"), None, 3, true)|})
+    (Runner.run_string fixed)
+
+(* A use that typechecks with the Option is left as it is. *)
+let test_capture_new_use_left () =
+  let src = {|import Regex
+let f s =
+  match Regex.capture r/(a)/ s with
+  | Some [_, a] -> a
+  | _ -> ""
+let g s = Regex.capture r/b/ s
+|} in
+  let (fixed, applied) = fix src in
+  Alcotest.(check string) "nothing changes" src fixed;
+  Alcotest.(check (list string)) "and nothing is applied" [] (codes applied)
+
 (* No fix for `List.max` and `List.min`, no fix where the call stands twice,
    and no hint for an Option that comes from somewhere else. *)
 let test_empty_list_not_offered () =
@@ -935,6 +996,10 @@ let () =
         test_empty_list_sum_of_a_parameter;
       Alcotest.test_case "List.sum, max, min: not offered" `Quick
         test_empty_list_not_offered;
+      Alcotest.test_case "Regex.capture: the hint" `Quick test_capture_hint;
+      Alcotest.test_case "Regex.capture: the fix" `Quick test_capture_fix;
+      Alcotest.test_case "Regex.capture: a new use is left" `Quick
+        test_capture_new_use_left;
       Alcotest.test_case "a replacement is checked" `Quick
         test_replace_at_is_checked;
       Alcotest.test_case "a qualified constructor's import" `Quick

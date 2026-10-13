@@ -3,6 +3,7 @@ import List
 import Regex
 import String
 import Result
+import Option
 import Par
 
 -- ── Literals ────────────────────────────────────────────────────────────
@@ -30,19 +31,24 @@ test "flags dotall off by default" (fn t -> t.eq false (Regex.match? r/a.b/ "a\n
 
 -- ── Regex.capture ──────────────────────────────────────────────────────
 
-test "capture no match returns empty list" (fn t ->
-  t.eq 0 (List.length (Regex.capture r/\d+/ "abc")))
+test "capture no match is None" (fn t -> t.eq None (Regex.capture r/\d+/ "abc"))
 test "capture full match at index 0" (fn t ->
-  t.eq "123" (List.head! (Regex.capture r/\d+/ "abc123")))
+  t.eq (Some ["123"]) (Regex.capture r/\d+/ "abc123"))
 test "capture groups" (fn t ->
-  t.eq ["user@host", "user", "host"] (Regex.capture r/(\w+)@(\w+)/ "user@host"))
+  t.eq (Some ["user@host", "user", "host"]) (Regex.capture r/(\w+)@(\w+)/ "user@host"))
 test "capture two groups" (fn t ->
-  t.eq ["2026-05", "2026", "05"] (Regex.capture r/^(\d+)-(\d+)$/ "2026-05"))
+  t.eq (Some ["2026-05", "2026", "05"]) (Regex.capture r/^(\d+)-(\d+)$/ "2026-05"))
 test "capture pattern match on result" (fn t ->
   match Regex.capture r/^(\S+)\s+(\d+)/ "foo 42" with
-  | [] -> t.eq "foo:42" "no match"
-  | [_, name, num] -> t.eq "foo:42" "%{name}:%{num}"
-  | _ -> t.eq "foo:42" "other")
+  | None -> t.eq "foo:42" "no match"
+  | Some [_, name, num] -> t.eq "foo:42" "%{name}:%{num}"
+  | Some _ -> t.eq "foo:42" "other")
+test "capture a match of the empty string is Some, not None" (fn t ->
+  t.eq (Some [""]) (Regex.capture r/x*/ "abc"))
+test "capture a group that matches nothing is an empty string" (fn t ->
+  t.eq (Some ["a", "a", ""]) (Regex.capture r/(a)(b)?/ "a"))
+test "capture with Option.default [] gives [] for no match, as before #126" (fn t ->
+  t.eq [] (Regex.capture r/\d+/ "abc" |> Option.default []))
 
 -- ── Regex.replace ───────────────────────────────────────────────────
 
@@ -75,7 +81,7 @@ test "match_all tokenizer-style alternation" (fn t ->
 -- ── Regex module ────────────────────────────────────────────────────────
 
 test "Regex.match?" (fn t -> t.ok (Regex.match? r/\d+/ "abc123"))
-test "Regex.capture" (fn t -> t.eq ["123", "123"] (Regex.capture r/(\d+)/ "abc123"))
+test "Regex.capture" (fn t -> t.eq (Some ["123", "123"]) (Regex.capture r/(\d+)/ "abc123"))
 test "Regex.replace" (fn t -> t.eq "aXb2" (Regex.replace r/\d+/ "X" "a1b2"))
 test "Regex.replace_all" (fn t -> t.eq "aXbX" (Regex.replace_all r/\d+/ "X" "a1b2"))
 test "Regex.split" (fn t -> t.eq ["a", "b", "c"] (Regex.split r/,/ "a,b,c"))

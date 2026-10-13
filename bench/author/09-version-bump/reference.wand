@@ -18,7 +18,7 @@ let bump part (major, minor, patch) =
 
 let parse! text =
   match Regex.capture r/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ text with
-  | [_, major, minor, patch] -> Some (
+  | Some [_, major, minor, patch] -> Some (
     Int.of_string! major,
     Int.of_string! minor,
     Int.of_string! patch

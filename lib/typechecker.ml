@@ -1846,16 +1846,28 @@ let offer_to_string ~arg x ~expected ~got =
    change for `List.sum`. *)
 let empty_offer : (string * typ * Diag.fix option) option ref = ref None
 
-(* The function of `List` that `x` calls, when it is one of the three. *)
+(* The function that `x` calls, when it is one of the three, or
+   `Regex.capture` given both of its arguments. `Regex.capture` gave `[]`
+   for no match until it gave an Option (#126), so `Option.default []` keeps
+   what a use written for the List meant: a match always has the whole
+   match as its first element, so `Some []` cannot occur. *)
 let empty_list_call (x : expr) =
   let is_one f =
     match module_member f with
     | Some ("List", ("sum" | "max" | "min" as n)) -> Some n
     | _ -> None
   in
+  let is_capture f =
+    match module_member f with
+    | Some ("Regex", "capture") -> Some "capture"
+    | _ -> None
+  in
   match strip_located x with
-  | App (f, _) -> is_one f
-  | BinOp ("|>", _, f) -> is_one f
+  | App (f, _) | BinOp ("|>", _, f) ->
+    (match is_one f, strip_located f with
+     | (Some _ as n), _ -> n
+     | None, App (g, _) -> is_capture g
+     | None, _ -> None)
   | _ -> None
 
 (* The zero of a type that `List.sum` adds, as it is written in source. *)
@@ -1867,17 +1879,19 @@ let zero_of t =
   | TDuration -> Some "0s"
   | _ -> None
 
-(* Record the offer for `x` when it is a call to `List.sum`, `List.max` or
-   `List.min` and its type `got` is `Option T`. The change for `List.sum`
-   puts `|> Option.default <zero>` after the call, in brackets, and only
-   when the extent of the call is certain. When the element type is not
+(* Record the offer for `x` when it is a call to `List.sum`, `List.max`,
+   `List.min` or `Regex.capture` and its type `got` is `Option T`. The
+   change for `List.sum` puts `|> Option.default <zero>` after the call,
+   and the one for `Regex.capture` `|> Option.default []`, in brackets, and
+   only when the extent of the call is certain. When the element type is not
    known yet, `other` decides it: the type on the other side of the error,
    which the element must be. *)
 let offer_empty_default ?other x got =
   match empty_list_call x, repr got with
   | Some n, TApp (TName "Option", elt) ->
     let zero =
-      if n <> "sum" then None
+      if n = "capture" then Some "[]"
+      else if n <> "sum" then None
       else
         match zero_of elt, repr elt, other with
         | (Some _ as z), _, _ -> z
@@ -1886,6 +1900,10 @@ let offer_empty_default ?other x got =
     in
     let hint =
       match zero with
+      | Some z when n = "capture" ->
+        Printf.sprintf "Regex.capture gives None when the pattern does not \
+                        match: match on Some and None, or add \
+                        |> Option.default %s" z
       | Some z ->
         Printf.sprintf "List.%s gives None for an empty list: add \
                         |> Option.default %s" n z
@@ -5006,7 +5024,8 @@ let rec infer tenv (env : env) (e : expr) : typ =
     let ts       = infer tenv env scrutinee in
     let result_t = fresh () in
     List.iter (fun (p, guard, body) ->
-      let env' = infer_pat tenv p ts env in
+      let env' =
+        check_empty_default scrutinee ts (fun () -> infer_pat tenv p ts env) in
       (match guard with
        | None   -> ()
        | Some g -> unify_expected ~expected:TBool ~got:(infer tenv env' g));
@@ -6644,7 +6663,7 @@ let stdlib_type_env : env = [
   ("str_to_duration",  generalize [] ((TString @-> TResult (TString, TDuration))));
   (* Regex primitives *)
   ("regex_match",       generalize [] ((TRegex @-> (TString @-> TBool))));
-  ("regex_capture",     generalize [] ((TRegex @-> (TString @-> TList TString))));
+  ("regex_capture",     generalize [] ((TRegex @-> (TString @-> TApp (TName "Option", TList TString)))));
   ("regex_replace",     generalize [] ((TRegex @-> (TString @-> (TString @-> TString)))));
   ("regex_replace_all", generalize [] ((TRegex @-> (TString @-> (TString @-> TString)))));
   ("regex_split",       generalize [] ((TRegex @-> (TString @-> TList TString))));

@@ -16,7 +16,7 @@ let pattern = r/(connection refused|timeout waiting for lock).*ms=(\d+)$/
 
 let ms line =
   match Regex.capture pattern line with
-  | [_, _, n] -> Int.of_string n |> Result.to_option
+  | Some [_, _, n] -> Int.of_string n |> Result.to_option
   | _ -> None
 
 match Proc.args () with

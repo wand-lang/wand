@@ -17,6 +17,8 @@
 - A `Command` in `%{...}` or `%!{...}`, also as a list element, is a type error. Before, it gave its source text (#174).
 - A `p.N` read can get the type of its tuple from a use further down the file. Before, the type had to come from the definition that reads the element (#154).
 - `wand t --fix` changes a bare constructor of a standard library module, such as `Sha256`, to `Digest.Sha256` when only one module has that constructor. When more than one module has it, the error names each one (#153).
+- `Regex.capture` gives an `Option (List String)`: `None` when the pattern does not match. Before, it gave `[]` (#126).
+- When an old use of `Regex.capture` is a type error, the error says that the value can be `None`, and `wand t --fix` adds `|> Option.default []` after the call. This keeps what the old use did (#126).
 
 ### Fixed
 

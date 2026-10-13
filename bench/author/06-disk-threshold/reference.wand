@@ -12,7 +12,7 @@ import String
 -- One line of `df -P` as its capacity and mount point.
 let usage_of line =
   match Regex.capture r/^[^ ]+ +[0-9]+ +[0-9]+ +[0-9]+ +([0-9]+)% +(.+)$/ (String.trim line) with
-  | [_, capacity, mount] ->
+  | Some [_, capacity, mount] ->
     Int.of_string capacity |> Result.to_option |> Option.map (fn c -> (c, mount))
   | _ -> None
 

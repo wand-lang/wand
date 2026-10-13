@@ -1812,11 +1812,22 @@ A byte is `\x` and two hex digits, inside a character class or outside one.
 
 ```ocaml
 Regex.match?      r/\d+/ "abc123"          -- true
-Regex.capture     r/(\w+)@(\w+)/ "a@b"     -- ["a@b", "a", "b"]
+Regex.capture     r/(\w+)@(\w+)/ "a@b"     -- Some ["a@b", "a", "b"]
+Regex.capture     r/(\w+)@(\w+)/ "nope"    -- None
 Regex.replace     r/\d+/ "X" "a1b2"        -- "aXb2"
 Regex.replace_all r/\d+/ "X" "a1b2"        -- "aXbX"
 Regex.split       r/\s+/ "a  b   c"        -- ["a", "b", "c"]
 Regex.match_all   r/\d+/ "a1b22c333"       -- ["1", "22", "333"]
+```
+
+`capture` gives the whole match first, then one element per group, and
+`None` when the pattern does not match. A group that matches nothing is an
+empty string. Match on the answer:
+
+```ocaml
+match Regex.capture r/^(\w+)@(\w+)$/ line with
+| Some [_, user, host] -> "%{user} at %{host}"
+| _ -> "not an address"
 ```
 
 `match_all` returns each match in order. The matches do not overlap. Use it
@@ -5071,7 +5082,7 @@ try (Port.of_string! ":99999")  -- Error (invalid port :99999: must be 0-65535)
 compile     : String -> Result String Regex
 compile!    : String -> Regex ! {Raise}
 match?      : Regex -> String -> Bool
-capture     : Regex -> String -> List String
+capture     : Regex -> String -> Option (List String)
 replace     : Regex -> String -> String -> String
 replace_all : Regex -> String -> String -> String
 split       : Regex -> String -> List String
