@@ -1,0 +1,17 @@
+found:     Daily Fuzz, seed 38332881043, iteration 117005 (#179)
+reported:  format:unstable -- wand f is not idempotent here
+fixed in:  lib/formatter.ml, emit_binop
+
+A `with` body goes as far right as it can, so a `with` that is the left
+operand of an operator needs its bracket. `emit_binop` kept the bracket on
+`try`, `fn`, `match`, `let` and the other forms of this kind, but not on
+`with`. So the first pass changed the program:
+
+    (with a as d -> (x; y)) - 1
+    with a as d -> (x; y) - 1     <- the `- 1` is now in the body
+
+When the body wrapped, the first pass put the body's `(` on the `->`
+line. The second pass read the `(` as the left operand of `-`, which is
+not a bracket that a `with` body opens on its own, and moved it to a new
+line. That difference is what the fuzzer saw. `emit_chain` already kept
+the bracket on `with`; `emit_binop` now does too.

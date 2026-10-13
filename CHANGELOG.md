@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wand f` keeps the brackets on a `with` that is an operand of an operator. Before, the operator went into the `with` body (#179).
+
 ## [0.107.0] - 2026-10-12
 
 ### Added

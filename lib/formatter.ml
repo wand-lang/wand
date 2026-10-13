@@ -1993,9 +1993,13 @@ and emit_binop ?col indent op a b =
       if ok then inner else bracket inner
     (* These extend as far to the right as they can, so an operand needs
        parentheses or the operator is swallowed into it: `(try e) == x`
-       printed bare re-parses as `try (e == x)`. *)
+       printed bare re-parses as `try (e == x)`. `with` is one of them:
+       `(with r as d -> x) - 1` printed bare re-parses as
+       `with r as d -> (x - 1)`. The first pass changed the program, and
+       when the body wrapped, the second pass put its bracket on a new
+       line. Found by test/fuzz (#179). *)
     | (Try _ | Handle _ | Contract _ | Fn _ | If _ | Unless _ | Match _
-      | Let _ | LetRec _) as inner -> bracket (emit_expr indent inner)
+      | Let _ | LetRec _ | With _) as inner -> bracket (emit_expr indent inner)
     (* An operand that wrapped ends at its first line, so the rest of it
        reads as something new -- the operator having said nothing about how
        far its right side goes. *)

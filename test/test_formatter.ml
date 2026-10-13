@@ -2083,6 +2083,26 @@ let test_a_with_body_opens_its_bracket_on_the_arrow_line () =
   )
 |}
 
+(* A `with` body goes as far right as it can, so a `with` on the left of an
+   operator keeps its bracket. Without it, `(with r as d -> x) - 1` came back
+   as `with r as d -> x - 1`, and the operator went into the body. When the
+   body wrapped, a second pass then moved the body's bracket to a new line.
+   Found by test/fuzz (#179). *)
+let test_a_with_as_an_operand_keeps_its_bracket () =
+  let src = {|(with a as d -> x) - 1|} in
+  fmt_eq "on the left" src src;
+  fmt_eq "on the right" {|1 - (with a as d -> x)|} {|1 - (with a as d -> x)|};
+  let wide =
+    {|(with a as d -> (x; yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy)) - 1|}
+  in
+  fmt_eq "a body that wraps"
+    wide
+    {|(with a as d -> (
+  x;
+  yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+)) - 1|};
+  assert_idempotent "a body that wraps is a fixed point" wide
+
 (* A binding among a block's statements takes the block's `;`, whatever
    joined it to its body. It used to keep an `in` written by hand, so one
    block held both spellings -- tools/check_docs.wand did.
@@ -2444,6 +2464,8 @@ let () =
         test_an_in_among_statements_takes_the_semicolon;
       Alcotest.test_case "a with body opens its bracket on the arrow line" `Quick
         test_a_with_body_opens_its_bracket_on_the_arrow_line;
+      Alcotest.test_case "a with as an operand keeps its bracket" `Quick
+        test_a_with_as_an_operand_keeps_its_bracket;
       Alcotest.test_case "a pun reads back" `Quick
         test_a_pun_reads_back_as_the_field_it_came_from;
       Alcotest.test_case "an arm before a semicolon" `Quick
