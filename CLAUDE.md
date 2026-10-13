@@ -253,7 +253,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 |---|---|
 | `-- comment`, and a run of them above a definition is its doc | `//`, `#`, `(* block *)` |
 | `fn x -> x + 1` | `fun`, `\x ->`, `lambda` |
-| `h :: t` cons, `[h :: t]` in patterns | `:` for cons, `(x : xs)` |
+| `h :: t` cons, `[h :: t]` and `[a, b :: t]` in patterns | `:` for cons, `(x : xs)` |
 | `"hi %{name}"` interpolation | `${x}`, `#{x}`, f-strings |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `let f n = ...` (already recursive) | `let rec` |
@@ -266,6 +266,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `type D(port "Port": Int)` a field's key in a document | a hand-written decoder for one odd key |
 | `type Shape = Circle Int \| Rect Int Int` | `Circle of Int` |
 | `\| Some 1 \| Some 2 -> e` one arm, several patterns (each binds the same names); `Some (1 \| 2)` inside a pattern | the arm written again for each pattern |
+| `\| Ok n if n > 0 -> e` a guard | `when` |
 | `try e` yields a `Result` | `try ... with`, `raise` |
 | `Ok x`, `Error e` | `Err e` |
 | `IO.println_err` to stderr | `eprintln`, `prerr_endline` |

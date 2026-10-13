@@ -76,3 +76,10 @@ as an option. A `match` arm can have more than one pattern, and
 ### Documentation
 
 - The reference tells how a `handle` case intercepts more than one operation, in the section on effect handlers (#141).
+- The reference says that `wand f` keeps one name in brackets, `Run(a)` and `Some(x)`, as written (#115).
+- The reference shows the error for a name whose binding is in another scope of the same definition (#119).
+- The reference describes `List.smallest_by` and `List.greatest_by`, with an example (#121).
+- The reference shows the `[_ :: _ :: _]` arm that a match on a list asks for (#134).
+- The reference lists `.*.txt` in the table of glob literals (#138).
+- The reference says that a tuple index has no leading zero (#144).
+- The reference says that a list has no `xs[1]` index, and names `List.get` and `List.get!` (#145).

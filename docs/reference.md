@@ -505,7 +505,7 @@ you gave where a `Duration` belongs.
 | Type | Example literals |
 |---|---|
 | `Path` | `/etc/hosts` `/home/user/file.txt` `./relative` |
-| `Glob` | `*.wand` `./**/*.ml` `**.wand` |
+| `Glob` | `*.wand` `.*.txt` `./**/*.ml` `**.wand` |
 | `DateTime` | `2024-01-15T14:30:00Z` `2024-01-15T09:00:00+05:30` `2024-01-15` |
 | `Duration` | `5min` `1h30m` `2d` `500ms` `1w` |
 | `URL` | `https://example.com` `http://localhost:8080/api` |
@@ -1224,7 +1224,15 @@ let g xs = match xs with | [x] -> x
 ```
 
 `[x]` matches a list of exactly one element. A match on a list needs an arm
-for `[]`, or a last `| _ ->` arm.
+for `[]`, or a last `| _ ->` arm. A list that is too long has its arm
+written in the same form:
+
+```ocaml
+let h xs = match xs with | [] -> 0 | [x] -> x
+-- wand t: type error: non-exhaustive match: no arm matches a list of two or
+--   more elements -- add an arm for it: | [_ :: _ :: _] -> ..., or | _ -> ...
+--   for every list the arms leave out
+```
 
 A guard (`if`) can fail to fire, so a guarded case never covers anything
 by itself. It always needs a plain case beside it.
@@ -1267,6 +1275,9 @@ never `p` and the `Float` `0.1`:
 let nested = ((1, 2), 3)
 nested.0.1             -- 2
 ```
+
+An index has no leading zero. `p.01` is a lex error that says to write
+`p.1`.
 
 The type of the tuple must be known by the end of the file, not at the
 read itself. An argument written after a
@@ -1315,6 +1326,18 @@ let empty = []
 
 1 :: [2, 3]            -- cons: [1, 2, 3]
 1 :: 2 :: 3 :: []      -- [1, 2, 3]
+```
+
+A list has no `xs[1]` index. An element is read with `List.get`, which
+gives an `Option`, or with `List.get!`, which raises. `xs[1]` is a type error
+that names the two:
+
+```ocaml
+xs[1]
+-- type error: use List.get 1 xs (as an Option) or List.get! 1 xs
+
+List.get 1 xs          -- Some(2)
+List.get! 1 xs         -- 2
 ```
 
 List patterns:
@@ -3986,6 +4009,9 @@ let x = 2
 B(x)                    -- B(n = 2)
 ```
 
+`wand f` keeps one name in brackets as it is written: `Run(a)` and
+`Some(x)` stay as they are, and do not become `Run(a = a)` or `Some x`.
+
 `wand f` writes a construction's puns all or none: every field puns, or every
 field carries its name. The update above is a spelling that a mixed one can
 be read as, and that is why. A pattern is not written under
@@ -5077,6 +5103,17 @@ List.max [1.9.0, 1.10.0]                    -- Some(1.10.0), by precedence
 [`<`](#comparison-and-ord) does. For the larger of two values rather than of
 a list, each ordered type has the same pair: `Int.max`, `Duration.max`, and
 so on.
+
+`smallest_by n f xs` gives the n elements with the smallest keys, smallest
+first. It gives the same answer as `List.sort_by f xs |> List.take n`, but it
+keeps only n elements and does not sort the whole list. `greatest_by n f xs`
+gives the n elements with the greatest keys, greatest first. Elements with
+equal keys keep their input order:
+
+```ocaml
+List.smallest_by 2 String.length ["ccc", "a", "bb", "d"]    -- ["a", "d"]
+List.greatest_by 2 String.length ["ccc", "a", "bb", "dd"]   -- ["ccc", "bb"]
+```
 
 `each` takes the element, as `map` and `filter` do, and returns `Unit`. Use
 it for effects. wand drops what the function returns. So a command that you run
@@ -8717,6 +8754,18 @@ Error: type error: 5:11: unbound variable 'gamma' -- 'wand d' lists the modules,
 A fresh variable unifies with anything, so nothing below the miss reports a
 consequence of it as a mistake of its own. Each name is reported once,
 however many times it is written: the same name twice is one mistake.
+
+A name that the same definition binds in another scope gets a different
+message. It gives the line of that binding, and says that the binding does
+not reach the use:
+
+```ocaml
+let f x =
+  let g = (let y = 1 in y)
+  y
+-- type error: unbound variable 'y' -- 'y' is bound at line 2, but that
+--   binding is not in scope here
+```
 
 Every other error still stops where it stood. A type that did not fit leaves
 the wrong type behind, and carrying on from one invents mistakes the file
