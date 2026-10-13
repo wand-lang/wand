@@ -265,12 +265,14 @@ test "a raw splice that closes its own quotes is accepted" (fn t ->
 -- ── Large values ─────────────────────────────────────────────────────────
 
 -- A long value is one argument, with each byte in place, by the direct
--- path and through the shell (#176).
+-- path and through the shell (#176). Linux takes at most 128 KiB in one
+-- argument, and the line is one argument of `bash -c`, so the value is
+-- 20,000 quotes: about 80 KB when quoted.
 test "a long value reaches the command whole" (fn t ->
-  let v = String.repeat 200000 "'";
+  let v = String.repeat 20000 "'";
   let bare = String.trim $(printf %s %{v} | wc -c);
   let quoted = String.trim $(printf %s "%{v}" | wc -c);
-  t.eq "200000 200000" "%{bare} %{quoted}")
+  t.eq "20000 20000" "%{bare} %{quoted}")
 
 -- ── A variable read as arithmetic ────────────────────────────────────────
 
