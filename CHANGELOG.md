@@ -34,6 +34,8 @@
 - A `%{x}` value after `-v` or inside `( )` in `[[ ]]`, alone in `[[ ]]`, or as an argument of `unset` is an error (#169).
 - The error for a value that is not an `Int` in arithmetic is at the value, and says why (#169).
 - A `\` and a newline inside single quotes in a command stay in the command, as `sh` keeps them. Before, they were removed as a line continuation (#173).
+- The check of a command at spawn takes a time in proportion to the length of the command. Before, a value of 900 KB added about 0.1 s, and a value with many `'` characters added minutes (#176).
+- A `%{x}` value in the assignment of a variable that the same command reads as arithmetic, as in `X=%{y}; echo $((X))`, must be an `Int`. Before, a value such as `a[$(cmd)]` ran `cmd` (#177).
 
 ## [0.106.0] - 2026-10-12
 

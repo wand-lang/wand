@@ -407,6 +407,54 @@ let test_bash_arithmetic () =
   run_err "a String operand of -eq is a type error at the value"
     "uses {Shell}\nlet x = \"1\"\n$?([[ %{x} -eq 0 ]])" "must be an Int, not String"
 
+(* bash reads the value of a variable again as arithmetic where the variable
+   is an arithmetic operand, so `X=%{y}; echo $((X))` runs the `$(cmd)` in a
+   value `a[$(cmd)]`. A value assigned to a variable that the same command
+   reads as arithmetic must be an Int (#177). *)
+let test_arithmetic_variables () =
+  let check src want =
+    Alcotest.(check (list string)) src want
+      (Array.to_list (Array.map show (ctx_of src)))
+  in
+  check "X=%; echo $((X))" ["arith"];
+  check "X=%; echo $(( $X + 1 ))" ["arith"];
+  check "X=%; echo $(( ${X} ))" ["arith"];
+  check "X=\"%\"; echo \"$((X * 2))\"" ["arith"];
+  check "X='%'; (( X > 1 ))" ["arith"];
+  check "X=%; [[ $X -eq 0 ]]" ["arith"];
+  check "X=%; [[ 0 -lt \"$X\" ]]" ["arith"];
+  check "X=%; [[ X -eq 0 ]]" ["arith"];
+  check "X=%; let n=X+1" ["arith"];
+  check "X=%; let \"n = $X\"" ["arith"];
+  check "X=%; declare -i n=$X" ["arith"];
+  check "X=%; declare -i n=X" ["arith"];
+  check "X=%; f() { local n=$X; }" ["arith"];
+  check "export X=%; echo $((X))" ["arith"];
+  check "X+=%; echo $((X))" ["arith"];
+  check "X=pre%post; echo $((X))" ["arith"];
+  check "X=$(date)%; echo $((X))" ["arith"];
+  check "X=(% %); echo $((X))" ["arith"; "arith"];
+  check "X=%; for ((i = 0; i < X; i++)); do :; done" ["arith"];
+  check "echo $((X)); X=%" ["arith"];
+  (* Through a second variable. *)
+  check "X=%; Z=$X; echo $((Z))" ["arith"];
+  check "X=%; Z=\"a${X}\"; [[ $Z -gt 1 ]]" ["arith"];
+  (* Not read as arithmetic: as before. *)
+  check "X=%; echo \"$X\"" ["arg"];
+  check "X=%; echo $((Y))" ["arg"];
+  check "X=%; [[ $X == a ]]" ["arg"];
+  check "X=%; test \"$X\" -eq 0" ["arg"];
+  check "X=%; declare -r n=X" ["arg"];
+  check "X=\"%\"; ./argv.sh \"$X\"" ["inside \""];
+  check "X=%; Y=$((Z)); echo \"$X\"" ["arg"];
+  check "echo X=% $((X))" ["arith"];
+  check "X=$(cat %); echo $((X + 1))" ["arg"];
+  run_err "a String assigned to a variable read as arithmetic is a type error"
+    "uses {Shell}\nlet y = \"a[$(id)]\"\n$?(X=%{y}; echo $((X)))"
+    "must be an Int, not String";
+  run "an Int assigned to a variable read as arithmetic goes in"
+    "uses {Shell(echo)}\nlet y = 4\n$(X=%{y}; echo $((X * 2)))" "8"
+
 (* A raw control byte in a command is refused, and no diagnostic prints one
    to the terminal: an ESC in a command word cleared the screen and hid the
    text after it. *)
@@ -420,8 +468,46 @@ let test_control_bytes () =
        Alcotest.failf "the diagnostic still carries a raw ESC: %S" m
    | Ok v -> Alcotest.failf "expected a refusal, got %s" v)
 
+(* The spawn reads a resolved command line again, with every value in it, so
+   the scan must take a time in proportion to the length of the line (#176).
+   A value of many `'` read the whole word again at each one: 20,000 of them
+   took the scan most of a second, and 100,000 took it minutes. *)
+let test_large_values () =
+  let timed label limit f =
+    let t = Unix.gettimeofday () in
+    let r = f () in
+    let took = Unix.gettimeofday () -. t in
+    if took > limit then
+      Alcotest.failf "%s: the scan took %.2f s, more than %.1f s" label took limit;
+    r
+  in
+  let q = Evaluator.shell_quote in
+  let words text = (scan_string text).words in
+  Alcotest.(check (list word)) "a value of 1 MB of x"
+    [Literal "git"; Literal "wc"]
+    (timed "x" 1.0 (fun () ->
+       words ("git log " ^ q (String.make 1_000_000 'x') ^ " | wc -c")));
+  Alcotest.(check (list word)) "a value of 200,000 quotes"
+    [Literal "git"; Literal "wc"]
+    (timed "quotes" 1.0 (fun () ->
+       words ("git log " ^ q (String.make 200_000 '\'') ^ " | wc -c")));
+  Alcotest.(check (list word)) "an assignment value of 200,000 quotes"
+    [Literal "git"]
+    (timed "assignment" 1.0 (fun () ->
+       words ("X=" ^ q (String.make 200_000 '\'') ^ " git log")));
+  (* The same, end to end, under a narrowed manifest, which is where the
+     spawn scans the line. *)
+  run "a long value of quotes reaches the command whole"
+    "uses {Shell(printf, wc)}\nimport String\n\
+     let v = String.repeat 200000 \"'\"\n\
+     String.trim $(printf %s %{v} | wc -c)"
+    "200000"
+
 let () =
   Alcotest.run "shell scan" [
+    "large values", [
+      Alcotest.test_case "the scan is linear" `Quick test_large_values;
+    ];
     "arithmetic", [
       Alcotest.test_case "closing early is a command" `Quick
         test_arithmetic_that_closes_early_is_checked;
@@ -432,6 +518,8 @@ let () =
     "a %{} value is data", [
       Alcotest.test_case "quoted for its context or refused" `Slow test_hole_safety;
       Alcotest.test_case "bash arithmetic" `Quick test_bash_arithmetic;
+      Alcotest.test_case "variables read as arithmetic" `Quick
+        test_arithmetic_variables;
     ];
     "control bytes", [
       Alcotest.test_case "refused, and not echoed" `Slow test_control_bytes;

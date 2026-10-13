@@ -97,11 +97,78 @@ type frame =
        the command and on the words on each side of it, so the holes are
        settled when the command ends. `dbl` is set from `[[` to `]]`. *)
     mutable cmd : string; mutable args : string list;
-    mutable holes : (int * int) list; mutable dbl : bool }
+    mutable holes : (int * int) list; mutable dbl : bool;
+    (* The variable whose value this frame is part of (#177). `own` is set
+       for `NAME=( ... )`, where each word of the frame is an element of the
+       array. `tail` is set for `NAME=$(...)`, where the text after the
+       `)` is still the value of NAME. *)
+    own : string option; tail : string option }
 
-let new_frame ?(bt = false) ?(arith = false) ?(assign = false) ?(group = false) () =
+let new_frame ?(bt = false) ?(arith = false) ?(assign = false) ?(group = false)
+    ?own ?tail () =
   { q = QNone; bt; arith; pdepth = 0; assign; group;
-    cmd = ""; args = []; holes = []; dbl = false }
+    cmd = ""; args = []; holes = []; dbl = false; own; tail }
+
+(* ── Variables read as arithmetic (#177) ──────────────────────────────────
+   bash reads the value of a variable as an arithmetic expression where the
+   variable is an arithmetic operand, so `X=%{y}; echo $((X))` runs the
+   `$(cmd)` in a value `a[$(cmd)]` although the value went in quoted. The
+   scan finds each variable that a `%{}` value is assigned to, and each
+   variable that the command reads as arithmetic. A value in the assignment
+   of a variable that is read as arithmetic must be an `Int`. *)
+
+let is_name_start c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c = '_'
+let is_name_char c = is_name_start c || (c >= '0' && c <= '9')
+
+(* Each name in arithmetic text: a run of name characters that starts with a
+   letter or `_`. The end of a number such as `0x1f` is not a name. *)
+let idents s =
+  let n = String.length s and out = ref [] and i = ref 0 in
+  while !i < n do
+    if is_name_char s.[!i] then begin
+      let j = ref !i in
+      while !j < n && is_name_char s.[!j] do incr j done;
+      if is_name_start s.[!i] then out := String.sub s !i (!j - !i) :: !out;
+      i := !j
+    end else incr i
+  done;
+  !out
+
+(* Each name that a word expands with `$NAME` or `${NAME...}`. *)
+let dollar_refs s =
+  let n = String.length s and out = ref [] in
+  String.iteri (fun i c ->
+    if c = '$' then begin
+      let j = ref (i + 1) in
+      if !j < n && s.[!j] = '{' then begin
+        incr j;
+        while !j < n && (s.[!j] = '!' || s.[!j] = '#') do incr j done
+      end;
+      if !j < n && is_name_start s.[!j] then begin
+        let k = ref !j in
+        while !k < n && is_name_char s.[!k] do incr k done;
+        out := String.sub s !j (!k - !j) :: !out
+      end
+    end) s;
+  !out
+
+(* The variable that a word assigns: `NAME=`, `NAME+=` or `NAME[...]=` at its
+   start. *)
+let assign_name w =
+  let n = String.length w in
+  if n = 0 || not (is_name_start w.[0]) then None
+  else begin
+    let j = ref 0 in
+    while !j < n && is_name_char w.[!j] do incr j done;
+    let name = String.sub w 0 !j in
+    let eq_at e = (e < n && w.[e] = '=') || (e + 1 < n && w.[e] = '+' && w.[e + 1] = '=') in
+    if !j < n && w.[!j] = '[' then
+      (match String.index_from_opt w !j ']' with
+       | Some e when eq_at (e + 1) -> Some name
+       | _ -> None)
+    else if eq_at !j then Some name
+    else None
+  end
 
 (* Words that bash reads again as arithmetic, where a quoted value is still
    evaluated and `a[$(cmd)]` in it runs the command. In `[[ ... ]]`, the
@@ -146,18 +213,26 @@ let settle cmd prev next ctx =
   else ctx
 
 (* One command template's atoms, holes kept apart from the text so look-ahead
-   can step over one without reading into it. *)
-type atom = Ch of char | Hole of int
-
-let atoms_of (segs : seg list) : atom array * bool array =
-  let atoms = ref [] and raws = ref [] and k = ref 0 in
+   can step over one without reading into it. A character is its code, and
+   hole `k` is `-(k + 1)`. An array of unboxed ints, and not a list of boxed
+   atoms, because a resolved command line can hold a value of a megabyte, and
+   the spawn reads it again (#176). *)
+let atoms_of (segs : seg list) : int array * bool array =
+  let len = List.fold_left (fun n seg ->
+      match seg with Lit s -> n + String.length s | _ -> n + 1) 0 segs in
+  let atoms = Array.make len 0 in
+  let nholes = List.fold_left (fun n seg ->
+      match seg with Lit _ -> n | _ -> n + 1) 0 segs in
+  let raws = Array.make nholes false in
+  let j = ref 0 and k = ref 0 in
   List.iter (fun seg ->
     match seg with
-    | Lit s -> String.iter (fun c -> atoms := Ch c :: !atoms) s
-    | QuotedHole -> atoms := Hole !k :: !atoms; raws := false :: !raws; incr k
-    | RawHole    -> atoms := Hole !k :: !atoms; raws := true  :: !raws; incr k)
+    | Lit s ->
+      String.iter (fun c -> atoms.(!j) <- Char.code c; incr j) s
+    | QuotedHole | RawHole ->
+      atoms.(!j) <- -(!k + 1); raws.(!k) <- (seg = RawHole); incr j; incr k)
     segs;
-  (Array.of_list (List.rev !atoms), Array.of_list (List.rev !raws))
+  (atoms, raws)
 
 (* The scan, over the atoms of one command template. `stop_at_raw` is set for
    the word list: after a `%!{...}` the rest of the line is shell source
@@ -165,7 +240,7 @@ let atoms_of (segs : seg list) : atom array * bool array =
    set -- a raw splice is the author's own, and a `%{}` after it is still
    read for the quoting it needs, on the best-effort assumption the raw text
    left the quoting as it found it. *)
-let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
+let run (atoms : int array) (raws : bool array) ~stop_at_raw =
   let n = Array.length atoms in
   let words = ref [] in
   let buf = Buffer.create 16 in
@@ -195,19 +270,71 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
      `av=b`; the buffer holds the text with the quoting gone, and read alone
      it said assignment, which hid that command from the list. *)
   let name_plain = ref true in
+  (* Whether `mark_name` has settled `name_plain` for this word. Once it has,
+     the answer cannot change until the word ends, and asking again read the
+     whole word each time: a value of many `'` made the scan quadratic. *)
+  let name_settled = ref false in
   (* The command contexts open now, innermost first; the base frame is the
      line itself. *)
   let frames = ref [ new_frame () ] in
   let cur () = List.hd !frames in
   let in_arith () = (cur ()).arith in
   let mark_name () =
-    if not (String.contains (Buffer.contents buf) '=') then name_plain := false in
+    if not !name_settled then begin
+      name_settled := true;
+      if not (String.contains (Buffer.contents buf) '=') then name_plain := false
+    end in
   let assignment w = is_assignment w && !name_plain in
+  (* For #177: each variable the command reads as arithmetic; each `%{}`
+     value with the variable it is part of the value of; each variable whose
+     value has `$NAME` in it, with that NAME; the holes in the word being
+     read now; and the variable of a `NAME=$(...)` that just closed, whose
+     value goes on to the end of the word. *)
+  let arith_reads = Hashtbl.create 8 in
+  let reads l = List.iter (fun x -> Hashtbl.replace arith_reads x ()) l in
+  let owned = ref [] and deps = ref [] in
+  let word_holes = ref [] and tail_name = ref None in
+  (* A word ends: find the variables it is part of the value of. *)
+  let note_word w =
+    let f = cur () in
+    if f.arith then reads (idents w);
+    let owners =
+      Option.to_list f.own @ Option.to_list !tail_name
+      @ (if !name_plain && not f.arith then Option.to_list (assign_name w)
+         else []) in
+    List.iter (fun o ->
+      List.iter (fun k -> owned := (o, k) :: !owned) !word_holes;
+      List.iter (fun r -> deps := (o, r) :: !deps) (dollar_refs w))
+      owners;
+    word_holes := []; tail_name := None
+  in
   (* The end of a simple command: each hole in it gets its context from the
      command and from the words on each side of it. *)
   let close_cmd f =
     let args = Array.of_list (List.rev f.args) in
     let word j = if j >= 0 && j < Array.length args then args.(j) else "" in
+    (* The variables the command reads as arithmetic: an operand of `-eq`
+       and the other number tests in `[[ ]]`, each name in an argument of
+       `let`, and in an argument of `declare`, `typeset` or `local` each
+       `$NAME`, and with `-i` or `-a` each name in a value. *)
+    if f.cmd = "[[" then
+      Array.iteri (fun j a ->
+        if List.mem a arith_ops then
+          (reads (idents (word (j - 1))); reads (idents (word (j + 1)))))
+        args
+    else if f.cmd = "let" then Array.iter (fun a -> reads (idents a)) args
+    else if List.mem f.cmd arith_arg_commands then begin
+      let numeric = Array.exists (fun a ->
+          String.length a > 1 && a.[0] = '-'
+          && (String.contains a 'i' || String.contains a 'a')) args in
+      Array.iter (fun a ->
+        reads (dollar_refs a);
+        if numeric then
+          match String.index_opt a '=' with
+          | Some e -> reads (idents (String.sub a (e + 1) (String.length a - e - 1)))
+          | None -> ())
+        args
+    end;
     List.iter (fun (k, idx) ->
       match ctxs.(k) with
       | HArg | HInside _ -> ctxs.(k) <- settle f.cmd (word (idx - 1)) (word (idx + 1)) ctxs.(k)
@@ -221,7 +348,8 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let dynamic = !has_hole in
     has_hole := false;
     let assign = assignment w in
-    name_plain := true;
+    note_word w;
+    name_plain := true; name_settled := false;
     let f = cur () in
     let counts = not (in_arith ()) && not (w = "" && not dynamic) in
     let text = if dynamic then "\000" else w in
@@ -284,10 +412,22 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let assign =
       value && !expecting && not !skip_target && not (in_arith ())
       && assignment (Buffer.contents buf) in
-    if assign then (Buffer.clear buf; has_hole := false; name_plain := true)
-    else (if value then has_hole := true; finish_word ());
+    (* The variable the new frame is part of the value of, if any: each word
+       of `NAME=( ... )`, and the text after `NAME=$(...)`. *)
+    let buf_name () =
+      if !name_plain && not (in_arith ()) then assign_name (Buffer.contents buf)
+      else None in
     let group = not bt && not arith && not value in
-    frames := new_frame ~bt ~arith ~assign ~group () :: !frames;
+    let own = if group then buf_name () else None in
+    let tail =
+      if value && not (in_arith ()) then
+        (match buf_name () with Some x -> Some x | None -> !tail_name)
+      else None in
+    if assign then (note_word (Buffer.contents buf);
+                    Buffer.clear buf; has_hole := false; name_plain := true;
+                    name_settled := false)
+    else (if value then has_hole := true; finish_word ());
+    frames := new_frame ~bt ~arith ~assign ~group ?own ?tail () :: !frames;
     expecting := not arith;
     at_word_start := true
   in
@@ -295,7 +435,11 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     finish_word ();
     let resumed =
       match !frames with
-      | top :: (_ :: _ as rest) -> close_cmd top; frames := rest; top.assign
+      | top :: (_ :: _ as rest) ->
+        close_cmd top; frames := rest;
+        (* `NAME=$(...)rest`: the rest is still the value of NAME. *)
+        if top.tail <> None then tail_name := top.tail;
+        top.assign
       | _ -> false
     in
     (* A prefix's own `$(...)` leaves the command word still to come; any
@@ -304,7 +448,7 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     else expecting := false;
     at_word_start := true
   in
-  let at j = if j >= 0 && j < n then (match atoms.(j) with Ch c -> c | Hole _ -> '\000') else '\000' in
+  let at j = if j >= 0 && j < n && atoms.(j) >= 0 then Char.unsafe_chr atoms.(j) else '\000' in
   (* `$((...))` vs `$( (...) )`: the shell reads `$((` as arithmetic only
      when it closes with `))`. Look ahead over the atoms, counting parens
      from the two just opened and ignoring holes, to tell them apart before
@@ -314,13 +458,13 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
     let depth = ref 2 and j = ref start and prev = ref ' ' and prev2 = ref ' '
     and arith = ref false and stop = ref false in
     while not !stop && !j < n do
-      (match atoms.(!j) with
-       | Ch '(' -> incr depth; prev2 := !prev; prev := '('
-       | Ch ')' -> decr depth; prev2 := !prev; prev := ')';
+      (match at !j with
+       | '(' -> incr depth; prev2 := !prev; prev := '('
+       | ')' -> decr depth; prev2 := !prev; prev := ')';
          if !depth = 0 then
            (arith := (!prev = ')' && !prev2 = ')'); stop := true)
-       | Ch c -> prev2 := !prev; prev := c
-       | Hole _ -> prev2 := !prev; prev := 'x');
+       | '\000' -> prev2 := !prev; prev := 'x'
+       | c -> prev2 := !prev; prev := c);
       incr j
     done;
     !arith
@@ -346,8 +490,9 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
   let peek_ch k = at (!i + k) in
   (try
     while !i < n do
-      (match atoms.(!i) with
-       | Hole k ->
+      (let a = atoms.(!i) in
+       if a < 0 then begin
+         let k = -a - 1 in
          if raws.(k) then begin
            raw_tail := true;
            if stop_at_raw then begin
@@ -365,10 +510,12 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
                 HErr "a `%{}` value cannot go inside ( ) in [[ ]]"
               | _ -> hole_ctx ());
            f.holes <- (k, List.length f.args) :: f.holes;
+           word_holes := k :: !word_holes;
            mark_name (); has_hole := true; at_word_start := false
          end;
          incr i
-       | Ch c ->
+       end else
+         let c = Char.unsafe_chr a in
          (match !hd_active with
           | Some delim ->
             (* In a heredoc body: match the delimiter line, and keep the
@@ -507,7 +654,23 @@ let run (atoms : atom array) (raws : bool array) ~stop_at_raw =
          end))
     done;
     finish_word ();
-    List.iter close_cmd !frames
+    List.iter close_cmd !frames;
+    (* A variable whose value goes into a variable read as arithmetic is
+       read as arithmetic too: `Z=$X; echo $((Z))` reads the value of X. *)
+    let changed = ref true in
+    while !changed do
+      changed := false;
+      List.iter (fun (o, r) ->
+        if Hashtbl.mem arith_reads o && not (Hashtbl.mem arith_reads r) then
+          (Hashtbl.replace arith_reads r (); changed := true))
+        !deps
+    done;
+    List.iter (fun (o, k) ->
+      if Hashtbl.mem arith_reads o then
+        match ctxs.(k) with
+        | HArg | HInside _ -> ctxs.(k) <- HArith
+        | HArith | HErr _ -> ())
+      !owned
   with Exit -> ());
   ({ words = List.rev !words; raw_tail = !raw_tail }, ctxs)
 

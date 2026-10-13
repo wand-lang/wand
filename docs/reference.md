@@ -1687,6 +1687,31 @@ $?([[ %{n} -gt 2 ]])        -- n must be an Int
 $?([[ %{name} == admin ]])  -- any value: it is text here
 ```
 
+bash also reads the value of a variable as arithmetic where the variable is
+an arithmetic operand: `$((X))`, `((X))`, an operand of `-eq` and the other
+number tests in `[[ ... ]]`, an argument of `let`, and `$X` in an argument
+of `declare`, `typeset` or `local`. So a `%{x}` in the value of `X=`,
+`X+=`, `X[i]=` or `X=( ... )` must be an `Int` when the same command reads
+`X` there. This also applies through a second variable: `Z=$X` passes the
+value of `X` to `Z`.
+
+```ocaml
+$?(X=%{n}; echo $((X + 1)))       -- n must be an Int
+$?(X=%{name}; echo "$X")          -- any value: X is not arithmetic
+```
+
+wand reads only the text of the one command. These still go to arithmetic
+without a check, so do not give them a value that is not an `Int`:
+
+- a value that reaches the variable through the output of a command, as in
+  `X=$(cat %{f})`;
+- a variable that a command reads in another shell, as in
+  `X=%{y} bash -c 'echo $((X))'`, or in an `eval` text;
+- a variable that comes from the environment, such as one that
+  `Env.set` gave;
+- an array subscript (`${a[X]}`), a `${s:X}` offset, and the old `$[X]`
+  form.
+
 **A list gives one argument for each element.** `%{xs}` with a `List` puts
 each element in as one quoted argument, as `"$@"` does in a shell. An empty
 list gives no argument. This is how a command takes a number of arguments
