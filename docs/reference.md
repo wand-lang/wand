@@ -1211,8 +1211,8 @@ let nested = ((1, 2), 3)
 nested.0.1             -- 2
 ```
 
-The type of the tuple must be known by the end of the top-level definition
-that reads the element, not at the read itself. An argument written after a
+The type of the tuple must be known by the end of the file, not at the
+read itself. An argument written after a
 lambda gives it its type, so `List.filter (fn p -> p.1 > 0) pairs` is
 accepted, and so is a lambda given straight to a fold with its initial
 value. A function can also give the type itself, as this fold step does in
@@ -1223,8 +1223,20 @@ let step acc line = if line == "" then acc else (acc.0 + 1, acc.1)
 List.fold_left step (0, 0) ["a", "", "b"]   -- (2, 0)
 ```
 
-A use of the function in a later definition is too late: a parameter with
-nothing else to go on in its own definition needs its type written:
+When the definition does not give the type, a use further down the file
+gives it. Until then the definition is not generic in that type, so it has
+one type in the file: the first use gives it, and a use with a different
+tuple is a type error.
+
+```ocaml
+let render e = "%{e.1} %{e.0}"
+render ("a", 1)        -- "1 a"
+render (1, "a")
+-- type error: expected String, got Int
+```
+
+A parameter that nothing in the file gives a type needs its type written.
+The error is at the read:
 
 ```ocaml
 let second p = p.1
@@ -8704,7 +8716,10 @@ through a field gets the type that has the field, and lines read as one
 expression get the brackets and the `;` that the message shows. A value of
 type `T` where a `String` is expected gets `T.to_string` around it, when
 the module `T` has `to_string`: `expected String, got Path; Path.to_string
-gives its text`. `String.of_int` becomes `Int.to_string`. An error
+gives its text`. `String.of_int` becomes `Int.to_string`. A bare
+constructor of a standard library module, such as `Sha256`, becomes
+`Digest.Sha256` when only one module has that constructor, and the import
+is the next fix. An error
 whose change is a choice, such as a guess by spelling or two types that have
 the field, keeps only its text. A fix applies only where the text at its
 extent is the text it replaces, and only when the file still parses after

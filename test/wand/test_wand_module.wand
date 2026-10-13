@@ -107,3 +107,12 @@ test "check_at names the path in what it finds" (fn t ->
     let c = Wand.check_at! door `1 + "a"`;
     t.eq [Path.to_string door] (List.map (fn (x: Wand.Diagnostic) -> x.file) c.diagnostics)
   ))
+
+-- A bare constructor of a standard library module: the error names the
+-- module (#153).
+test "a bare stdlib constructor names its module" (fn t ->
+  let found = (Wand.check "let x = Sha256\n").diagnostics;
+  t.ok
+    (List.any?
+      (fn (d: Wand.Diagnostic) -> String.contains? "'Sha256' is 'Digest.Sha256'" d.message)
+      found))

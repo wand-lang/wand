@@ -725,6 +725,43 @@ let test_destructured_module_local () =
   Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
   Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
 
+(* A bare constructor of a standard library module (#153). One module has
+   it, so the module's name is the one correct change; the import is the
+   next fix when the file has none. *)
+let test_bare_stdlib_constructor () =
+  let src = "import Hash\nimport Path\nlet f! p = Hash.file! Sha256 p\n" in
+  let d = type_error src in
+  Alcotest.(check bool) "names the module" true
+    (Lint.contains (Diag.legacy d) "'Sha256' is 'Digest.Sha256'");
+  Alcotest.(check (option (pair int int))) "at the constructor" (Some (3, 23))
+    (Option.map (fun (l : Token.loc) -> (l.Token.line, l.Token.col)) d.Diag.loc);
+  let (fixed, applied) = fix_clean src in
+  Alcotest.(check bool) "qualified" true
+    (Lint.contains fixed "Hash.file! Digest.Sha256 p\n");
+  Alcotest.(check bool) "and imported" true (Lint.contains fixed "import Digest\n");
+  Alcotest.(check bool) "the qualification is a fix of its own" true
+    (List.exists (fun a -> Lint.contains a.Fix.note "\"Digest.Sha256\"") applied)
+
+(* The same in a pattern, with the module imported already, and for a
+   constructor with a payload. *)
+let test_bare_stdlib_constructor_pattern () =
+  let (fixed, _) =
+    fix_clean "import Digest\nlet name a =\n  match a with\n  | Sha256 -> \"s\"\n  | _ -> \"o\"\n\nname\n" in
+  Alcotest.(check bool) "the pattern is qualified" true
+    (Lint.contains fixed "  | Digest.Sha256 -> \"s\"\n");
+  let (fixed, _) = fix_clean "let x = Pass \"a\"\n" in
+  Alcotest.(check bool) "with a payload" true
+    (Lint.contains fixed "let x = Test.Pass \"a\"\n");
+  Alcotest.(check bool) "and imported" true (Lint.contains fixed "import Test\n")
+
+(* A name that no standard library module has as a constructor stays an
+   unknown constructor with no fix. *)
+let test_bare_unknown_constructor () =
+  let d = refuse "let x = Sha257\n" in
+  Alcotest.(check bool) "no module named" false
+    (Lint.contains (Diag.legacy d) "Digest.");
+  Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
+
 (* ── Missing imports, known from the parse (#150) ───────────────────────── *)
 
 let issue_150 =
@@ -908,6 +945,12 @@ let () =
         test_destructured_module_import;
       Alcotest.test_case "names taken in a function" `Quick
         test_destructured_module_local;
+      Alcotest.test_case "a bare stdlib constructor" `Quick
+        test_bare_stdlib_constructor;
+      Alcotest.test_case "a bare stdlib constructor in a pattern" `Quick
+        test_bare_stdlib_constructor_pattern;
+      Alcotest.test_case "a constructor of no module" `Quick
+        test_bare_unknown_constructor;
     ];
     "missing imports", [
       Alcotest.test_case "all are reported" `Quick test_missing_imports_reported;
