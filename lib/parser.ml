@@ -1934,15 +1934,25 @@ and brace_map_ s =
    into a function nobody calls is a script that prints nothing and exits
    0. *)
 and parse_body s =
-  let e = ref (locate s (fun () -> expr_ 0 s)) in
+  let e = ref (statement_ s) in
   let continues () =
     if semicolon_continues_the_body s then (ignore (advance s); true)
     else is_expr_start (peek s) && peek_col s >= s.stmt_col
   in
   while continues () do
-    e := Seq (!e, locate s (fun () -> expr_ 0 s))
+    e := Seq (!e, statement_ s)
   done;
   !e
+
+(* One statement of a body, with its position. A bracketed sequence,
+   `(a; b)`, keeps only the positions its statements carry: they are what
+   the same lines written as a block carry, and a position is a step that
+   `Wand.limit` counts. With one more around the bracket, `wand f` writing
+   a block as a bracket changed what `Wand.cost` answered (#181). *)
+and statement_ s =
+  match locate s (fun () -> expr_ 0 s) with
+  | Located (_, (Seq _ as e)) -> e
+  | e -> e
 
 (* Parses `params (: T)? = body`, with optional multi-equation clauses
    repeating `name`, for a binding already-consumed `name`. Returns the
@@ -1995,7 +2005,13 @@ and parse_fn_binding s name =
        | _ -> raise Exit);
       let eq_loc = peek_loc s in
       let ps = ref [] in
-      while is_pat_atom_start (peek s) do ps := !ps @ [pat_atom_ s] done;
+      (* Without its `let`, the line may be a call: `log (String.upper x)`
+         under `let log x = ...` is the name applied, not a second equation,
+         and an argument that is no pattern says so. Read as one, it was a
+         parse error (#182). *)
+      (try
+         while is_pat_atom_start (peek s) do ps := !ps @ [pat_atom_ s] done
+       with ParseError _ -> raise Exit);
       if List.length !ps <> arity then raise Exit;
       (match peek s with Token.Eq -> ignore (advance s) | _ -> raise Exit);
       let b = locate s (fun () -> parse_contract_body s) in
@@ -2378,14 +2394,14 @@ and statements_ s =
     ~finally:(fun () ->
       if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
     (fun () ->
-       let e = ref (locate s (fun () -> expr_ 0 s)) in
+       let e = ref (statement_ s) in
        let continues () =
          anchored
          && (if semicolon_continues_the_body s then (ignore (advance s); true)
              else is_expr_start (peek s) && peek_col s >= s.stmt_col)
        in
        while continues () do
-         e := Ast.Seq (!e, locate s (fun () -> expr_ 0 s))
+         e := Ast.Seq (!e, statement_ s)
        done;
        !e)
 

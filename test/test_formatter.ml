@@ -2103,6 +2103,34 @@ let test_a_with_as_an_operand_keeps_its_bracket () =
 )) - 1|};
   assert_idempotent "a body that wraps is a fixed point" wide
 
+(* A `then` branch that ends in an `if` with no `else` keeps its brackets
+   when an `else` follows. Without them the `else` is the inner `if`'s:
+   `if c then (if d then ()) else e` came back as `if c then if d then ()
+   else e`, which runs `e` when `d` is false. Found by test/fuzz (#184). *)
+let test_a_then_branch_keeps_the_else_from_an_inner_if () =
+  let kept label src = fmt_eq label src src; assert_idempotent label src in
+  kept "an inner if" {|let f c d e = if c then (if d then ()) else e|};
+  kept "an inner unless" {|let f c d e = if c then (unless d then ()) else e|};
+  kept "an else-if chain" {|let f c d e = if c then (if d then ()) else if e then ()|};
+  kept "a let" {|let f c d e = if c then (let x = 1; if d then ()) else e|};
+  fmt_eq "an inner else () is left out, so it is bracketed too"
+    {|let f c d e = if c then (if d then () else ()) else e|}
+    {|let f c d e = if c then (if d then ()) else e|};
+  let wide =
+    {|let f c d e = if c then (if d then IO.println "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") else e|}
+  in
+  fmt_eq "a branch that wraps"
+    wide
+    {|let f c d e =
+  if c then (
+    if d then
+      IO.println "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  )
+  else e|};
+  assert_idempotent "a branch that wraps is a fixed point" wide;
+  kept "an inner if with its own else needs nothing"
+    {|let f c d e = if c then if d then 1 else 2 else e|}
+
 (* A binding among a block's statements takes the block's `;`, whatever
    joined it to its body. It used to keep an `in` written by hand, so one
    block held both spellings -- tools/check_docs.wand did.
@@ -2466,6 +2494,8 @@ let () =
         test_a_with_body_opens_its_bracket_on_the_arrow_line;
       Alcotest.test_case "a with as an operand keeps its bracket" `Quick
         test_a_with_as_an_operand_keeps_its_bracket;
+      Alcotest.test_case "a then branch keeps the else from an inner if" `Quick
+        test_a_then_branch_keeps_the_else_from_an_inner_if;
       Alcotest.test_case "a pun reads back" `Quick
         test_a_pun_reads_back_as_the_field_it_came_from;
       Alcotest.test_case "an arm before a semicolon" `Quick

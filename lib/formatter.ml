@@ -1190,6 +1190,27 @@ and stands_in room e =
   | Some d when Doc.width d <= room -> Some d
   | _ -> None
 
+(* A `then` branch with an `else` after it, on one line. One whose printed
+   tail is an `if` with no `else` of its own keeps its brackets: without
+   them the `else` is that `if`'s, and `if c then (if d then ()) else e`
+   came back as a program that runs `e` when `d` is false (#184). *)
+and stands_in_then room t =
+  if dangles t then Option.map bracket (stands_in (room - 2) t)
+  else stands_in room t
+
+(* Whether `e` is printed ending in an `if` or `unless` with no `else`,
+   which would take one written after `e`. An `else ()` counts, since
+   `emit_if` leaves it out. *)
+and dangles e =
+  match strip_located e with
+  | If (_, _, el) | Unless (_, _, el) ->
+    (match strip_located el with Unit -> true | _ -> dangles el)
+  | Let (_, _, e2, LetIn) | LetRec (_, e2, LetIn) -> dangles e2
+  | With (_, _, body) | Fn (_, body) -> dangles body
+  | Match (_, cases) ->
+    (match List.rev cases with (_, _, body) :: _ -> dangles body | [] -> false)
+  | _ -> false
+
 and emit_atom ?(followed = false) indent e =
   match spaced_unit e with
   (* `Ok ()` written with its space is two words, so it takes brackets
@@ -2430,7 +2451,7 @@ and emit_if ?col ~word indent c t el =
       if Doc.has_newline cs then None
       else
         let room = !max_width - col - Doc.width cs - String.length word - 13 in
-        match stands_in room t, stands_in room el with
+        match stands_in_then room t, stands_in room el with
         | Some td, Some ed ->
           let oneline =
             Doc.text (word ^ " ") ^^ cs ^^ Doc.text " then " ^^ td
@@ -2457,12 +2478,17 @@ and emit_if ?col ~word indent c t el =
             ^^ bracket_if_wrapped_app_at ~anchor:cont c (emit_expr cont c)
             ^^ Doc.text " then" in
           let prefix = head ^^ Doc.text " " in
+          let has_else = match strip_located el with Unit -> false | _ -> true in
           (* A block opens on the `then` line and closes at the `if`'s
              indent, as it does after `=` and in the one-armed `if`. Put
              below, its `(` stood alone and its statements two further in. *)
           let below () =
             if is_block t && not (Doc.has_newline head) then
               prefix ^^ emit_block ~col:(cont + Doc.width prefix) cont t
+            else if has_else && dangles t then
+              prefix ^^ Doc.text "(\n" ^^ Doc.spaces (cont + 2)
+              ^^ emit_expr (cont + 2) t
+              ^^ Doc.text "\n" ^^ Doc.spaces cont ^^ Doc.text ")"
             else
               let body = Doc.spaces (cont + 2) in
               head ^^ Doc.text "\n" ^^ body
@@ -2472,7 +2498,10 @@ and emit_if ?col ~word indent c t el =
              out beside the `then` unless it can stand there. *)
           (if Doc.has_newline prefix then below ()
            else
-             match stands_in (!max_width - cont - Doc.width prefix) t with
+             let room = !max_width - cont - Doc.width prefix in
+             match
+               if has_else then stands_in_then room t else stands_in room t
+             with
              | None -> below ()
              | Some td ->
                let flat = prefix ^^ td in

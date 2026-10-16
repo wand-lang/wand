@@ -640,6 +640,10 @@ The second form works only in a local definition. At the top level each
 equation needs its own `let`, because there is no `in` to end the
 definition.
 
+In the second form, a line that starts with the name is an equation only
+if its arguments are patterns and an `=` follows them. Otherwise it is a
+call: below `let log x = ...`, the line `log (String.upper x)` calls `log`.
+
 Mutually-recursive functions — chain definitions with `and`:
 
 ```ocaml
@@ -7958,6 +7962,8 @@ the outer one, and its steps count against the outer one, as do the steps
 of fibers started inside it.
 
 `cost` runs a function and gives its value with the steps it took.
+Statements in brackets, `(a; b)`, take the same steps as the same
+statements written as a block, so `wand f` does not change the count.
 
 `version` is the version of the wand that runs the script.
 

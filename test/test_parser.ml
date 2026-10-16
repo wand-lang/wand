@@ -674,6 +674,40 @@ let test_local_multi_equation () =
    | Let (PVar "f", Fn ([PVar "_p0"], Match (Var "_p0", [(Int 0, None, _); (PVar "n", None, _)])), _, _) -> ()
    | _ -> Alcotest.fail "expected a merged multi-equation Fn/Match")
 
+(* Without its `let`, a line that repeats the name may be a call rather
+   than a second equation. An argument that is no pattern says it is a call:
+   `log (String.upper "a")` under `let log x = x` was a parse error, read as
+   an equation whose pattern did not parse. Found by test/fuzz (#182). *)
+let test_a_call_is_not_another_equation () =
+  runs "a call below the definition"
+    "import String\nlet main () =\n  let log x = x\n  log (String.upper \"a\")\nmain ()"
+    "A";
+  runs "an equation still continues it"
+    "let main () =\n  let f 0 = 1\n  f n = n * f (n - 1)\n  f 5\nmain ()"
+    "120"
+
+(* A bracketed sequence is the same statements as a block, and takes the
+   same steps: a position is a step `Wand.limit` counts, and the bracket
+   carried one more than the block. `wand f` writes a block under an `fn`
+   argument as a bracket, so formatting a file changed what `Wand.cost`
+   answered. Found by test/fuzz (#181). *)
+let test_a_bracket_takes_the_steps_a_block_takes () =
+  let cost body =
+    Printf.sprintf "import List\nimport Wand\nlet (_, n) = Wand.cost (fn () ->%s)\nn" body
+  in
+  let block = "\n  List.length [1]\n  List.length [2]" in
+  let steps src =
+    match Runner.run_string src with
+    | Ok v -> v
+    | Error m -> Alcotest.failf "%s" m
+  in
+  let want = steps (cost block) in
+  runs "a bracket" (cost " (List.length [1]; List.length [2])") want;
+  runs "a bracket below" (cost "\n  (List.length [1]; List.length [2])") want;
+  runs "a bracket in a then branch"
+    (cost " if true then (List.length [1]; List.length [2]) else 0")
+    (steps (cost (" if true then" ^ "\n    List.length [1]\n    List.length [2]\n  else 0")))
+
 (* `T(r, b = 3)` is `r` with `b` replaced. `T(a, b)` is still `T` applied to
    a pair: the `ident =` after the comma is what separates them, and the
    parser asks only once the first item is read. *)
@@ -1869,6 +1903,10 @@ let () =
       Alcotest.test_case "record update" `Quick test_record_update;
       Alcotest.test_case "annotated payload" `Quick test_annotated_payload_pattern;
       Alcotest.test_case "local multi-equation" `Quick test_local_multi_equation;
+      Alcotest.test_case "a call is not another equation" `Quick
+        test_a_call_is_not_another_equation;
+      Alcotest.test_case "a bracket takes the steps a block takes" `Quick
+        test_a_bracket_takes_the_steps_a_block_takes;
       Alcotest.test_case "if"           `Quick test_if;
       Alcotest.test_case "unless"       `Quick test_unless;
       Alcotest.test_case "match"        `Quick test_match;
