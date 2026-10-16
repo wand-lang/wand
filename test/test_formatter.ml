@@ -425,7 +425,17 @@ let test_a_command_keeps_its_continuations () =
      would split. *)
   check "in quotes and inside a word"
     "let r = $(printf \"a \\\n   b\" ab\\\ncd)\n"
-    "let r = $(printf \"a \\\n   b\" ab\\\ncd)\n"
+    "let r = $(printf \"a \\\n   b\" ab\\\ncd)\n";
+  (* A `\` on a line of its own, below a newline. The line after it is
+     indented, and the next pass skipped from the newline over that
+     indentation and over the `\`, so the second pass dropped it. Found by
+     test/fuzz. *)
+  check "a continuation on a line of its own"
+    "let r = $(a\n\\\n-b)\n"
+    "let r = $(a\n\\\n  -b)\n";
+  check "two of them"
+    "let r = $(a\n\\\n\\\n-b)\n"
+    "let r = $(a\n\\\n\\\n  -b)\n"
 
 (* A bracket written straight onto the `$` is literal command text; one
    written a space away is an expression that answers with the command.

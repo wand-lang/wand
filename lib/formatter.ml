@@ -607,9 +607,14 @@ let command_layout indent (lits : string list) : string list =
     in
     let buf = Buffer.create (n + 16) in
     let is_blank c = c = ' ' || c = '\t' in
+    (* The blanks from `i` on, up to a continuation that is still to be
+       written. Skipped past, the continuation is never written: `wand f`
+       indents the line after a `\` that stands on a line of its own, and
+       the next pass skipped from the newline above the `\` over that
+       indentation and over the `\` with it. *)
     let run_end i =
       let j = ref i in
-      while !j < n && is_blank lit.[!j] do incr j done;
+      while !j < n && is_blank lit.[!j] && not (List.mem !j !here) do incr j done;
       !j
     in
     (* Write the break, then the indentation of the line it opens, and
