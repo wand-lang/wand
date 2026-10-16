@@ -1565,8 +1565,8 @@ let test_a_separator_is_not_written_twice () =
 (* A comment runs to the end of its line and swallows whatever is written
    after it, so the separator above an operator item cannot go there: it
    stopped being a separator and changed the comment's own text instead.
-   `prev_is_comment` guards a piece that *is* a comment; a verbatim slice
-   ends in whatever the source had, a trailing comment among the rest.
+   It goes on the item, ahead of a comment piece; a verbatim slice ends in
+   whatever the source had, a trailing comment among the rest.
    Found by test/fuzz. *)
 let comments_of src =
   List.sort compare
@@ -1578,6 +1578,24 @@ let test_a_separator_is_not_written_onto_a_trailing_comment () =
   let before = comments_of src and after = comments_of (fmt src) in
   Alcotest.(check (list string)) "every comment comes back as it was written"
     before after
+
+(* A comment does not end a statement, so an operator line below one still
+   continues the item above the comment. The separator was left out when a
+   comment stood between the two, and `let {} = import s;--` above `- ...`
+   came back as `import s - ...`. It goes on the item, ahead of the comment,
+   whether the comment trails the item or has lines of its own. Found by
+   test/fuzz (#185). *)
+let test_a_separator_goes_ahead_of_a_comment () =
+  fmt_eq "ahead of a trailing comment"
+    "let x = 1;--\n- --\n2"
+    "let x = 1;  --\n- --\n2";
+  fmt_eq "ahead of comments on lines of their own"
+    "let x = 1; -- a\n-- b\n\n- --\n2"
+    "let x = 1;  -- a\n-- b\n\n- --\n2";
+  ok_after_format "the operator item stays an item of its own"
+    "let x = 1;\n-- c\n- --\n2" "-2";
+  assert_idempotent "the issue's input"
+    "let{}=import s;--\n- --\nmatch()with|[]->(())"
 
 (* A constructor takes the bracket written after it. `p.M N` is
    `App (Qualified (p, M), N)`. `p.M(N)` is `Qualified (p, App (M, N))`.
@@ -2475,6 +2493,8 @@ let () =
       Alcotest.test_case "wrapped application brackets" `Quick test_a_wrapped_application_keeps_its_brackets;
       Alcotest.test_case "separator not written twice" `Quick
         test_a_separator_is_not_written_twice;
+      Alcotest.test_case "a separator goes ahead of a comment" `Quick
+        test_a_separator_goes_ahead_of_a_comment;
       Alcotest.test_case "separator not written onto a trailing comment" `Quick
         test_a_separator_is_not_written_onto_a_trailing_comment;
       Alcotest.test_case "qualified head hides no constructor" `Quick

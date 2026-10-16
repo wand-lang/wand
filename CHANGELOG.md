@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.107.4] - 2026-10-16
+
+### Fixed
+
+- `wand f` keeps the `;` after an item when a comment comes between it and a line that starts with an operator. Before, the line below joined the item, so `let {} = import s;  --` above `- ...` became `import s - ...` (#185).
+
 ## [0.107.3] - 2026-10-16
 
 ### Fixed

@@ -3216,9 +3216,10 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
    of its line and swallows whatever is written after it, so a separator put
    there stops being a separator and changes the comment's own text instead.
 
-   `prev_is_comment` answers this for a piece that *is* a comment. It cannot
-   answer it for a verbatim slice, which runs to the next item and so ends in
-   whatever the source had there -- a trailing comment among the rest. Asked
+   A comment piece never takes the separator, since it goes on the item
+   above. A verbatim slice can still end in a comment: it runs to the next
+   item and so ends in whatever the source had there -- a trailing comment
+   among the rest. Asked
    by lexing, because `--` inside a string is not a comment. Found by
    test/fuzz. *)
 let ends_in_a_comment text =
@@ -3242,56 +3243,56 @@ let assemble pieces =
   let buf = Buffer.create 1024 in
   let prev_end = ref None in
   let prev_blank_after = ref false in
-  let prev_is_comment = ref false in
-  let prev_text = ref None in
-  List.iter (fun p ->
-    (match !prev_end with
-     | None -> ()
-     | Some pel ->
-       if p.is_comment && p.start_line = pel then
-         Buffer.add_string buf "  "
-       else begin
-         (* The separator goes on the piece above, so there has to be one
-            that can hold it. A comment runs to the end of its line and
-            swallows whatever is written after it: the `;` became part of
-            the comment, the operator line still opened a line of its own,
-            and the next pass wrote another one -- `--` grew a `;` per pass,
-            for ever, and the comment's own text changed under it.
-
-            Nothing is owed above a comment anyway. A comment ends the line
-            it is on, so the operator below it is not continuing anything.
-            Found by test/fuzz, on eight seeds at once. *)
-         (* A verbatim slice runs to the next item's offset, so it already
-            holds the `;` that ended the item above it. Writing a second one
-            grew the line by a `;` per pass, for ever. Ask what the piece
-            above ends with rather than what kind of piece it is: a
-            pretty-printed item never ends in `;`, so this only ever
-            declines to repeat a separator that is already there. Found by
-            test/fuzz. *)
-         let already_separated =
-           match !prev_text with
-           | Some t -> t <> "" && t.[String.length t - 1] = ';'
-           | None -> false
-         in
-         (* `ends_in_a_comment` lexes, so it is asked last: only a piece
-            that opens with an operator can reach it. *)
-         if (not p.is_comment) && (not !prev_is_comment)
-            && (not already_separated)
-            && opens_with_an_operator p.text
-            && not (match !prev_text with
-                    | Some t -> ends_in_a_comment t
-                    | None -> false) then
-           Buffer.add_char buf ';';
-         Buffer.add_char buf '\n';
-         if !prev_blank_after || p.start_line - pel - 1 > 0 then
-           Buffer.add_char buf '\n'
-       end);
-    Buffer.add_string buf p.text;
-    prev_end := Some p.end_line;
-    prev_blank_after := p.blank_after;
-    prev_is_comment := p.is_comment;
-    prev_text := Some p.text
-  ) sorted;
+  (* The separator goes on the item above, written straight after its own
+     text and so ahead of any comment that trails it or stands between the
+     two. A comment does not end a statement: it runs to the end of its line,
+     and the line below that opens with an operator continues the item above
+     it all the same. Putting the `;` after the comment made it part of the
+     comment's text, and `--` grew a `;` per pass; leaving it out, because a
+     comment stood between, gave `let {} = import s  --` and then a line
+     `- ...` that the parser read as `import s - ...`. Found by test/fuzz
+     (#185). *)
+  let owes_separator rest =
+    let rec next_item = function
+      | [] -> None
+      | q :: tl -> if q.is_comment then next_item tl else Some q
+    in
+    match next_item rest with
+    | Some q -> opens_with_an_operator q.text
+    | None -> false
+  in
+  let rec go = function
+    | [] -> ()
+    | p :: rest ->
+      (match !prev_end with
+       | None -> ()
+       | Some pel ->
+         if p.is_comment && p.start_line = pel then
+           Buffer.add_string buf "  "
+         else begin
+           Buffer.add_char buf '\n';
+           if !prev_blank_after || p.start_line - pel - 1 > 0 then
+             Buffer.add_char buf '\n'
+         end);
+      Buffer.add_string buf p.text;
+      (* A verbatim slice runs to the next item's offset, so it already
+         holds the `;` that ended the item above it. Writing a second one
+         grew the line by a `;` per pass, for ever. Ask what the piece ends
+         with rather than what kind of piece it is: a pretty-printed item
+         never ends in `;`, so this only ever declines to repeat a separator
+         that is already there. A slice that ends in a comment holds its
+         `;` ahead of the comment, and one written after it would join the
+         comment. `ends_in_a_comment` lexes, so it is asked last. *)
+      if (not p.is_comment)
+         && owes_separator rest
+         && not (p.text <> "" && p.text.[String.length p.text - 1] = ';')
+         && not (ends_in_a_comment p.text) then
+        Buffer.add_char buf ';';
+      prev_end := Some p.end_line;
+      prev_blank_after := p.blank_after;
+      go rest
+  in
+  go sorted;
   if Buffer.length buf > 0 then Buffer.add_char buf '\n';
   Buffer.contents buf
 

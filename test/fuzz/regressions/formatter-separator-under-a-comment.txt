@@ -1,0 +1,14 @@
+found:     test/fuzz, seed 38902423357, iteration 404770, 2026-10-16 (#185)
+verdict:   wand f changed what the file means: was E-IMPORT, now E-TYPE
+fixed in:  lib/formatter.ml, assemble
+
+An item that opens with an operator continues the item above it, so
+`assemble` writes back the `;` that separated the two. It left the `;`
+out when a comment stood between them, on the reasoning that a comment
+ends its line. A comment does not end a statement: the operator line
+below it still continues the item above. `let {} = import s  --` above
+`- ...` was read as `import s - ...`, which put the import inside a
+binary expression. The `;` now goes on the item, ahead of the comment.
+
+The fuzzer reached it from tools/checksum.wand through duplicate-span,
+flip-byte, flip-byte and insert-fragment.
