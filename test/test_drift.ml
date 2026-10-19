@@ -42,6 +42,18 @@ let test_one_name_puns () =
   value "a parameter" (run_t ^ "let f (Run(a)) = a\nf (Run(a = 1, b = 2, c = 3))") "1";
   value "a match arm" (run_t ^ "match Run(a = 1, b = 2, c = 3) with\n| Run(b) -> b") "2";
   value "a let" (run_t ^ "let (Run(c)) = Run(a = 1, b = 2, c = 3)\nc") "3";
+  (* A bracket against the name is the constructor's in a parameter too,
+     with no brackets around the pattern. It was two parameters, `Run` and
+     `(a)`, and the error counted no arguments (#191). *)
+  value "a fn parameter, unbracketed"
+    (run_t ^ "(fn Run(a) -> a) (Run(a = 1, b = 2, c = 3))") "1";
+  value "a fn parameter, two names, unbracketed"
+    (run_t ^ "(fn Run(a, c) -> a + c) (Run(a = 1, b = 2, c = 3))") "4";
+  value "a let parameter, unbracketed"
+    (run_t ^ "let f Run(b) = b\nf (Run(a = 1, b = 2, c = 3))") "2";
+  (* With a space, the bracket is a parameter of its own, as it was. *)
+  value "a constructor and a bracket, spaced"
+    "type E = E\n(fn E (x) -> x) E 5" "5";
   value "a construction"
     "type R(a: Int, b: Int = 5)\nlet a = 1\nlet r = R(a)\nr.a + r.b" "6";
   (* A record of one field gives that field to any one name. *)

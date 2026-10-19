@@ -1278,7 +1278,19 @@ and pat_atom_ s =
   | Token.Bool b     -> ignore (advance s); Bool b
   | Token.Ident name -> ignore (advance s); PVar name
   | Token.Underscore -> ignore (advance s); Wild
-  | Token.Upper name -> ignore (advance s); PConstr (name, [])
+  | Token.Upper name ->
+    let at = peek_loc s in
+    ignore (advance s);
+    (* A bracket against the name is the constructor's, as it is in a `let`
+       or a `match`: `fn Entry(name) -> name` is one parameter that puns a
+       field. It was two, `Entry` and `(name)`, and the error counted no
+       arguments for `Entry` (#191). With a space, `fn None (x) -> ...`
+       stays two parameters, as it was. *)
+    if peek s = Token.LParen && (peek_loc s).Token.offset = at.Token.end_offset then
+      (match pconstr_body_ s name with
+       | PConstr (_, []) as p -> p
+       | p -> PLocated (span_to_here s at, p))
+    else PConstr (name, [])
   | Token.LParen     ->
     ignore (advance s);
     if peek s = Token.RParen then (ignore (advance s); Unit)
