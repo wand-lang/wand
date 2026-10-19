@@ -7354,7 +7354,7 @@ timeout : Duration -> (Unit -> 'a ! 'e) -> Result String 'a ! {Clock | 'e}
 ```
 
 `run!` and `query` are what `$(cmd)` and `$?(cmd)` are, over a command built
-somewhere else. See [A command as a value](#a-command-as-a-value).
+somewhere else. See [A command as a value](#a-command-as-a-value-).
 
 `inspect!` and `inspect` are `run!` and `run` for a command that only reads.
 Use them only for a command that changes nothing, such as a query, a
