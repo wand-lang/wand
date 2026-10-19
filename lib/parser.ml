@@ -1946,15 +1946,22 @@ and brace_map_ s =
    into a function nobody calls is a script that prints nothing and exits
    0. *)
 and parse_body s =
-  let e = ref (statement_ s) in
+  let first = statement_ s in
   let continues () =
     if semicolon_continues_the_body s then (ignore (advance s); true)
     else is_expr_start (peek s) && peek_col s >= s.stmt_col
   in
+  let rest = ref [] in
   while continues () do
-    e := Seq (!e, statement_ s)
+    rest := statement_ s :: !rest
   done;
-  !e
+  (* To the right, as `statements_` nests them and for the same reason
+     (#187). *)
+  let rec chain first = function
+    | [] -> first
+    | next :: more -> Seq (first, chain next more)
+  in
+  chain first (List.rev !rest)
 
 (* One statement of a body, with its position. A bracketed sequence,
    `(a; b)`, keeps only the positions its statements carry: they are what
@@ -2406,16 +2413,26 @@ and statements_ s =
     ~finally:(fun () ->
       if anchored then (s.stmt_col <- outer; s.stmt_depth <- outer_depth))
     (fun () ->
-       let e = ref (statement_ s) in
+       let first = statement_ s in
        let continues () =
          anchored
          && (if semicolon_continues_the_body s then (ignore (advance s); true)
              else is_expr_start (peek s) && peek_col s >= s.stmt_col)
        in
+       let rest = ref [] in
        while continues () do
-         e := Ast.Seq (!e, statement_ s)
+         rest := statement_ s :: !rest
        done;
-       !e)
+       (* Nested to the right, `a; (b; c)`, as a bracketed block of `;`
+          statements is. Built to the left, three statements one per line
+          were `(a; b); c`, and `wand f` wrote back every level of it --
+          `((a; b); c)` on one line, where the `;` form of the same body
+          stayed flat (#187). *)
+       let rec chain first = function
+         | [] -> first
+         | next :: more -> Ast.Seq (first, chain next more)
+       in
+       chain first (List.rev !rest))
 
 and fn_ s =
   (* fn already consumed *)

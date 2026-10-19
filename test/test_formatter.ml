@@ -630,6 +630,23 @@ let test_one_name_is_kept () =
   fmt_eq "a construction of one name before a field keeps its bracket"
     "let n = (B(x)).n" "let n = (B(x)).n"
 
+(* Statements one per line are one flat sequence, as the same statements
+   with `;` in a bracket are. They were nested to the left, and each one
+   past the second came back inside another pair of brackets:
+   `((a; b); c)` (#187). *)
+let test_statements_one_per_line_stay_flat () =
+  fmt_eq "three statements"
+    "let step! a =\n  IO.println \"x\"\n  IO.println \"a\"\n  IO.println \"b\""
+    "let step! a = (IO.println \"x\"; IO.println \"a\"; IO.println \"b\")";
+  fmt_eq "a let first"
+    "let step! a =\n  let y = 1\n  IO.println \"x\"\n  IO.println \"a\"\n  IO.println \"b\""
+    "let step! a = (let y = 1; IO.println \"x\"; IO.println \"a\"; IO.println \"b\")";
+  fmt_eq "under an arm"
+    "let f a =\n  match a with\n  | 1 ->\n    IO.println \"x\"\n    IO.println \"a\"\n    IO.println \"b\"\n  | _ -> ()"
+    "let f a =\n  match a with\n  | 1 -> (IO.println \"x\"; IO.println \"a\"; IO.println \"b\")\n  | _ -> ()";
+  let semis = "let step! a = (IO.println \"x\"; IO.println \"a\"; IO.println \"b\")" in
+  fmt_eq "the ; form is the same" semis semis
+
 (* `Ok ()` and `Ok()` read alike, and each is given back as it was
    written (#116). Written with its space, it is two words, so it takes
    brackets where it is an argument. *)
@@ -2577,6 +2594,8 @@ let () =
       Alcotest.test_case "a constructor and its bracket are kept" `Quick
         test_a_constructor_and_its_bracket_are_kept;
       Alcotest.test_case "one name is kept" `Quick test_one_name_is_kept;
+      Alcotest.test_case "statements one per line stay flat" `Quick
+        test_statements_one_per_line_stay_flat;
       Alcotest.test_case "a unit payload is kept" `Quick test_a_unit_payload_is_kept;
       Alcotest.test_case "a guard is written with if" `Quick
         test_a_guard_is_written_with_if;
