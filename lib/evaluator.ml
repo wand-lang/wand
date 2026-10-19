@@ -289,7 +289,7 @@ type value =
   | VSize     of string
   | VRegex         of Re.re
   | VJson          of Yojson.Safe.t
-  | VToml          of Toml.Types.value
+  | VToml          of Toml_doc.t
   (* Restricted to string keys, YAML 1.2 core's value space is JSON's,
      so a document needs no representation of its own. It stays a
      separate wand type: what a file is decides how it is read, and a
@@ -965,19 +965,6 @@ let datetime_of_epoch secs =
    as `[a, b]`. Quoted, what is shown is wand source again, and the escapes
    are the ones the lexer reads back. *)
 
-(* A TOML array holds one type, so the library keeps it as a list of that
-   type rather than a list of values. This puts the values back. *)
-let toml_array_values (arr : Toml.Types.array) : Toml.Types.value list =
-  match arr with
-  | Toml.Types.NodeBool bs   -> List.map (fun b -> Toml.Types.TBool b) bs
-  | Toml.Types.NodeInt ns    -> List.map (fun n -> Toml.Types.TInt n) ns
-  | Toml.Types.NodeFloat fs  -> List.map (fun f -> Toml.Types.TFloat f) fs
-  | Toml.Types.NodeString ss -> List.map (fun s -> Toml.Types.TString s) ss
-  | Toml.Types.NodeDate ds   -> List.map (fun d -> Toml.Types.TDate d) ds
-  | Toml.Types.NodeTable ts  -> List.map (fun t -> Toml.Types.TTable t) ts
-  | Toml.Types.NodeArray ars -> List.map (fun a -> Toml.Types.TArray a) ars
-  | Toml.Types.NodeEmpty     -> []
-
 let quoted s =
   let buf = Buffer.create (String.length s + 2) in
   Buffer.add_char buf '"';
@@ -1073,24 +1060,22 @@ let rec render ~quote v =
     "{ " ^ String.concat ", " (List.map (fun (k, v) ->
       k ^ " = " ^ sub v) kvs) ^ " }"
 
-and render_toml ~quote (v : Toml.Types.value) =
+and render_toml ~quote (v : Toml_doc.t) =
   let sub = render_toml ~quote in
   match v with
-  | Toml.Types.TBool b   -> string_of_bool b
-  | Toml.Types.TInt n    -> string_of_int n
-  | Toml.Types.TFloat f  -> Printf.sprintf "%g" f
-  | Toml.Types.TString s -> if quote then quoted s else s
-  | Toml.Types.TTable tbl ->
+  | Toml_doc.Bool b   -> string_of_bool b
+  | Toml_doc.Int n    -> string_of_int n
+  | Toml_doc.Float f  -> Printf.sprintf "%g" f
+  | Toml_doc.String s -> if quote then quoted s else s
+  | Toml_doc.Table kvs ->
     "{" ^ String.concat ", "
-      (List.map (fun (k, v) ->
-         Toml.Types.Table.Key.to_string k ^ " = " ^ sub v)
-         (Toml.Types.Table.to_list tbl)) ^ "}"
-  | Toml.Types.TArray arr ->
+      (List.map (fun (k, v) -> Toml_doc.key_text k ^ " = " ^ sub v) kvs) ^ "}"
+  | Toml_doc.Array vs ->
     (* An array showed as `<toml-array>`, which is a display that says
        nothing about the value: the one thing a reader wants from an array
        is what is in it. *)
-    "[" ^ String.concat ", " (List.map sub (toml_array_values arr)) ^ "]"
-  | Toml.Types.TDate _   -> "<toml-date>"
+    "[" ^ String.concat ", " (List.map sub vs) ^ "]"
+  | Toml_doc.Date _   -> "<toml-date>"
 
 let show_value v = render ~quote:true v
 
@@ -1101,10 +1086,10 @@ let show_value v = render ~quote:true v
 let to_text v =
   match v with
   | VString s                    -> s
-  | VToml (Toml.Types.TString s) -> s
+  | VToml (Toml_doc.String s) -> s
   (* The text of a TOML table is the document it stands for, newlines and
      all. `IO.println` of one writes real TOML; showing one does not. *)
-  | VToml (Toml.Types.TTable tbl) -> Toml.Printer.string_of_table tbl
+  | VToml (Toml_doc.Table kvs) -> Toml_doc.to_document kvs
   | v                            -> show_value v
 
 (* ── Checked Int arithmetic ───────────────────────────────────────────────── *)
@@ -5542,19 +5527,15 @@ let from_text parse (j : Yojson.Basic.t) =
 (* Every backend presents what it read in this shape. TOML carries its own
    types across; a date has no JSON of its own and comes over as the text it
    was written as, which is what `Decode.date` reads anyway. *)
-let rec json_of_toml (v : Toml.Types.value) : Yojson.Basic.t =
+let rec json_of_toml (v : Toml_doc.t) : Yojson.Basic.t =
   match v with
-  | Toml.Types.TBool b   -> `Bool b
-  | Toml.Types.TInt n    -> `Int n
-  | Toml.Types.TFloat f  -> `Float f
-  | Toml.Types.TString s -> `String s
-  | Toml.Types.TDate d   -> `String (Toml.Printer.string_of_value (Toml.Types.TDate d))
-  | Toml.Types.TTable tbl ->
-    `Assoc (List.map (fun (k, v) ->
-      (Toml.Types.Table.Key.to_string k, json_of_toml v))
-      (Toml.Types.Table.to_list tbl))
-  | Toml.Types.TArray arr ->
-    `List (List.map json_of_toml (toml_array_values arr))
+  | Toml_doc.Bool b   -> `Bool b
+  | Toml_doc.Int n    -> `Int n
+  | Toml_doc.Float f  -> `Float f
+  | Toml_doc.String s -> `String s
+  | Toml_doc.Date d   -> `String (Toml_doc.date_text d)
+  | Toml_doc.Table kvs -> `Assoc (List.map (fun (k, v) -> (k, json_of_toml v)) kvs)
+  | Toml_doc.Array vs -> `List (List.map json_of_toml vs)
 
 (* A domain literal decodes as itself: the string is lexed exactly as it
    would be if it had been written in the source, so `"30s"` in a document
@@ -8636,82 +8617,70 @@ let stdlib_eval_env : env = list_hof_builtins @ [
   (* TOML primitives *)
   ("toml_parse", VBuiltin (function
     | VString s ->
-      (match Toml.Parser.from_string s with
-       | `Ok tbl  -> VConstr (Ctor.Builtin "Ok", [VToml (Toml.Types.TTable tbl)])
-       | `Error (msg, _) -> VConstr (Ctor.Builtin "Error", [VString msg]))
+      (match Toml_doc.parse s with
+       | Ok t -> VConstr (Ctor.Builtin "Ok", [VToml t])
+       | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
     | _ -> raise (EvalError "toml_parse: expected String")));
   ("toml_parse_exn", VBuiltin (function
     | VString s ->
-      (match Toml.Parser.from_string s with
-       | `Ok tbl  -> VToml (Toml.Types.TTable tbl)
-       | `Error (msg, _) -> raise (EvalError ("toml_parse: " ^ msg)))
+      (match Toml_doc.parse s with
+       | Ok t -> VToml t
+       | Error msg -> raise (EvalError ("toml_parse: " ^ msg)))
     | _ -> raise (EvalError "toml_parse_exn: expected String")));
   ("toml_stringify", VBuiltin (function
-    | VToml (Toml.Types.TTable tbl) -> VString (Toml.Printer.string_of_table tbl)
+    | VToml (Toml_doc.Table kvs) -> VString (Toml_doc.to_document kvs)
     | VToml _ -> raise (EvalError "toml_stringify: value must be a TOML table")
     | _ -> raise (EvalError "toml_stringify: expected TOML")));
   ("toml_is_table", VBuiltin (function
-    | VToml (Toml.Types.TTable _) -> VBool true
+    | VToml (Toml_doc.Table _) -> VBool true
     | VToml _ -> VBool false
     | _ -> raise (EvalError "toml_is_table: expected TOML")));
   ("toml_is_array", VBuiltin (function
-    | VToml (Toml.Types.TArray _) -> VBool true
+    | VToml (Toml_doc.Array _) -> VBool true
     | VToml _ -> VBool false
     | _ -> raise (EvalError "toml_is_array: expected TOML")));
   ("toml_get_bool", VBuiltin (function
-    | VToml (Toml.Types.TBool b) -> VConstr (Ctor.Builtin "Ok", [VBool b])
+    | VToml (Toml_doc.Bool b) -> VConstr (Ctor.Builtin "Ok", [VBool b])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected bool"])
     | _ -> raise (EvalError "toml_get_bool: expected TOML")));
   ("toml_get_int", VBuiltin (function
-    | VToml (Toml.Types.TInt n) -> VConstr (Ctor.Builtin "Ok", [VInt n])
+    | VToml (Toml_doc.Int n) -> VConstr (Ctor.Builtin "Ok", [VInt n])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected int"])
     | _ -> raise (EvalError "toml_get_int: expected TOML")));
   ("toml_get_float", VBuiltin (function
-    | VToml (Toml.Types.TFloat f) -> VConstr (Ctor.Builtin "Ok", [VFloat f])
-    | VToml (Toml.Types.TInt n)   -> VConstr (Ctor.Builtin "Ok", [VFloat (float_of_int n)])
+    | VToml (Toml_doc.Float f) -> VConstr (Ctor.Builtin "Ok", [VFloat f])
+    | VToml (Toml_doc.Int n)   -> VConstr (Ctor.Builtin "Ok", [VFloat (float_of_int n)])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected float"])
     | _ -> raise (EvalError "toml_get_float: expected TOML")));
   ("toml_get_string", VBuiltin (function
-    | VToml (Toml.Types.TString s) -> VConstr (Ctor.Builtin "Ok", [VString s])
+    | VToml (Toml_doc.String s) -> VConstr (Ctor.Builtin "Ok", [VString s])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected string"])
     | _ -> raise (EvalError "toml_get_string: expected TOML")));
   ("toml_get_array", VBuiltin (function
-    | VToml (Toml.Types.TArray arr) ->
-      let items = match arr with
-        | Toml.Types.NodeBool bs   -> List.map (fun b -> VToml (Toml.Types.TBool b)) bs
-        | Toml.Types.NodeInt ns    -> List.map (fun n -> VToml (Toml.Types.TInt n)) ns
-        | Toml.Types.NodeFloat fs  -> List.map (fun f -> VToml (Toml.Types.TFloat f)) fs
-        | Toml.Types.NodeString ss -> List.map (fun s -> VToml (Toml.Types.TString s)) ss
-        | Toml.Types.NodeDate ds   -> List.map (fun d -> VToml (Toml.Types.TDate d)) ds
-        | Toml.Types.NodeTable ts  -> List.map (fun t -> VToml (Toml.Types.TTable t)) ts
-        | Toml.Types.NodeArray _   -> []
-        | Toml.Types.NodeEmpty     -> []
-      in
-      VConstr (Ctor.Builtin "Ok", [VList items])
+    | VToml (Toml_doc.Array vs) ->
+      VConstr (Ctor.Builtin "Ok", [VList (List.map (fun v -> VToml v) vs)])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected array"])
     | _ -> raise (EvalError "toml_get_array: expected TOML")));
   ("toml_get_table", VBuiltin (function
-    | VToml (Toml.Types.TTable tbl) ->
-      let pairs = Toml.Types.Table.to_list tbl in
-      let vmap = VMap (vmap_of_list (List.map (fun (k, v) ->
-        (Toml.Types.Table.Key.to_string k, VToml v)) pairs)) in
+    | VToml (Toml_doc.Table kvs) ->
+      let vmap = VMap (vmap_of_list (List.map (fun (k, v) -> (k, VToml v)) kvs)) in
       VConstr (Ctor.Builtin "Ok", [vmap])
     | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected table"])
     | _ -> raise (EvalError "toml_get_table: expected TOML")));
   ("toml_field", VBuiltin (fun key ->
     VBuiltin (function
-      | VToml (Toml.Types.TTable tbl) ->
+      | VToml (Toml_doc.Table kvs) ->
         let k = (match key with VString s -> s | _ -> raise (EvalError "toml_field: key must be String")) in
-        (match Toml.Types.Table.find_opt (Toml.Types.Table.Key.of_string k) tbl with
+        (match List.assoc_opt k kvs with
          | Some v -> VConstr (Ctor.Builtin "Ok", [VToml v])
          | None   -> VConstr (Ctor.Builtin "Error", [VString ("no key: " ^ k)]))
       | VToml _ -> VConstr (Ctor.Builtin "Error", [VString "expected table"])
       | _ -> raise (EvalError "toml_field: expected TOML"))));
   ("toml_field_exn", VBuiltin (fun key ->
     VBuiltin (function
-      | VToml (Toml.Types.TTable tbl) ->
+      | VToml (Toml_doc.Table kvs) ->
         let k = (match key with VString s -> s | _ -> raise (EvalError "toml_field_exn: key must be String")) in
-        (match Toml.Types.Table.find_opt (Toml.Types.Table.Key.of_string k) tbl with
+        (match List.assoc_opt k kvs with
          | Some v -> VToml v
          | None   -> raise (EvalError ("toml_field_exn: no key: " ^ k)))
       | VToml _ -> raise (EvalError "toml_field_exn: expected table")
@@ -9915,24 +9884,24 @@ let () = derive_spec := spec_value
    An array in this representation is homogeneous: the library holds one
    node per element type, so a list wand allows through its own `List 'a`
    is already uniform, and an empty one is `NodeEmpty`. *)
-let rec toml_of_value (v : value) : Toml.Types.value =
+let rec toml_of_value (v : value) : Toml_doc.t =
   match v with
-  | VInt n    -> Toml.Types.TInt n
-  | VFloat f  -> Toml.Types.TFloat f
-  | VString s -> Toml.Types.TString s
-  | VBool b   -> Toml.Types.TBool b
+  | VInt n    -> Toml_doc.Int n
+  | VFloat f  -> Toml_doc.Float f
+  | VString s -> Toml_doc.String s
+  | VBool b   -> Toml_doc.Bool b
   | VPath s | VDuration s | VURL (s, None) | VSize s | VVersion s
-  | VDateTime s | VIPv4 s | VCIDR s | VGlob s -> Toml.Types.TString s
-  | VPort n -> Toml.Types.TInt n
+  | VDateTime s | VIPv4 s | VCIDR s | VGlob s -> Toml_doc.String s
+  | VPort n -> Toml_doc.Int n
   | VConstr (Ctor.Builtin "Some", [x]) -> toml_of_value x
-  | VList vs -> Toml.Types.TArray (toml_array vs)
-  | VMap kvs_m -> let kvs = vmap_list kvs_m in Toml.Types.TTable (toml_table kvs)
-  | VRecord vr_ -> let kvs = vr_.r_fields in Toml.Types.TTable (toml_table kvs)
+  | VList vs -> Toml_doc.Array (List.map toml_of_value vs)
+  | VMap kvs_m -> let kvs = vmap_list kvs_m in Toml_doc.Table (toml_table kvs)
+  | VRecord vr_ -> let kvs = vr_.r_fields in Toml_doc.Table (toml_table kvs)
   (* A sum without its tag, as JSON writes one: the word for a bare
      constructor, the value for one that holds one. *)
   | VConstr (ctor, vals) when Hashtbl.mem sum_of_ctor ctor ->
     (match vals with
-     | [] -> Toml.Types.TString (spelling_of_ctor ctor)
+     | [] -> Toml_doc.String (spelling_of_ctor ctor)
      | [x] -> toml_of_value x
      | _ ->
        raise (EvalError (Printf.sprintf "cannot write '%s' as TOML" (Ctor.name ctor))))
@@ -9946,43 +9915,27 @@ let rec toml_of_value (v : value) : Toml.Types.value =
            | Some name, v -> [(doc_key ctor name, v)]
            | None, _ -> []) names vals)
        in
-       Toml.Types.TTable (toml_table pairs)
+       Toml_doc.Table (toml_table pairs)
      | _ ->
        raise (EvalError (Printf.sprintf
          "cannot write '%s' as TOML: it has no named fields" (Ctor.name ctor))))
   | _ -> raise (EvalError "cannot write this value as TOML")
 
+(* A map or a record keeps its order: a map's is the order its entries were
+   added, a record's the order its type declares the fields. *)
 and toml_table kvs =
-  List.fold_left (fun tbl (k, v) ->
+  List.filter_map (fun (k, v) ->
     (* A key that is absent is left out rather than written empty: TOML has
        no null, so the two would not read back the same. *)
     match v with
-    | VConstr (Ctor.Builtin "None", []) -> tbl
-    | _ -> Toml.Types.Table.add (Toml.Min.key k) (toml_of_value v) tbl)
-    Toml.Types.Table.empty kvs
-
-and toml_array vs =
-  match List.map toml_of_value vs with
-  | [] -> Toml.Types.NodeEmpty
-  | Toml.Types.TInt _ :: _ as ts ->
-    Toml.Types.NodeInt (List.map (function Toml.Types.TInt n -> n | _ -> 0) ts)
-  | Toml.Types.TFloat _ :: _ as ts ->
-    Toml.Types.NodeFloat (List.map (function Toml.Types.TFloat f -> f | _ -> 0.) ts)
-  | Toml.Types.TBool _ :: _ as ts ->
-    Toml.Types.NodeBool (List.map (function Toml.Types.TBool b -> b | _ -> false) ts)
-  | Toml.Types.TString _ :: _ as ts ->
-    Toml.Types.NodeString (List.map (function Toml.Types.TString s -> s | _ -> "") ts)
-  | Toml.Types.TTable _ :: _ as ts ->
-    Toml.Types.NodeTable (List.map (function Toml.Types.TTable t -> t | _ -> Toml.Types.Table.empty) ts)
-  | Toml.Types.TArray _ :: _ as ts ->
-    Toml.Types.NodeArray (List.map (function Toml.Types.TArray a -> a | _ -> Toml.Types.NodeEmpty) ts)
-  | _ -> raise (EvalError "cannot write this list as a TOML array")
+    | VConstr (Ctor.Builtin "None", []) -> None
+    | _ -> Some (k, toml_of_value v)) kvs
 
 (* The top of a TOML document is a table, so a scalar is refused here rather
    than written into something no parser would accept back. *)
 let toml_document v =
   match toml_of_value v with
-  | Toml.Types.TTable _ as t -> t
+  | Toml_doc.Table _ as t -> t
   | _ ->
     raise (EvalError
       "a TOML document is a table: write a map or a record, not a bare value")

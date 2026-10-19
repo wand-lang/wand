@@ -6492,6 +6492,13 @@ back the same.
 float, a bool or an array. The top-level parse always gives a table. Each typed
 extractor returns a `Result`. `field` and `field!` walk the keys.
 
+A table keeps its keys in the order the document wrote them, as a JSON
+object and a YAML mapping do: `get_table` gives a `Map` in that order,
+`decode` reads one in that order, and `stringify` writes them back in it.
+A table built with `of` has the order of the map or the record it came
+from. `stringify` writes a table's own values before its sub-tables,
+because a value below a section header belongs to that section.
+
 ```ocaml
 import TOML
 

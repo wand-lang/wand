@@ -1,6 +1,8 @@
 uses {FS.Read, FS.Write}
 
 let {test} = import Test
+import Decode
+import Result
 import TOML
 import List
 import String
@@ -199,3 +201,64 @@ test "it round trips" (fn t ->
     (Ok 8080)
     (TOML.get_int
       (TOML.field! "port" (TOML.parse! (TOML.stringify (TOML.of! {port = 8080}))))))
+
+-- ── Key order ───────────────────────────────────────────────────────────
+
+-- A table keeps the order its keys were written in, as a JSON object, a
+-- YAML mapping and a Map do. The library wand parses with sorts them, and
+-- the page that read a TOML file of groups came out alphabetical (#192).
+let ordered = `
+zeta = 1
+alpha = 2
+inline = { z = 1, a = 2 }
+text = """
+[not.a.header]
+"""
+
+[zebra]
+b = 1
+a = 2
+
+[apple]
+z = 1
+`
+
+test "a table keeps the order its keys were written in" (fn t ->
+  t.eq
+    (Ok ["zeta", "alpha", "inline", "text", "zebra", "apple"])
+    (TOML.parse! ordered |> TOML.get_table |> Result.map Map.keys))
+
+test "an inline table keeps its order" (fn t ->
+  t.eq
+    (Ok ["z", "a"])
+    (TOML.field! "inline" (TOML.parse! ordered) |> TOML.get_table |> Result.map Map.keys))
+
+test "a section keeps its order" (fn t ->
+  t.eq
+    (Ok ["b", "a"])
+    (TOML.field! "zebra" (TOML.parse! ordered) |> TOML.get_table |> Result.map Map.keys))
+
+test "stringify writes the keys in their order" (fn t ->
+  t.eq
+    "zebra = 1\napple = 2\n[later]\nz = 1\na = 2\n"
+    (TOML.stringify (TOML.parse! "zebra = 1\napple = 2\n[later]\nz = 1\na = 2\n")))
+
+test "of keeps a map's order" (fn t ->
+  t.eq
+    "zebra = 1\napple = 2\n"
+    (TOML.stringify (TOML.of! (Map.from_list [("zebra", 1), ("apple", 2)]))))
+
+test "decoding to a Map keeps the order" (fn t ->
+  t.eq
+    (Ok ["zebra", "apple"])
+    (TOML.decode (Decode.dict Decode.int) (TOML.parse! "zebra = 1\napple = 2\n")
+    |> Result.map Map.keys))
+
+-- A quoted key is the text between the quotes. It came back with them.
+test "a quoted key has no quotes in it" (fn t ->
+  t.eq (Ok ["a.b"]) (TOML.parse! "\"a.b\" = 1\n" |> TOML.get_table |> Result.map Map.keys))
+
+-- An empty table is written with its header. It was left out, so the
+-- document read back without it.
+test "an empty table is written" (fn t ->
+  t.eq "[a]\n[b]\nx = 1\n" (TOML.stringify (TOML.parse! "[a]\n[b]\nx = 1\n")))
