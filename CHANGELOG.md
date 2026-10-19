@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.107.5] - 2026-10-19
+
+### Fixed
+
+- `wand f` keeps a constructor applied to a bare name or a tuple of bare names as an application. Before, `f T(m;)` became `f T (m)`, which reads as the construction `T(m = m)` (#186).
+
 ## [0.107.4] - 2026-10-16
 
 ### Fixed

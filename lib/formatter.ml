@@ -903,6 +903,15 @@ let bracket = Doc.bracket
 (* Which atoms take a following bracket as their own. `constr_body_` reads
    one straight after a constructor name, qualified or not, and nothing else
    on an application spine does it. *)
+(* Whether a payload is what the parser reads as a list of punned names
+   when it stands in a constructor's bracket: one identifier, or a tuple of
+   them. *)
+let bare_names e =
+  let name e = match strip_located e with Var _ -> true | _ -> false in
+  match strip_located e with
+  | Tuple es -> List.for_all name es
+  | e -> name e
+
 let rec absorbs_a_bracket e =
   match strip_located e with
   | Constr _ -> true
@@ -1286,6 +1295,18 @@ and guard_constructors args rendered following =
    `l.A (S) (B m)`, which reads `S` as the payload of `l.A`. *)
 and guard_spine head head_s args rendered following =
   let guarded = guard_constructors args rendered following in
+  (* A tuple of bare names in the bracket a constructor takes reads back as
+     the names a construction puns: `T (a, b)` is `T(a = a, b = b)` where
+     `T` has fields. A second bracket keeps it the one tuple it was,
+     `T ((a, b))`. Found by test/fuzz. *)
+  let guarded =
+    match args, guarded with
+    | a :: _, g :: rest
+      when absorbs_a_bracket head
+           && (match strip_located a with Tuple _ -> bare_names a | _ -> false) ->
+      bracket g :: rest
+    | _ -> guarded
+  in
   let next = match guarded with x :: _ -> x | [] -> following in
   let head_s =
     (* A qualified head needs its brackets whatever follows. A bare one needs
@@ -1312,8 +1333,14 @@ and emit_arg ?(followed = false) indent e =
   (* `f None (x)`, as written. In brackets, `f (None (x))`, it is one
      argument rather than two, and the parser marks those brackets, so they
      are never added here; see `Ast.is_constr_payload`. The payload keeps
-     its own, which are what make it the constructor's. *)
-  | App (f, arg) when Ast.is_constr_payload e ->
+     its own, which are what make it the constructor's.
+
+     Not when the payload is bare names. `T (m)` and `T (a, b)` read back as
+     the names a construction puns, which a record's constructor takes as
+     its fields -- `f T(m;)` applies `T` to `m`, and its rendering `f T (m)`
+     builds `T(m = m)`. Those take the whole bracket, `f (T m)`. Found by
+     test/fuzz. *)
+  | App (f, arg) when Ast.is_constr_payload e && not (bare_names arg) ->
     let payload = match strip_located arg with
       | Tuple _ -> emit_expr indent arg
       | _ -> Doc.text "(" ^^ emit_expr indent arg ^^ Doc.text ")"
@@ -1437,6 +1464,12 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
     (match strip_located e with
      | App (f, arg) when (match strip_located f with Constr _ -> true | _ -> false) ->
        let payload = match strip_located arg with
+         (* Bare names in the bracket read back as the names a
+            construction puns, so they take a bracket of their own:
+            `d.M((a, b))` and `d.M((n))`, not `d.M(a, b)` and `d.M(n)`.
+            Found by test/fuzz. *)
+         | Tuple _ when bare_names arg -> emit_expr indent arg
+         | _ when bare_names arg -> Doc.text "(" ^^ emit_expr indent arg ^^ Doc.text ")"
          (* The tuple's own brackets serve as the constructor's, as in
             `M(a, b)`. *)
          | Tuple es -> Doc.concat (Doc.text ", ") (List.map (emit_expr indent) es)

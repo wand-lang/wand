@@ -1,0 +1,23 @@
+Found:     Fuzz, seed 39273552901, iteration 97686, 2026-10-19 (#186)
+reported:  format:unstable
+fixed in:  lib/formatter.ml, emit_arg, guard_spine and emit_expr_inner's
+           Qualified
+
+A constructor takes the bracket written after it, and the parser reads
+bare names in that bracket as the names a construction puns. `T(m)` and
+`T(a, b)` are `ConstrBare`, which a record's constructor takes as its
+fields. `T(m;)` and `T((a, b);)` are the constructor applied to the value,
+the same as `T m` and `T ((a, b))`.
+
+The formatter wrote the application with the payload in that bracket, so
+it came back as the pun:
+
+  f T(m;)       -->  f T (m)      -->  f T(m)
+  T((a, b);)    -->  T (a, b)     -->  T(a, b)
+
+Qualified, it settled, but on the other program: `l.T(m;)` came back as
+`l.T(m)`.
+
+A payload of bare names takes the whole bracket in an argument,
+`f (T m)`, a tuple of them a second bracket, `T ((a, b))`, and qualified,
+`l.T((m))` and `l.T((a, b))`.
