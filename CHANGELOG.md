@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.110.1] - 2026-10-20
+
+### Added
+
+- A published release starts the build of the site, so the site shows the release at once.
+
+### Documentation
+
+- The reference's Quick start tells how to install wand.
+
 ## [0.110.0] - 2026-10-20
 
 ### Upgrading
