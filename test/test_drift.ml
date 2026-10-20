@@ -127,7 +127,9 @@ let test_an_in_at_the_end_of_a_line () =
 (* ── A bracketed first argument, then more (#204) ─────────────────────── *)
 
 (* A bracket with a space before it was read as a constructor's whole
-   payload, so `Rect (Circle c) h` left `h` over and did not parse. *)
+   payload, so `Rect (Circle c) h` left `h` over and did not parse. A
+   declaration read its fields the same way, and a construction whose
+   first argument was a tuple was refused as `Rect (a1, a2)`. *)
 let test_a_bracketed_first_argument () =
   let t = "type Shape = Circle Int | Sq\ntype R = Rect Shape Int\n" in
   value "a constructor in brackets, then a name"
@@ -136,6 +138,16 @@ let test_a_bracketed_first_argument () =
   value "a tuple in brackets, then a name"
     "type Pair = (Int, Int)\ntype P = P Pair Int\nlet f p =\n  match p with\n  | P (a, b) c -> a + b + c\nlet x = (1, 2)\nf (P x 3)"
     "6";
+  (* The other two places the same reading held: a declaration, and a
+     construction whose first argument is a tuple. *)
+  value "a declaration with a bracketed field first"
+    "import List\ntype R = Rect (List Int) Int | Sq\nlet f r =\n  match r with\n  | Rect xs n -> List.length xs + n\n  | Sq -> 0\nf (Rect [1, 2] 3)"
+    "5";
+  value "a tuple first in a construction"
+    "type P = P (Int, Int) Int\nlet f p =\n  match p with\n  | P (a, b) c -> a + b + c\nf (P (1, 2) 3)"
+    "6";
+  expect_error "a tuple alone still meets the correction"
+    "type R = Rect Int Int\nRect (3, 4)" "write `Rect a1 a2`";
   (* With nothing after it, the bracket is still the payload. *)
   value "a bracket alone is the payload"
     "let f o =\n  match o with\n  | Some (x) -> x\n  | None -> 0\nf (Some 4)"

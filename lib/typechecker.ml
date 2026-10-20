@@ -4914,6 +4914,10 @@ let performs_call (env : env) f latent =
   if uninferred then member_calls := latent :: !member_calls
   else performs latent
 
+(* The applications met as the function of another, until they are
+   inferred themselves. See the `App` case of `infer`. *)
+let applied_heads : expr list ref = ref []
+
 let rec infer tenv (env : env) (e : expr) : typ =
   match e with
   | Int _      -> TInt
@@ -5079,7 +5083,15 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | Some (ctor, arg) -> infer tenv env (App (App (f, ctor), arg))
      | None -> assert false)
   | App (f, x) ->
-    check_app_shape tenv env f x;
+    (* An application that is the function of another has an argument
+       after it, which `check_app_shape` needs to know: `P (1, 2) 3` is
+       `P` given a pair and then `3`. *)
+    let more = List.memq e !applied_heads in
+    if more then applied_heads := List.filter (fun h -> h != e) !applied_heads;
+    (match strip_located f with
+     | App _ as head -> applied_heads := head :: !applied_heads
+     | _ -> ());
+    check_app_shape ~more tenv env f x;
     (* `f (fn p -> p.host) xs` reads the lambda before `xs` has said what
        `p` is. Put the spine back together and check it in two passes.
 
@@ -6257,7 +6269,7 @@ and nullary_payload tenv x =
    application itself. Each fires only when the head of the spine is a bare
    name or constructor, so one call at the head covers a spine of any
    length. *)
-and check_app_shape tenv (env : env) f x =
+and check_app_shape ?(more = false) tenv (env : env) f x =
     (* `Rect (3, 4)` reads naturally but means "apply Rect to a tuple", and
        Rect takes two arguments. The constructor's arity is known here even
        when it was declared in another file, so say what to write. *)
@@ -6309,7 +6321,10 @@ and check_app_shape tenv (env : env) f x =
        (match f with
         | Located (l, _) -> raise (TypeErrorAt (l, msg))
         | _ -> raise (TypeError msg))
-     | Constr name, Tuple es when List.length es > 1 ->
+     (* Only where the tuple is the one argument. With more after it,
+        `P (1, 2) 3`, it is the first of several, and a constructor whose
+        first field is a pair takes it so (#204). *)
+     | Constr name, Tuple es when List.length es > 1 && not more ->
        (match find_ctor_in_tenv tenv name with
         | Some (_, ctor)
           when List.length ctor.fields = List.length es
@@ -6408,7 +6423,7 @@ and infer_app_spine ?extra tenv (env : env) head args =
     | Some l -> (try f () with TypeError msg -> raise (TypeErrorAt (l, msg)))
   in
   (match args with
-   | (_, first) :: _ -> check_app_shape tenv env head first
+   | (_, first) :: rest -> check_app_shape ~more:(rest <> []) tenv env head first
    | [] -> ());
   let waiting = ref [] in
   let fn_type param_ts body_result_t arg_effects =
@@ -8283,6 +8298,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
     (prog : program) : typedef_env * env * env * typ =
   next_id := 0;
   implemented_members := [];
+  applied_heads := [];
   (* Seeded per file rather than accumulated: an interface is in scope where
      it is declared and where it is imported, and nowhere else. *)
   Hashtbl.reset iface_defs;

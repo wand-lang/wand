@@ -3006,7 +3006,19 @@ let parse_type_def s =
           List.filter_map (fun (_, _, k) -> k) named)
        | _ ->
          rewind s saved;
-         ([(None, parse_type_atom s)], [], []))
+         (* A field in brackets can come first, with more after it:
+            `Rect (List Int) Int`. Read as the whole payload, it left `Int`
+            over, and the declaration ended there. The reference has always
+            said brackets group the type of one field. *)
+         let fields = ref [(None, parse_type_atom s)] in
+         while type_atom_ahead s && not (newline_breaks_expr s) do
+           fields := !fields @ [(None, parse_type_atom s)]
+         done;
+         if peek s = Token.Eq then
+           fail_at (peek_loc s)
+             "only a named field takes a default: give the field a name, as in \
+              'A(n: Int = 3)'";
+         (!fields, [], []))
     | _ -> ([], [], [])
   in
   (* Single-constructor shorthand: type Foo (fields...) desugars to type Foo = Foo (fields...) *)

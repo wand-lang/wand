@@ -3863,13 +3863,17 @@ Parentheses group a tuple. Write several arguments one after the other:
 `Rect 3 4`, not `Rect (3, 4)`. So `Some (1, 2)` is `Some` applied to one pair,
 in every file.
 
-A pattern reads its arguments the same way. An argument that needs brackets
-can come first, with more after it: for `type R = Rect Shape Int`, the
-pattern `| Rect (Circle r) h` has two arguments.
+A field in brackets can come first, with more after it, in a declaration, a
+construction and a pattern alike. `Rect (List Int) Int` declares two
+fields, `Rect [1, 2] 3` builds one, and `| Rect xs n` matches it. For
+`type P = P (Int, Int) Int`, `P (1, 2) 3` is a pair and then `3`, and for
+`type R = Rect Shape Int`, the pattern `| Rect (Circle r) h` has two
+arguments.
 
 ```ocaml
 type Wrap = Wrap (List Int)     -- one field, type List Int
 type Pair = Pair (Int, Int)     -- one field, tuple type (Int, Int)
+type Tagged = Tagged (List Int) String  -- two fields
 ```
 
 A constructor with positional fields is also a function value. Give it
