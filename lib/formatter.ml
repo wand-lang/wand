@@ -190,6 +190,28 @@ let needs_hex str i =
   (c < 0x20 && c <> 0x0A && c <> 0x09 && c <> 0x0D) || c = 0x7F
   || (c >= 0x80 && utf8_length str i = 0)
 
+(* A character that shows nothing where it stands, or moves what is around
+   it: the bidirectional controls `V-BIDI1` warns of, and the zero-width
+   characters. Written as itself, a string holding one reads as another
+   string; so `wand f` writes it as `\u{...}` (#197), which is also what
+   `V-BIDI1` asks for. *)
+let invisible_code_point cp =
+  (cp >= 0x202A && cp <= 0x202E) || (cp >= 0x2066 && cp <= 0x2069)
+  || cp = 0x200E || cp = 0x200F || cp = 0x061C
+  || (cp >= 0x200B && cp <= 0x200D) || cp = 0x2060 || cp = 0xFEFF
+
+(* The invisible code point that starts at [i], if one does. *)
+let invisible_at str i =
+  if Char.code str.[i] < 0x80 || utf8_length str i = 0 then None
+  else
+    let d = String.get_utf_8_uchar str i in
+    let cp = Uchar.to_int (Uchar.utf_decode_uchar d) in
+    if invisible_code_point cp then Some cp else None
+
+let has_invisible str =
+  let rec go i = i < String.length str && (invisible_at str i <> None || go (i + 1)) in
+  go 0
+
 let has_hex_bytes str =
   let rec go i = i < String.length str && (needs_hex str i || go (i + 1)) in
   go 0
@@ -210,7 +232,9 @@ let escape_string_body str =
       Buffer.add_string buf (Printf.sprintf "\\x%02x" (Char.code c))
     else if Char.code c >= 0x80 then begin
       let len = utf8_length str i in
-      Buffer.add_string buf (String.sub str i len);
+      (match invisible_at str i with
+       | Some cp -> Buffer.add_string buf (Printf.sprintf "\\u{%X}" cp)
+       | None -> Buffer.add_string buf (String.sub str i len));
       skip := len - 1
     end else
     match c with
@@ -244,6 +268,7 @@ let contains_sub s sub =
    is a worse trade than the escaped quotes. *)
 let raw_safe s =
   not (has_hex_bytes s)
+  && not (has_invisible s)
   && not (String.contains s '`')
   && not (contains_sub s "%{")
   && String.for_all (fun c -> c <> '\n' && c <> '\t' && c <> '\r') s

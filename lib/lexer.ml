@@ -217,9 +217,9 @@ let read_string s =
       (* The file ending on the backslash is an unterminated string, not an
          escape of whatever `advance` answers past the end. *)
       if is_at_end s then raise (Fail "unterminated string literal");
-      let c = match advance s with
-        | 'n' -> '\n' | 't' -> '\t' | 'r' -> '\r'
-        | '\\' -> '\\' | '"' -> '"' | '$' -> '$' | '%' -> '%' | '#' -> '#'
+      let bytes = match advance s with
+        | 'n' -> "\n" | 't' -> "\t" | 'r' -> "\r"
+        | '\\' -> "\\" | '"' -> "\"" | '$' -> "$" | '%' -> "%" | '#' -> "#"
         (* One byte, by its value. A String is bytes, and a byte that is no
            character -- 255 starts a telnet command -- has no other way to
            be written. *)
@@ -233,10 +233,44 @@ let read_string s =
           in
           let hi = digit () in
           let lo = digit () in
-          Char.chr (int_of_string (Printf.sprintf "0x%c%c" hi lo))
-        | c -> raise (Fail (Printf.sprintf "unknown escape \\%c" c))
+          String.make 1 (Char.chr (int_of_string (Printf.sprintf "0x%c%c" hi lo)))
+        (* A character, by its code point, as its UTF-8 bytes: `\u{2192}`
+           is the three bytes of `→`. The spelling of JSON, JavaScript,
+           Rust and Swift, so a writer reaches for it first, and the one way
+           to write a character that should not stand in the source as
+           itself -- a bidirectional control, which `V-BIDI1` asks to have
+           written as an escape (#197). *)
+        | 'u' ->
+          let fail () = raise (Fail
+            "a character is written \\u{...} with its code point in hex, as \\u{2192}") in
+          if is_at_end s || advance s <> '{' then fail ();
+          let digits = Buffer.create 6 in
+          let rec read () =
+            if is_at_end s then raise (Fail "unterminated string literal");
+            match advance s with
+            | '}' -> ()
+            | ('0'..'9' | 'a'..'f' | 'A'..'F') as d when Buffer.length digits < 6 ->
+              Buffer.add_char digits d; read ()
+            | _ -> fail ()
+          in
+          read ();
+          if Buffer.length digits = 0 then fail ();
+          let cp = int_of_string ("0x" ^ Buffer.contents digits) in
+          if cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF) then
+            raise (Fail (Printf.sprintf
+              "\\u{%s} is not a character: a code point is at most 10FFFF, \
+               and D800 to DFFF are not characters"
+              (Buffer.contents digits)));
+          let b = Buffer.create 4 in
+          Buffer.add_utf_8_uchar b (Uchar.of_int cp);
+          Buffer.contents b
+        (* The escapes there are, so the writer need not look them up. *)
+        | c -> raise (Fail (Printf.sprintf
+            "unknown escape \\%c. A string has \\n, \\t, \\r, \\\\, \\\", \\%%, \
+             \\$, \\#, \\xNN for one byte, and \\u{...} for a character by \
+             its code point" c))
       in
-      Buffer.add_char buf c; loop ()
+      Buffer.add_string buf bytes; loop ()
     (* A string is text, not a command line: there are no argument
        boundaries to quote for, so raw interpolation would mean exactly what
        `%{...}` already means. Rejected rather than allowed as a synonym. *)

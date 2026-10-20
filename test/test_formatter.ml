@@ -695,7 +695,16 @@ let test_a_unit_payload_is_kept () =
 let test_byte_escapes_round_trip () =
   fmt_eq "a byte that is no character" "let x = \"a\\xffb\\x01c\"" "let x = \"a\\xffb\\x01c\"";
   fmt_eq "a character spelled in bytes" "let x = \"\\xc3\\xa9\"" "let x = \"\xc3\xa9\"";
-  fmt_eq "not backticks, though it holds a quote" "let x = \"\\\"\\xff\"" "let x = \"\\\"\\xff\""
+  fmt_eq "not backticks, though it holds a quote" "let x = \"\\\"\\xff\"" "let x = \"\\\"\\xff\"";
+  (* A character by its code point is written as itself when it shows, and
+     as the escape when it does not: a bidirectional control or a zero-width
+     space reads as nothing, or moves the text around it (#197). *)
+  fmt_eq "a visible character" "let x = \"a\\u{2192}b\"" "let x = \"a\xe2\x86\x92b\"";
+  fmt_eq "a bidirectional control" "let x = \"a\\u{202E}b\"" "let x = \"a\\u{202E}b\"";
+  fmt_eq "a raw bidirectional control" "let x = \"a\xe2\x80\xaeb\"" "let x = \"a\\u{202E}b\"";
+  fmt_eq "a zero-width space" "let x = \"a\\u{200B}b\"" "let x = \"a\\u{200B}b\"";
+  fmt_eq "not backticks, though it holds a quote and a control"
+    "let x = \"\\\"\\u{2066}\"" "let x = \"\\\"\\u{2066}\""
 
 let test_a_multiline_backtick_string_opens_on_the_eq_line () =
   fmt_eq "a top-level binding"

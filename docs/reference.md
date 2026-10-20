@@ -358,6 +358,20 @@ valid UTF-8 character as itself:
 "caf\xc3\xa9"            -- "café", which wand f writes as such
 ```
 
+A character is written `\u{...}` with its code point in hex, and the string
+holds its UTF-8 bytes. `wand f` writes a visible character as itself, and a
+character that shows nothing or moves the text around it -- a bidirectional
+control, a zero-width space -- as the escape, so the source reads as what it
+holds:
+
+```ocaml
+"a \u{2192} b"            -- "a → b", which wand f writes as such
+"\u{202E}"                -- RIGHT-TO-LEFT OVERRIDE, kept as the escape
+```
+
+The escapes are `\n`, `\t`, `\r`, `\\`, `\"`, `\%`, `\$`, `\#`, `\xNN` and
+`\u{...}`. Any other is a lex error that lists them.
+
 String concatenation with `++`, which also joins two lists
 ([Joining and `Concat`](#joining-and-concat)):
 

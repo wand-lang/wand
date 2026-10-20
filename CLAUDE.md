@@ -255,6 +255,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `fn x -> x + 1` | `fun`, `\x ->`, `lambda` |
 | `h :: t` cons, `[h :: t]` and `[a, b :: t]` in patterns | `:` for cons, `(x : xs)` |
 | `"hi %{name}"` interpolation | `${x}`, `#{x}`, f-strings |
+| `"\u{2192}"` a character by code point, `"\xff"` one byte | `"\u2192"`, `"\U0001F600"` |
 | `&&`, `\|\|`, `!` | `and`, `or`, `not` |
 | `let f n = ...` (already recursive) | `let rec` |
 | `{a = 1}` map; `{a, b = x}` puns, in a map and in a pattern | `{a: 1}`, `[a = 1]` |

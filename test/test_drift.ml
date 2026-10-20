@@ -169,6 +169,21 @@ let test_a_type_name_in_lower_case () =
   expect_error "a leading underscore" "type _Split(n: Int)\n"
     "write 'Split'. A type has no private form"
 
+(* ── A character by its code point (#197) ─────────────────────────────── *)
+
+(* `\u{...}` is a character, as its UTF-8 bytes. An unknown escape lists the
+   ones there are. *)
+let test_a_code_point_escape () =
+  value "a character is its UTF-8 bytes" "\"\\u{2192}\" == \"\\xe2\\x86\\x92\"" "true";
+  value "four bytes" "import String\nString.length \"\\u{1F600}\"" "4";
+  expect_error "past the last code point" "\"\\u{110000}\""
+    "\\u{110000} is not a character";
+  expect_error "a surrogate" "\"\\u{D800}\"" "is not a character";
+  expect_error "without braces" "\"\\u2192\""
+    "a character is written \\u{...} with its code point in hex";
+  expect_error "an unknown escape lists the escapes" "\"\\q\""
+    "unknown escape \\q. A string has"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -520,6 +535,7 @@ let () =
       Alcotest.test_case "a constructor pattern inside another (#195)" `Quick
         test_a_constructor_pattern_inside_another;
       Alcotest.test_case "a type name in lower case (#196)" `Quick test_a_type_name_in_lower_case;
+      Alcotest.test_case "a code point escape (#197)" `Quick test_a_code_point_escape;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [
