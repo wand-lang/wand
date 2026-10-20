@@ -2636,7 +2636,7 @@ let test_errors_say_the_fix () =
   (* Bound in the same definition, where the use cannot see it: a scope
      problem, and the module hint does not apply (#119). *)
   err_contains "bound in the definition, out of scope at the use"
-    "let f n =\n  match n with\n  | Some v -> (let next = v * 2 in next; next)\n  | None -> 0\nf (Some 1)"
+    "let f n =\n  match n with\n  | Some v -> ((let next = v * 2 in next); next)\n  | None -> 0\nf (Some 1)"
     "unbound variable 'next' -- 'next' is bound at line 3, but that binding \
      is not in scope here";
   (match run "let f n =\n  let g = (let next = n in next)\n  next\nf 1" with

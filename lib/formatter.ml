@@ -1244,7 +1244,6 @@ and dangles e =
   match strip_located e with
   | If (_, _, el) | Unless (_, _, el) ->
     (match strip_located el with Unit -> true | _ -> dangles el)
-  | Let (_, _, e2, LetIn) | LetRec (_, e2, LetIn) -> dangles e2
   | With (_, _, body) | Fn (_, body) -> dangles body
   | Match (_, cases) ->
     (match List.rev cases with (_, _, body) :: _ -> dangles body | [] -> false)
@@ -1415,7 +1414,6 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        `(` stood on a line alone and its statements two further in. *)
     let body_indent =
       match strip_located body with
-      | Let (_, _, _, LetIn) | LetRec (_, _, LetIn) -> indent + 2
       | Let (_, _, _, LetBlock) | LetRec (_, _, LetBlock)
         when is_bare_chain body -> indent + 2
       | Contract (reqs, ens, _) when reqs <> [] || ens <> [] -> indent + 2
@@ -1442,8 +1440,6 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
      comes back out with the `;`. *)
   | (Let (_, _, _, LetBlock) | LetRec (_, _, LetBlock)) as e ->
     emit_block ~col ~bare:stmt indent e
-  | Let (p, e1, e2, LetIn) -> emit_let ~col indent p e1 e2
-  | LetRec (bindings, e2, LetIn) -> emit_letrec indent bindings e2
   | If (c, t, el) -> emit_if ~col ~word:"if" indent c t el
   | Unless (c, t, el) -> emit_if ~col ~word:"unless" indent c t el
   | Match (scr, cases) -> emit_match ~col indent scr cases
@@ -2206,9 +2202,10 @@ and emit_block ?col ?(bare = false) indent e =
      column. So an arm-ended binding keeps the `in` it was written with, and
      every other statement takes the `;`. *)
   (* Whether a binding whose value ends on an arm takes `in` rather than
-     brackets. Not on one line: an `in` with its body on the same line
-     narrows, and these do not. Written at the end of its line, an `in`
-     gives the name to the rest of the block, as the `;` does (#203). *)
+     brackets. An `in` gives the name to the rest of the block, as the `;`
+     does (#203). On one line the brackets stay: a whole `match` and the
+     statements after it on one line read better with the `match` closed
+     off. *)
   let use_in = ref bare in
   let rec items ind e =
     match strip_located e with
@@ -2224,12 +2221,9 @@ and emit_block ?col ?(bare = false) indent e =
        written `in` with statements above it stands beside their `;`. Only
        the printer knows what the brackets will be.
 
-       The `in` that narrows is not reached here. It is a `Seq`'s first
-       child, which the case above emits as a statement, so `(let x = 1 in
-       x + 1; 9)` keeps the `in` that holds `x` off the `9`. Nor is a
-       binding that is not in a block: `emit_block` is reached only for a
-       `Seq` or a block binding, so the first call here is never a bare
-       `let ... in`. *)
+       A binding in brackets of its own is a `Seq`'s first child, which the
+       case above emits as a statement, so `((let x = 1 in x + 1); 9)` keeps
+       the brackets that hold `x` off the `9`. *)
     | Let (p, e1, body, _) ->
       let above = match starts_at (loc_of e1) with Some hi -> lead hi | None -> [] in
       let in_term = !use_in && printed_ends_in_an_arm e1 in
@@ -2386,114 +2380,6 @@ and emit_binding ?col ?(in_terminated = false) indent p e1 =
       ^^ (if arm then value (indent + 2) e1
          else bracket_if_wrapped_app_at ~anchor:(indent + 2) e1 (emit_expr (indent + 2) e1))
 
-and emit_let ?col indent p e1 e2 =
-  let col = match col with Some c -> c | None -> indent in
-  (* A comment between this binding and what reads it: after the value ends
-     and before the body begins. It is written above the body, on the lines
-     it already occupies. A binding that has one cannot be written on a
-     single line. *)
-  let ind0 = Doc.spaces indent in
-  let after_in =
-    match loc_of e1, loc_of e2 with
-    | Some a, Some b -> comments_between a.Token.end_offset b.Token.offset
-    | _ -> []
-  in
-  let commented = after_in <> [] in
-  let above =
-    Doc.concat Doc.empty
-      (List.map (fun c -> ind0 ^^ Doc.text c.c_text ^^ Doc.text "\n") after_in) in
-  (* This `let ... in` narrows, so its body opens on the `in` line. An `in`
-     that ends its line gives the name to the rest of the body (#203), so
-     the body below it would take the statements after the `;` too. When
-     the binding does not fit on one line, the `in` goes to a line of its
-     own with the body after it, and a comment above the body goes above
-     the `in`. *)
-  let narrowed_tail () =
-    let at = indent + 3 in
-    above ^^ ind0 ^^ Doc.text "in "
-    ^^ bracket_if_wrapped_app_at ~anchor:at e2 (emit_expr ~col:at at e2)
-  in
-  match e1 with
-  | Fn (params, fbody) ->
-    (* A *raw* (non-`Located`) `Fn` as a `let` RHS only ever comes from the
-       shorthand `let name params = body` parse (parser.ml:705) -- the one
-       form the typechecker treats as recursive (typechecker.ml:658-659,
-       matches literal `Fn _`, not `Located (_, Fn _)`). Reprinting it as
-       `let name = fn params -> body` would silently make it non-recursive,
-       so it must always come back out as shorthand syntax, single-clause or
-       multi-equation alike. *)
-    (* The first clause carries the keyword and fixes the column its name
-       starts at; the rest are that name again, under it. The `in` closes
-       the group from the keyword's own column, so the block reads as one
-       shape rather than a stack of unrelated lines. *)
-    let ind = Doc.spaces indent in
-    let tail = bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2) in
-    (* `in ` opens the tail three columns right of the keyword below it, but
-       a `let ... in` chain lays its own continuation out at the indent it
-       was handed. So a value that wrapped, and the `and` line under it,
-       landed left of the `let` they belong to, where the parser reads them
-       as something new and the file no longer parses. A chain of more than
-       one line takes the whole line, as it does after a value binding's
-       `in` and after a commented one. Found by test/fuzz. *)
-    let tail_on_its_own_line =
-      Doc.has_newline tail
-      && (match strip_located e2 with
-          | Let (_, _, _, LetIn) | LetRec (_, _, LetIn) -> true
-          | _ -> false)
-    in
-    emit_fn_clauses ~col indent p params fbody
-    ^^ Doc.text "\n"
-    ^^ (if commented || tail_on_its_own_line then narrowed_tail ()
-       else ind ^^ Doc.text "in " ^^ tail)
-  | Annot (te, body) ->
-    (* Reprinting an `Annot`'d let RHS via inline `expr : Type` syntax would
-       be genuinely ambiguous: the parser's infix `:` in expression position
-       always means cons (list prepend), never ascription, so
-       `let x = e : T in ...` re-parses as "cons e onto T", not "e annotated
-       with type T". Must go back out through the dedicated
-       `let name : T = e` syntax (parser.ml:707-717) instead. *)
-    let name = emit_pat p in
-    (* The annotated value needs the same brackets the unannotated one gets
-       from `emit_bound_value`: a call that wrapped ends at its first line,
-       and here the `in` below it is read as continuing the definition
-       rather than closing it. This branch went around that helper and so
-       around the guard. Found by test/fuzz. *)
-    let bodys =
-      let emitted = emit_expr indent body in
-      bracket_if_wrapped_app_at ~anchor:indent body emitted
-    in
-    let e2s = bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2) in
-    let head = Doc.text ("let " ^ name ^ " : " ^ emit_type_expr te) in
-    let oneline = head ^^ Doc.text " = " ^^ bodys ^^ Doc.text " in " ^^ e2s in
-    if (not commented) && fits col oneline then oneline
-    else head ^^ Doc.text " = " ^^ bodys ^^ Doc.text "\n" ^^ narrowed_tail ()
-  | _ ->
-  let e1s = emit_expr indent e1 in
-  (* A wrapped application after `in` needs its brackets for the same reason
-     one after `=` does: it ends where its first line ends, and the argument
-     below reads as continuing the definition this `let` belongs to. *)
-  let e2s = bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2) in
-  let oneline =
-    Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text " in " ^^ e2s in
-  if (not commented) && fits col oneline then oneline
-  else
-    (* The `in` goes below the value with the body after it, since this
-       binding narrows. The binding alone may still be too long -- and the
-       value was rendered as though it began at the margin, not after
-       `let name = `. Given its own line it gets the room the measurement
-       assumed, and wraps on its own terms. *)
-    let bound =
-      Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text " in" in
-    if fits col bound && opens_a_bracket e2 && not commented then
-      (* A bracketed tail after `in` opens on the same line, brace-style,
-         like a bracketed value after `=`. *)
-      bound ^^ Doc.text " " ^^ emit_expr ~col:(col + Doc.width bound + 1) indent e2
-    else if fits col bound then
-      Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text "\n" ^^ narrowed_tail ()
-    else
-      emit_bound_value ~col indent (Doc.text ("let " ^ emit_pat p)) e1
-      ^^ Doc.text "\n" ^^ narrowed_tail ()
-
 (* The `let f ... and g ...` group on its own, without whatever reads it:
    the `in` form puts its body below, the block form puts a `;`. *)
 and emit_letrec_bindings indent bindings =
@@ -2511,11 +2397,6 @@ and emit_letrec_bindings indent bindings =
       emit_binding "let" first :: List.map (emit_binding "and") rest
   in
   Doc.concat (Doc.text "\n" ^^ ind) lines
-
-and emit_letrec indent bindings e2 =
-  let ind = Doc.spaces indent in
-  emit_letrec_bindings indent bindings ^^ Doc.text "\n" ^^ ind ^^ Doc.text "in "
-  ^^ bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2)
 
 and emit_if ?col ~word indent c t el =
   let col = match col with Some c -> c | None -> indent in
@@ -2747,20 +2628,7 @@ and emit_case_body ?col indent body =
      file into one that does not parse. *)
   | _ ->
     let flat = emit_expr ?col indent body in
-    (* A `let ... in` body that does not fit on the arrow's line put its
-       continuation at the arm's own indent, level with the `|` above it,
-       where it read as the next statement rather than the rest of this
-       arm. It takes the block shape a nested match takes, for the reason
-       a nested match takes it. *)
-    let is_let_in = match strip_located body with
-      | Let (_, _, _, LetIn) | LetRec (_, _, LetIn) -> true
-      | _ -> false
-    in
-    if is_let_in && Doc.has_newline flat then begin
-      let ind = Doc.spaces indent in
-      let inner = Doc.spaces (indent + 2) in
-      Doc.text "(\n" ^^ inner ^^ emit_expr (indent + 2) body ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
-    end else bracket_if_wrapped_app_at ~anchor:indent body flat
+    bracket_if_wrapped_app_at ~anchor:indent body flat
 
 (* The scrutinee shares its own "with" keyword with any enclosing match's
    "with", so an unparenthesized nested Match there is fragile even when

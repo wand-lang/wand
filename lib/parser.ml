@@ -2158,50 +2158,28 @@ and let_ ?(block = false) s =
   (* The body, and what joined it to the binding: `in`, the `;` of a block,
      or the newline that ended the right-hand side. All three bind the name
      over everything that follows, so what is recorded is not which was
-     written but which `wand f` writes -- the `;` where the binding is a
-     block's, `in` where it names a value for one expression. *)
-  (* Which spelling the binding comes back as, and the only thing that
-     decides it is meaning.
-
-     `LetIn` narrows: a `;` waiting after the body says the name belongs to
-     that body and to nothing below it. Everything else binds for the rest
-     of what encloses it, which is `LetBlock`, whether brackets were written
-     round it or not.
+     written but which `wand f` writes.
 
      Brackets are deliberately not part of this. They are the formatter's to
      put in and take out -- it drops the ones a construct no longer needs --
      so a style read off them disagrees with itself on the next pass. Read
      the same node either way and the formatter is free to choose. *)
-  let style_for ~narrows = if narrows then Ast.LetIn else Ast.LetBlock in
   let consume_rest () =
     if peek s = Token.In then begin
-      let in_line = (peek_loc s).Token.line in
       ignore (advance s);
-      (* An `in` that ends its line binds the name over the rest of the
-         body, as the newline does. A body of lines takes a newline as a
-         `;`, so read by the rule below, every `in` at the end of a line
-         narrowed, and `let y = x in` gave `y` to the next line and to
-         nothing after it (#203). *)
-      if (peek_loc s).Token.line > in_line && is_expr_start (peek s) then
-        (if block then (paren_seq s, Ast.LetBlock)
-         else (parse_body s, style_for ~narrows:false))
-      else
-      let body = locate s (fun () -> expr_ 0 s) in
-      (* A `;` narrows only inside a block, where it is the block's own
-         separator and the statements after it are the ones the name must
-         not reach. At the top level a `;` ends the item, and the formatter
-         does not write it back -- so reading it as a narrowing one made the
-         binding a `let ... in` whose reprint parsed as something else.
-         Found by test/fuzz.
-
-         And only with a statement after it. `(let x = 1 in x;)` has none
-         for the name to be kept from, and the formatter does not write an
-         empty statement back -- so it too came back without the `;` and
-         was read as the block's binding on the next pass. Found by
-         test/fuzz. *)
-      let narrows =
-        block && peek s = Token.Semicolon && peek2 s <> Token.RParen in
-      (body, style_for ~narrows)
+      (* `in` gives the name to the rest of the body, as the `;` and the
+         newline do, and as OCaml, Haskell and F# do. It used to narrow
+         when a `;` came after its body: `(let x = 1 in x + 1; 9)` kept `x`
+         off the `9`. A body of lines takes a newline as a `;`, so every
+         `in` at the end of a line narrowed too, and `let y = x in` gave
+         `y` to the next line and to nothing after it (#203). Brackets
+         narrow: `(let x = 1 in x + 1); 9`. *)
+      if block && peek s = Token.RParen then
+        fail_at (peek_loc s)
+          "this binding has no body: a block cannot end with a `let`, \
+           because nothing would read the name"
+      else if block then (paren_seq s, Ast.LetBlock)
+      else (parse_body s, Ast.LetBlock)
     end
     else if block && peek s = Token.Semicolon then begin
       (* The binding's body is everything after the `;`. *)
@@ -2237,7 +2215,7 @@ and let_ ?(block = false) s =
             && semicolon_joins_the_body s s.stmt_col then begin
       ignore (advance s);
       let body = parse_body s in
-      (body, style_for ~narrows:false)
+      (body, Ast.LetBlock)
     end
     else if is_expr_start (peek s) then begin
       (* Neither `in` nor `;`: the newline ended the right-hand side, and
@@ -2250,13 +2228,13 @@ and let_ ?(block = false) s =
       if block then (paren_seq s, Ast.LetBlock)
       else
         let body = parse_body s in
-        (body, style_for ~narrows:false)
+        (body, Ast.LetBlock)
     end
     (* A binding with nothing after it. The body is written out as `()`, and
        that is a body like any other: spelt the way the position spells one,
        or the next pass reads back a style other than the one just
        printed. *)
-    else (Unit, style_for ~narrows:false)
+    else (Unit, Ast.LetBlock)
   in
   match p with
   | PVar "rec" when is_pat_atom_start (peek s) ->

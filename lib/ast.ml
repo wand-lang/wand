@@ -120,13 +120,11 @@ type pat =
      else sees through it. *)
   | PCtor         of global * pat * cache
 
-(* Which of the two spellings a binding comes back as. `let x = 1 in e` and
-   the block binding `(let x = 1; e)` bind the same name over the same body,
-   so they build the same node, and a third spelling -- the newline that ends
-   the right-hand side -- builds it too. The parser picks one of the two by
-   where the binding stands, rather than recording which was written, so a
-   block is never printed half in one form and half in the other. *)
-type let_style = LetIn | LetBlock
+(* `let x = 1 in e`, the block binding `(let x = 1; e)` and the newline that
+   ends the right-hand side bind the same name over the same body, so they
+   build the same node. There was a second style, for an `in` that narrowed;
+   `in` no longer narrows (#203), and one style is left. *)
+type let_style = LetBlock
 
 type expr =
   | Int      of int
@@ -453,13 +451,13 @@ let rec show : expr -> string = function
                          (String.concat " " (List.map show_pat ps)) (show e)
   | Let (p, e1, e2, st) ->
     Printf.sprintf "(let %s = %s%s %s)" (show_pat p) (show e1)
-      (match st with LetIn -> " in" | LetBlock -> ";") (show e2)
+      (match st with LetBlock -> ";") (show e2)
   | LetRec (bindings, e2, st) ->
     Printf.sprintf "(let rec %s%s %s)"
       (String.concat " and " (List.map (fun (n, ps, b) ->
         Printf.sprintf "%s %s = %s" n
           (String.concat " " (List.map show_pat ps)) (show b)) bindings))
-      (match st with LetIn -> " in" | LetBlock -> ";")
+      (match st with LetBlock -> ";")
       (show e2)
   | If (c, t, e)    -> Printf.sprintf "(if %s %s %s)" (show c) (show t) (show e)
   | Unless (c, t, e) -> Printf.sprintf "(unless %s %s %s)" (show c) (show t) (show e)

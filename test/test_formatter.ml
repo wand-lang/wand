@@ -253,22 +253,22 @@ let test_a_fn_block_opens_on_the_arrow_line () =
   Alcotest.(check string) "the block opens on the arrow's line" want (fmt src);
   formats_and_parses "a fn block at any margin" 30 src
 
-(* A `;` after `let ... in` keeps the name from the statements below it,
-   and the parser read one even with no statement below: `(let x = 1 in
+(* A `;` after `let ... in` used to keep the name from the statements below
+   it, and the parser read one even with no statement below: `(let x = 1 in
    x;)`. The formatter writes no empty statement back, so the next pass had
    no `;` and read the block's binding, and wrote `;` where the first had
-   written `in`. With nothing after it, the `;` narrows nothing. Found by
-   test/fuzz. *)
+   written `in`. Found by test/fuzz. `in` no longer narrows (#203); the
+   case stays as a test that the empty statement settles. *)
 let test_an_empty_statement_after_in_settles () =
   let name = String.make 80 'g' in
   List.iter (fun w ->
     formats_and_parses "in before an empty statement" w
       (name ^ " (fn->((let x=1in x;)()))\n"))
     [28; 92];
-  (* A statement after the `;` still keeps its `in`. *)
-  let out = fmt "let y = (let x = 1 in x; 2)\n" in
-  if not (Lint.contains out "let x = 1 in x") then
-    Alcotest.failf "the `in` before a statement was lost:\n%s" out
+  (* Brackets round the binding keep the name from the statement after it. *)
+  let out = fmt "let y = ((let x = 1 in x); 2)\n" in
+  if not (Lint.contains out "(let x = 1; x)") then
+    Alcotest.failf "the brackets before a statement were lost:\n%s" out
 
 (* A construction whose fields all pun is written as a list of bare names,
    and that list reads back as the payload form `T(a, b)` -- which had no
@@ -2058,11 +2058,11 @@ let test_a_block_binding_round_trips () =
   let wanted = tidy name;
   if wanted == name then acc else (p, wanted) :: acc
 ) paths []|};
-  (* A binding written with `in` inside a sequence is a statement like any
-     other and stays where it is. *)
+  (* A binding written with `in` inside a sequence gives the name to the
+     rest of it, as the `;` does (#203). *)
   fmt_eq "the in form inside a sequence"
     {|let f () = (let x = 1 in x + 1; 9)|}
-    {|let f () = (let x = 1 in x + 1; 9)|};
+    {|let f () = (let x = 1; x + 1; 9)|};
   (* The other spelling in the same place. A `let ... in` chain lays its
      continuation out at the indent it is handed, and level with the `fn`
      the second binding read as the statement after the lambda. On the
@@ -2247,13 +2247,18 @@ let test_an_in_among_statements_takes_the_semicolon () =
   fmt_eq "a parenthesised binding as an argument"
     {|let a = t.eq 3 (let f = fn () -> let x = 1 in x + 1 in f ())|}
     {|let a = t.eq 3 (let f = fn () -> (let x = 1; x + 1); f ())|};
-  (* The `in` that narrows is still the exception, in either position. *)
-  fmt_eq "an in before a semicolon narrows and stays"
+  (* An `in` before a `;` gives the name to the rest of the block too, so
+     it takes the `;` like every other binding (#203). Brackets narrow,
+     and they stay. *)
+  fmt_eq "an in before a semicolon"
     {|let f () = (let x = 1 in x + 1; 9)|}
-    {|let f () = (let x = 1 in x + 1; 9)|};
+    {|let f () = (let x = 1; x + 1; 9)|};
   fmt_eq "and under a statement too"
     {|let f () = (g (); let x = 1 in x + 1; 9)|}
-    {|let f () = (g (); let x = 1 in x + 1; 9)|}
+    {|let f () = (g (); let x = 1; x + 1; 9)|};
+  fmt_eq "brackets that narrow stay"
+    {|let f () = (g (); (let x = 1 in x + 1); 9)|}
+    {|let f () = (g (); (let x = 1; x + 1); 9)|}
 
 (* A binding written this way used to take everything under it into its
    body, however far left that was: `parse_body` looped on "another
@@ -2348,10 +2353,9 @@ let test_an_arm_ended_value_in_a_block_takes_in () =
     "let f! x =\n  let y =\n    match x with\n    | 0 -> \"a\"\n    | _ -> \"b\"\n  ;\n  IO.println y\n  IO.println y"
     block;
   fmt_eq "and comes back the same" block block;
-  (* A narrowing `in` that does not fit keeps its body on the `in` line,
-     so the statement after the `;` stays outside the name. *)
-  ok_after_format "a long narrowing in keeps its meaning"
-    "import String\nlet y = 1\nlet f x = (\n  let y = \"a value long enough that this binding does not fit on one line\" ++ x in String.length y;\n  y\n)\nf \"b\""
+  (* Brackets narrow, and the formatter keeps them. *)
+  ok_after_format "brackets that narrow are kept"
+    "import String\nlet y = 1\nlet f x = (\n  (let y = \"a value long enough that this binding does not fit on one line\" ++ x in String.length y);\n  y\n)\nf \"b\""
     "1"
 
 let test_a_newline_binding_stops_at_the_next_definition () =

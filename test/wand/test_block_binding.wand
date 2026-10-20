@@ -25,9 +25,13 @@ group "the forms" (fn () -> [
     t.eq 3 (let f = fn () -> (let (a, b) = (1, 2); a + b); f ()))
 ])
 
--- The older spelling keeps its own meaning.
-test "let ... in scopes over one expression" (fn t ->
-  t.eq 9 (let f = fn () -> (let x = 1 in x + 1; 9); f ()))
+-- A binding reaches the rest of the block, past a `;`, whether it was
+-- written with `in` or with `;`. Brackets narrow it.
+test "a binding scopes past a ;" (fn t ->
+  t.eq 2 (let f = fn () -> (let x = 1; x + 1; x + 1); f ()))
+
+test "brackets narrow a binding" (fn t ->
+  t.eq 6 (let x = 5; let f = fn () -> ((let x = 1; x + 1); x + 1); f ()))
 
 -- The block form is what a script that names two intermediates writes, and
 -- it costs no indentation.

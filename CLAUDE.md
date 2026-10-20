@@ -343,13 +343,12 @@ line gives its `;` to the binding around it.
 
 `in`, the block's `;` and the newline that ends a right-hand side all bind
 the name over the same body, so they are one thing and `wand f` writes the
-`;`. The separator is the formatter's business rather than yours. Two
-spellings survive it, and both say what the `;` cannot: `in` where the value
+`;`. The separator is the formatter's business rather than yours. One
+spelling survives it, and it says what the `;` cannot: `in` where the value
 ends on a `match` or `handle` arm, since an arm reads a `;` on it as part of
-itself, and `in` where it narrows — `(let x = 1 in x + 1; 9)` gives `x` to
-`x + 1` and to nothing after it. Only an `in` with its body on the same line
-narrows: an `in` at the end of a line gives the name to the rest of the
-body, as the `;` does. A `;` at the start of a line means what
+itself. `in` gives the name to the rest of the body, past a `;`, as in
+OCaml; brackets narrow — `((let x = 1 in x + 1); 9)` gives `x` to `x + 1`
+and to nothing after it. A `;` at the start of a line means what
 one at the end of the line above does, so a `;` on a line of its own, left
 of the arms and at the `let`'s column, ends a value that ends on an arm, and
 `wand f` writes it as `in`. Prefer one `match` over multi-equation

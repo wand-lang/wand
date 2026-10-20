@@ -100,12 +100,12 @@ let test_a_semicolon_on_an_arm_line () =
     "let f r =\n  let x =\n    match r with\n    | Ok n -> n\n    | Error _ -> 0\n  ;\n  x + 1\nf (Ok 1)"
     "2"
 
-(* ── An `in` at the end of a line binds over the rest (#203) ────────── *)
+(* ── An `in` binds over the rest of the body (#203) ─────────────────── *)
 
 (* In a body of one statement per line, a newline is a `;`, and an `in`
-   with a `;` after its body narrows. So `let y = x in` at the end of a
+   with a `;` after its body narrowed. So `let y = x in` at the end of a
    line gave `y` to the next line only, and the line after that could not
-   see it. *)
+   see it. Now `in` never narrows. *)
 let test_an_in_at_the_end_of_a_line () =
   value "the name reaches every line below"
     "let f x =\n  let y = x + 1 in\n  if y > 100 then ()\n  y * 2\nf 1"
@@ -116,9 +116,12 @@ let test_an_in_at_the_end_of_a_line () =
   value "in a block"
     "let f x = (\n  let y = x in\n  if y > 100 then ();\n  y + y\n)\nf 2"
     "4";
-  (* With its body on the same line, `in` still narrows. *)
-  value "an in with its body on its line narrows"
+  (* With its body on the same line too, as in OCaml. Brackets narrow. *)
+  value "an in with its body on its line"
     "let y = 1\nlet f x = (let y = x in y + 1; y)\nf 5"
+    "5";
+  value "brackets narrow"
+    "let y = 1\nlet f x = ((let y = x in y + 1); y)\nf 5"
     "1"
 
 (* ── A field read waits for a use to give its type (#193) ──────────────── *)
@@ -556,7 +559,7 @@ let () =
     "issues", [
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
       Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
-      Alcotest.test_case "an in at the end of a line (#203)" `Quick test_an_in_at_the_end_of_a_line;
+      Alcotest.test_case "an in binds over the rest (#203)" `Quick test_an_in_at_the_end_of_a_line;
       Alcotest.test_case "a field read waits (#193)" `Quick test_a_field_read_waits;
       Alcotest.test_case "puns before a named field (#194)" `Quick test_puns_before_a_named_field;
       Alcotest.test_case "a constructor pattern inside another (#195)" `Quick

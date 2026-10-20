@@ -53,11 +53,12 @@ import IO
     "(let even n = if n == 0 then true else odd (n - 1) \
      and odd n = if n == 0 then false else even (n - 1); even 8)" "true"
 
-(* The older spelling keeps its meaning: `in` scopes over one expression,
-   and a `;` after it starts the next statement. *)
+(* `in` gives the name to the rest of the block, past a `;`, as in OCaml
+   (#203). Brackets narrow. *)
 let test_the_in_form_is_unchanged () =
-  runs "in scopes over its own expression" "(let x = 1 in x + 1; 9)" "9";
-  (match Runner.run_string "(let x = 1 in x + 1; x + 2)" with
+  runs "in scopes past a ;" "(let x = 1 in x + 1; 9)" "9";
+  runs "and the name reaches the statement after it" "(let x = 1 in x + 1; x + 2)" "3";
+  (match Runner.run_string "((let x = 1 in x + 1); x + 2)" with
    | Ok v -> Alcotest.failf "expected x to be unbound, got %s" v
    | Error m ->
      if not (Lint.contains m "unbound variable 'x'") then
@@ -648,14 +649,17 @@ let test_field () =
 
 let test_let () =
   (* `in` and a block's `;` bind the name over the same body, so they build
-     one node. `LetIn` is kept for the one place the spelling is meaning: a
-     `;` waiting after the body, which stops the name reaching past it. *)
+     one node. A `;` after the body does not stop the name: it reaches the
+     rest of the block, as in OCaml (#203). Brackets narrow. *)
   e "simple"
     "let x = 1 in x"
     (Let (PVar "x", Int 1, Var "x", LetBlock));
-  e "narrowing keeps its own node"
+  e "the name reaches past a ;"
     "(let x = 1 in x; 9)"
-    (Seq (Let (PVar "x", Int 1, Var "x", LetIn), Int 9));
+    (Let (PVar "x", Int 1, Seq (Var "x", Int 9), LetBlock));
+  e "brackets narrow"
+    "((let x = 1 in x); 9)"
+    (Seq (Let (PVar "x", Int 1, Var "x", LetBlock), Int 9));
   e "wildcard"
     "let _ = f () in 0"
     (Let (Wild, App (Var "f", Unit), Int 0, LetBlock));

@@ -1058,9 +1058,11 @@ parse error:
 --   because nothing would read the name
 ```
 
-`let ... in` keeps its own meaning: it names a value for one expression, and
-a `;` after that expression starts the next statement. In
-`(let x = 1 in x + 1; 9)` the `x` belongs to `x + 1` and to nothing else.
+`let ... in` gives the name to the rest of the body, as in OCaml, Haskell
+and F#: a `;` after the expression does not stop it. In
+`(let x = 1 in x + 1; x)` both `x`s are the `1`. Brackets narrow a name:
+in `((let x = 1 in x + 1); 9)` the `x` belongs to `x + 1` and to nothing
+else.
 
 `let () = e1 in e2` still works and means the same thing. It also guarantees
 that `e1` is `Unit`.
@@ -1077,7 +1079,7 @@ let of_hex algorithm text =
   String.length lower == want
 ```
 
-Two spellings survive that, and each says something the `;` cannot.
+One spelling survives that, and it says something the `;` cannot.
 
 `in` stays where the value ends on a `match` or `handle` arm. An arm runs to
 the next `|`, so a `;` sitting on one is read as part of it; `in` is a keyword
@@ -1092,13 +1094,8 @@ in
 Resource.make acquire release
 ```
 
-An `in` at the end of a line, or on a line of its own, gives the name to the
-rest of the body, as the `;` does, however many statements follow it.
-
-`in` also stays where it narrows — with its body on the same line and a `;`
-after that body, it keeps the name off the statements below, which is
-meaning rather than spelling: `(let x = 1 in x + 1; 9)` gives `x` to `x + 1`
-and to nothing after it.
+Here too `in` gives the name to the rest of the body, however many
+statements follow it.
 
 The brackets stay where the statements are not all bindings. A `;` ends a
 binding's right-hand side and hands the rest to its body, and that is the
