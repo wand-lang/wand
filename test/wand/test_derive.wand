@@ -150,7 +150,7 @@ test "a document read, changed, and written back" (fn t -> (
   let document = `{"name": "api", "port": 8080, "timeout": "30s", "replicas": 2}`;
   match JSON.decode Config.decoder (JSON.parse! document) with
   | Error why -> t.eq "decoded" why
-  | Ok (Config(name = n, port = p, timeout = d, replicas = _)) -> (
+  | Ok Config(name = n, port = p, timeout = d, replicas = _) -> (
     let scaled = Config(name = n, port = p, timeout = d, replicas = 4);
     t.eq
       `{"name":"api","port":8080,"timeout":"30s","replicas":4}`

@@ -21,13 +21,13 @@ type Pod(metadata: Meta, status: Option Status)
 
 let pods = Decode.field "items" (Decode.list Pod.decoder)
 
-let restarts (Pod(status = status)) =
+let restarts Pod(status = status) =
   status
-  |> Option.and_then (fn (Status(containerStatuses = cs)) -> cs)
+  |> Option.and_then (fn Status(containerStatuses = cs) -> cs)
   |> Option.default []
-  |> List.fold_left (fn total (Container(restartCount = n)) -> total + n) 0
+  |> List.fold_left (fn total Container(restartCount = n) -> total + n) 0
 
-let label (Pod(metadata = Meta(name, namespace))) = "%{namespace}/%{name}"
+let label Pod(metadata = Meta(name, namespace)) = "%{namespace}/%{name}"
 
 let report file threshold =
   match JSON.read_file (Path.of_string file) |> Result.and_then (JSON.decode pods) with

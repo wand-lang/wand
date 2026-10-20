@@ -446,29 +446,31 @@ let rec emit_pat (p : pat) : string = match p with
    `=`, so a `.` inside one stops the parse. `let a (t.A) = c` came back as
    `let a t.A = c` and `fn (e.T) -> s` as `fn e.T -> s`, neither of which
    parses. Unlike the binder case this holds in every position, because a
-   parameter is never the head of anything. Found by test/fuzz. *)
+   parameter is never the head of anything. Found by test/fuzz.
+
+   A positional payload needs them too: `fn Wrap x` is two parameters. A
+   field list does not, because its bracket stands against the name (#207)
+   and holds the fields with it: `fn Pod(name) -> name`, `let f Pod(a = x)
+   = x`. *)
 and emit_pat_atom (p : pat) : string = match strip_pat p with
-  | PConstr (_, _ :: _) | PConstrNamed _ | PConstrBare _ | PQualified _ ->
-    "(" ^ emit_pat p ^ ")"
+  | PConstr (_, _ :: _) | PQualified _ -> "(" ^ emit_pat p ^ ")"
   | _ -> emit_pat p
 
-(* The pattern a *top-level* `let` binds. At the top of a file the head of a
-   `let` is read as the name being defined, so a pattern that does not begin
-   as a plain name has to arrive inside brackets or the parse stops partway
-   through it: `let e.I =` stops at the dot and `let P(a = 1) =` stops at
-   the `=` between the parentheses. Three more change meaning instead of
-   failing -- `let Some x = e` is read back as a one-clause definition of a
-   function named `Some`, `let E = e` as a value named `E` rather than a
-   match against the constructor, and `let P(a, b) = e` loses the bracket
-   that says the identifiers are the payload.
+(* The pattern a *top-level* `let` binds. At the top of a file an
+   upper-case name with nothing but `=` after it binds a module, `let HTML =
+   import ./html`, so a constructor with no fields has to arrive inside
+   brackets: `let (None) = e`, or it is read back as a value named `None`.
+   A lower-case head is the name of a function or a value, so a constructor
+   reached through a value needs them too: `let (e.I) = ""`, or the parse
+   stops at the dot.
 
-   Only at the top level. A `let ... in` and a block binding parse their
-   head as a pattern already, so the same brackets there are noise -- they
-   rewrote four lines of test/wand/test_typedef.wand, which is what said so.
-   A tuple, a list and a map carry brackets of their own in either position
-   and take no second pair. Found by test/fuzz, under three signatures. *)
+   Every other constructor pattern is read as one where it stands (#208):
+   `let Some x = e`, `let P(a, b) = e`, `let M.I = e`. They used to need
+   brackets as well, because the top level read any upper-case head as the
+   name of a function. A `let ... in` and a block binding never did. *)
 and emit_pat_binder (p : pat) : string = match strip_pat p with
-  | PQualified _ | PConstrNamed _ | PConstrBare _ | PConstr _ ->
+  | PConstr (_, []) -> "(" ^ emit_pat p ^ ")"
+  | PQualified (m, _) when m <> "" && Char.lowercase_ascii m.[0] = m.[0] ->
     "(" ^ emit_pat p ^ ")"
   | _ -> emit_pat p
 

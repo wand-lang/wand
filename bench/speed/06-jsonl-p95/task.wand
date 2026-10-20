@@ -30,7 +30,7 @@ match Proc.args () with
   FS.stream_lines (Path.join (Path.of_string dir) ./events.jsonl)
   |> Stream.filter_map event
   |> Stream.fold_left
-    (fn m (Event(endpoint, ms)) -> Map.update endpoint [] (fn xs -> ms :: xs) m)
+    (fn m Event(endpoint, ms) -> Map.update endpoint [] (fn xs -> ms :: xs) m)
     Map.empty
   |> Map.to_list
   |> List.sort

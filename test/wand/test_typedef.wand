@@ -207,14 +207,14 @@ test "the order of the fields is the pattern's own" (fn t ->
     ))
 
 test "a pun works as a parameter" (fn t ->
-  let describe = fn (Pod(name, restarts)) -> "%{name} %{restarts}";
+  let describe = fn Pod(name, restarts) -> "%{name} %{restarts}";
   t.eq "api 3" (describe pod))
 
 test "a pun nests under another constructor" (fn t ->
   t.eq
     "api"
     (match Ok pod with
-    | Ok (Pod(name, restarts = _)) -> name
+    | Ok Pod(name, restarts = _) -> name
     | Error _ -> ""
     ))
 
@@ -243,8 +243,8 @@ test "one name alone binds its field" (fn t ->
     ))
 
 test "one name alone works as a parameter" (fn t ->
-  let first = fn (Run(a)) -> a;
-  let second (Run(b)) = b;
+  let first = fn Run(a) -> a;
+  let second Run(b) = b;
   t.eq 3 (first run + second run))
 
 -- A record of one field gives its field to any one name, as it always did.

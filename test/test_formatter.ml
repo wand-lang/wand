@@ -625,8 +625,16 @@ let test_a_constructor_and_its_bracket_are_kept () =
 let test_one_name_is_kept () =
   List.iter (fun src -> fmt_eq src src src)
     [ "let r = Run(a)";
-      "let f (Run(a)) = a";
+      "let f Run(a) = a";
       "let v =\n  match r with\n  | Some(x) -> x\n  | None -> 0" ];
+  (* A field list holds its fields against the name, so a parameter needs
+     no second bracket round it. A positional payload does: `fn Wrap x` is
+     two parameters. *)
+  fmt_eq "a field list as a parameter takes no brackets"
+    "let f (Run(a)) = a\nlet g = fn (Run(a)) -> a"
+    "let f Run(a) = a\nlet g = fn Run(a) -> a";
+  fmt_eq "a positional payload as a parameter keeps its brackets"
+    "let f (Some x) = x" "let f (Some x) = x";
   fmt_eq "a construction of one name before a field keeps its bracket"
     "let n = (B(x)).n" "let n = (B(x)).n"
 
@@ -2280,15 +2288,15 @@ let test_a_pun_reads_back_as_the_field_it_came_from () =
   (* Patterns: punned beside anything else, written out when alone. *)
   fmt_eq "a lone pattern field keeps its name"
     {|let f (M(a = a)) = a|}
-    {|let f (M(a = a)) = a|};
+    {|let f M(a = a) = a|};
   fmt_eq "two of them pun"
     {|let f (M(a = a, b = b)) = a|}
-    {|let f (M(a, b)) = a|};
+    {|let f M(a, b) = a|};
   (* A pattern has no update form to collide with, so a pun may stand beside
      a named field here. *)
   fmt_eq "a pun beside a named field"
     {|let f (M(a = a, b = z)) = a|}
-    {|let f (M(a, b = z)) = a|};
+    {|let f M(a, b = z) = a|};
   (* Constructions: all of them, or none. *)
   fmt_eq "a lone construction field keeps its name"
     {|let f n = B(n = n)|}

@@ -121,25 +121,29 @@ test "reverse" (fn t -> t.eq [5, 4, 3, 2, 1] (lp_reverse [1, 2, 3, 4, 5]))
 -- ── Destructuring let ───────────────────────────────────────────────────
 
 let lp_xs = [1, 2, 3]
-let [lp_a, lp_b] = lp_xs
-test "a let binds the leading elements" (fn t -> t.eq 3 (lp_a + lp_b))
+let [lp_a, lp_b, lp_c] = lp_xs
+test "a let binds each element" (fn t -> t.eq 6 (lp_a + lp_b + lp_c))
 
 let [lp_h :: lp_tl] = lp_xs
-test "a cons let still splits head and tail" (fn t -> t.eq (1, [2, 3]) (lp_h, lp_tl))
+test "a cons let splits head and tail" (fn t -> t.eq (1, [2, 3]) (lp_h, lp_tl))
 
-test "a local let binds the leading elements too" (fn t ->
-  t.eq 30 (let [a, b] = [10, 20, 99]; a + b))
+let [lp_first :: lp_second :: _] = lp_xs
+test "a let takes the first elements with a rest pattern" (fn t ->
+  t.eq 3 (lp_first + lp_second))
+
+test "a local let takes the first elements with a rest pattern" (fn t ->
+  t.eq 30 (let [a :: b :: _] = [10, 20, 99]; a + b))
 
 test "a wildcard consumes its position without binding" (fn t ->
-  t.eq (2, 3) (let [_, a, b] = [1, 2, 3, 4]; (a, b)))
+  t.eq (2, 3) (let [_, a, b] = [1, 2, 3]; (a, b)))
 
-test "the pattern may name the whole list" (fn t ->
-  t.eq 6 (let [a, b, c] = lp_xs; a + b + c))
+test "a list longer than the pattern fails, as in a match (#209)" (fn t ->
+  t.raises (fn () -> (let [a, b] = [1, 2, 3]; a + b)))
 
-test "a list shorter than the pattern still fails" (fn t ->
+test "a list shorter than the pattern fails" (fn t ->
   t.raises (fn () -> (let [a, b] = [1]; a + b)))
 
-test "a match arm still means the exact length" (fn t ->
+test "a match arm means the exact length" (fn t ->
   t.eq
     "other"
     (match lp_xs with
@@ -148,7 +152,7 @@ test "a match arm still means the exact length" (fn t ->
     ))
 
 let lp_only! [x] = x
-test "a function equation still means the exact length" (fn t ->
+test "a function equation means the exact length" (fn t ->
   t.raises (fn () -> lp_only! [1, 2]))
 
 -- ── Type errors ─────────────────────────────────────────────────────────

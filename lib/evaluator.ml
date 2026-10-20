@@ -2217,12 +2217,11 @@ let clock_handled cases f =
 (* Installs the runtime's own handlers. Set by the runner, which owns them. *)
 let with_default_handler : ((unit -> value) -> value) ref = ref (fun f -> f ())
 
-(* In a match arm, a list pattern states the whole shape: `[a, b]` is a
-   two-element list and nothing else, because the arms discriminate and a
-   longer list belongs to another arm. A destructuring `let` has no other
-   arm -- it only binds -- so there `[a, b]` names the leading elements and
-   whatever follows is ignored, the way a map pattern binds the keys it
-   names and ignores the rest. [prefix] selects the binding reading. *)
+(* A list pattern states the whole shape: `[a, b]` is a two-element list
+   and nothing else, in a `let` as in a match arm. A `let` once read it as
+   the first two elements of any longer list, because a `let` has no other
+   arm. That dropped the rest with no error, so `let [host, port] = ...`
+   took `a:b:c` and went on; `[a, b :: _]` says "the first two" (#209). *)
 (* The constructor a pattern names, whatever form it takes. *)
 let pat_ctor_name (p : pat) =
   match p with
@@ -2264,9 +2263,8 @@ type bare_plan =
   | Bare_fields of (int * pat) list
 
 (* Match [p] against [v], and give [env] with the names [p] binds in
-   front, in the order `Resolve.pattern_names` gives; or `no_match`. With
-   [prefix], a list pattern also matches a longer list. *)
-let rec match_pat prefix (p : pat) v (env : env) : env =
+   front, in the order `Resolve.pattern_names` gives; or `no_match`. *)
+let rec match_pat (p : pat) v (env : env) : env =
   match p with
   | PVar name -> (name, v) :: env
   | Wild -> env
@@ -2277,25 +2275,25 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
     (match v with
      | VConstr (vname, vals)
        when ctor_matches env name vname && same_length pats vals ->
-       match_list prefix pats vals env
+       match_list pats vals env
      | _ -> no_match)
   | PCons (hp, tp) ->
     (match v with
      | VList (x :: rest) ->
-       let env = match_pat prefix hp x env in
+       let env = match_pat hp x env in
        if env == no_match then no_match
        else (match tp with
              | Wild -> env
-             | _ -> match_pat prefix tp (VList rest) env)
+             | _ -> match_pat tp (VList rest) env)
      | _ -> no_match)
   | PTuple ps ->
     (match v with
      | VTuple vs | VConstr (_, vs) when same_length ps vs ->
-       match_list prefix ps vs env
+       match_list ps vs env
      | _ -> no_match)
   | PList ps ->
     (match v with
-     | VList vs -> match_elements prefix ps vs env
+     | VList vs -> match_elements ps vs env
      | _ -> no_match)
   | Int n -> (match v with VInt m when n = m -> env | _ -> no_match)
   | Float f -> (match v with VFloat g when f = g -> env | _ -> no_match)
@@ -2304,14 +2302,14 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
   | Unit -> (match v with VUnit -> env | _ -> no_match)
   (* A type annotation says nothing about which values match: it is checked
      before the program runs, and the pattern under it does the matching. *)
-  | PAnnot (p, _) | PLocated (_, p) -> match_pat prefix p v env
+  | PAnnot (p, _) | PLocated (_, p) -> match_pat p v env
   (* `T.Ctor` where `T` is a type, not a module: the constructor keyed by
      its type, matched as a bare one is. *)
   | PQualified (m, inner)
     when (match v with VConstr _ -> true | _ -> false)
          && (match lookup_var m env with Some (VRecord _) -> false | _ -> true)
          && Ast.qualify_ctor_pat m inner <> None ->
-    match_pat prefix (Option.get (Ast.qualify_ctor_pat m inner)) v env
+    match_pat (Option.get (Ast.qualify_ctor_pat m inner)) v env
   (* `one.Live`: the module's namespace holds the constructor, so its identity
      comes from there. What is under the qualifier is matched against the
      value's fields directly -- resolving its bare name again would consult
@@ -2350,17 +2348,17 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
           in
           (match inner with
            | PConstr (_, pats) when same_length pats vals ->
-             match_list prefix pats vals env
+             match_list pats vals env
            | PConstr (_, _) -> no_match
            | PConstrNamed (_, bindings) ->
-             match_named prefix (fields ()) bindings vals env
+             match_named (fields ()) bindings vals env
            | PConstrBare (_, ids) ->
              (match Ast.constr_bare_reading ~fields:(fields ())
                       ~arity:(List.length vals) "" ids with
               | PConstrNamed (_, bindings) ->
-                match_named prefix (fields ()) bindings vals env
+                match_named (fields ()) bindings vals env
               | PConstr (_, pats) when same_length pats vals ->
-                match_list prefix pats vals env
+                match_list pats vals env
               | _ -> no_match)
            | _ -> no_match)
         | _ -> no_match)
@@ -2374,13 +2372,13 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
       | None -> []
     in
     let arity = match v with VConstr (_, vals) -> List.length vals | _ -> 0 in
-    match_pat prefix (Ast.constr_bare_reading ~fields ~arity name ids) v env
+    match_pat (Ast.constr_bare_reading ~fields ~arity name ids) v env
   | PConstrNamed (name, bindings) ->
     (match v with
      | VConstr (vname, vals) when ctor_matches env name vname ->
        (match Hashtbl.find_opt constr_fields vname with
         | None -> no_match
-        | Some field_names -> match_named prefix field_names bindings vals env)
+        | Some field_names -> match_named field_names bindings vals env)
      | _ -> no_match)
   | PMap bindings ->
     (match v with
@@ -2396,7 +2394,7 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
            (match List.assoc_opt key kvs with
             | None -> no_match
             | Some v ->
-              let env = match_pat prefix p v env in
+              let env = match_pat p v env in
               if env == no_match then no_match else go rest env)
        in
        go bindings env
@@ -2410,7 +2408,7 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
      | VConstr (vname, vals)
        when (Ctor.named vname name || Ctor.equal (ctor_at g env) vname)
             && same_length pats vals ->
-       match_list prefix pats vals env
+       match_list pats vals env
      | _ -> no_match)
   | PCtor (g, PConstrNamed (name, bindings), _) ->
     (match v with
@@ -2418,7 +2416,7 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
        when Ctor.named vname name || Ctor.equal (ctor_at g env) vname ->
        (match Hashtbl.find_opt constr_fields vname with
         | None -> no_match
-        | Some field_names -> match_named prefix field_names bindings vals env)
+        | Some field_names -> match_named field_names bindings vals env)
      | _ -> no_match)
   (* `Sale(region, amount)`: which reading it is, and the place of each
      field, depend only on the constructor the name means, the value's
@@ -2446,25 +2444,25 @@ let rec match_pat prefix (p : pat) v (env : env) : env =
        in
        (match p with
         | Bare_never -> no_match
-        | Bare_positional pats -> match_list prefix pats vals env
-        | Bare_fields fs -> match_places prefix fs vals env)
+        | Bare_positional pats -> match_list pats vals env
+        | Bare_fields fs -> match_places fs vals env)
      | _ -> no_match)
-  | PCtor (_, p, _) -> match_pat prefix p v env
+  | PCtor (_, p, _) -> match_pat p v env
   (* The first alternative that matches. One after the first leaves its
      names in the first one's order, which is where the resolver looks for
      them. *)
   | POr [] -> no_match
   | POr (first :: rest) ->
-    let matched = match_pat prefix first v env in
+    let matched = match_pat first v env in
     if matched != no_match then matched
-    else match_alternatives prefix (Resolve.pattern_names first) rest v env
+    else match_alternatives (Resolve.pattern_names first) rest v env
 
-and match_alternatives prefix names alts v env =
+and match_alternatives names alts v env =
   match alts with
   | [] -> no_match
   | p :: rest ->
-    let matched = match_pat prefix p v env in
-    if matched == no_match then match_alternatives prefix names rest v env
+    let matched = match_pat p v env in
+    if matched == no_match then match_alternatives names rest v env
     else in_order names matched env
 
 (* What `PConstrBare (name, ids)` does with a value of constructor [vname]
@@ -2498,12 +2496,12 @@ and plan_bare c vname name ids arity =
   | _ -> Bare_never
 
 (* Each pattern against the value at its place. *)
-and match_places prefix fs vals env =
+and match_places fs vals env =
   match fs with
   | [] -> env
   | (i, p) :: rest ->
-    let env = match_pat prefix p (List.nth vals i) env in
-    if env == no_match then no_match else match_places prefix rest vals env
+    let env = match_pat p (List.nth vals i) env in
+    if env == no_match then no_match else match_places rest vals env
 
 (* The constructor a resolved pattern's name means here: what
    `ctor_in_scope` answers, from the binding `lookup_global` finds. *)
@@ -2516,26 +2514,25 @@ and ctor_at g env =
 
 (* Each pattern against the value in its place; the two lists are the same
    length. *)
-and match_list prefix ps vs env =
+and match_list ps vs env =
   match ps, vs with
   | p :: ps, v :: vs ->
-    let env = match_pat prefix p v env in
-    if env == no_match then no_match else match_list prefix ps vs env
+    let env = match_pat p v env in
+    if env == no_match then no_match else match_list ps vs env
   | _ -> env
 
-(* A list pattern's elements. With [prefix], elements past the patterns
-   are left over and match. *)
-and match_elements prefix ps vs env =
+(* A list pattern's elements, one for each: a list longer or shorter than
+   the pattern does not match. *)
+and match_elements ps vs env =
   match ps, vs with
   | [], [] -> env
-  | [], _ :: _ -> if prefix then env else no_match
-  | _ :: _, [] -> no_match
+  | [], _ :: _ | _ :: _, [] -> no_match
   | p :: ps, v :: vs ->
-    let env = match_pat prefix p v env in
-    if env == no_match then no_match else match_elements prefix ps vs env
+    let env = match_pat p v env in
+    if env == no_match then no_match else match_elements ps vs env
 
 (* Named fields, each against the value in the field's place. *)
-and match_named prefix field_names bindings vals env =
+and match_named field_names bindings vals env =
   match bindings with
   | [] -> env
   | (fname, p) :: rest ->
@@ -2545,9 +2542,9 @@ and match_named prefix field_names bindings vals env =
        (match List.nth_opt vals i with
         | None -> no_match
         | Some v ->
-          let env = match_pat prefix p v env in
+          let env = match_pat p v env in
           if env == no_match then no_match
-          else match_named prefix field_names rest vals env))
+          else match_named field_names rest vals env))
 
 (* [base] with [names] in front of it, in that order, each with the value
    [matched] binds it to. [matched] is [base] with an alternative's names in
@@ -2555,8 +2552,8 @@ and match_named prefix field_names bindings vals env =
 and in_order names matched base =
   List.fold_left (fun acc n -> (n, List.assoc n matched) :: acc) base names
 
-let try_match ?(prefix = false) (p : pat) v (env : env) : env option =
-  let env = match_pat prefix p v env in
+let try_match (p : pat) v (env : env) : env option =
+  let env = match_pat p v env in
   if env == no_match then None else Some env
 
 (* ── Evaluation ───────────────────────────────────────────────────────────── *)
@@ -2988,7 +2985,7 @@ and eval_in (c : loc_cell) (tail : bool) (env : env) (e : expr) : value =
     let env' =
       match p with
       | PVar name -> (name, v1) :: env
-      | _ -> bind_pat ~prefix:true p v1 env
+      | _ -> bind_pat p v1 env
     in
     eval_in c tail env' e2
   | LetRec (bindings, e2, _) ->
@@ -3651,9 +3648,9 @@ and apply_c c vf vx =
        (* A closure of one parameter, which is most calls, is entered here
           and not through `apply_tail_c`, one call further in. *)
        match vf with
-       | VFun (fenv, [p], body) -> eval_in c true (bind_param p vx fenv) body
+       | VFun (fenv, [p], body) -> eval_in c true (bind_pat p vx fenv) body
        | VFix (name, fenv, [p], body) ->
-         eval_in c true (bind_param p vx ((name, vf) :: fenv)) body
+         eval_in c true (bind_pat p vx ((name, vf) :: fenv)) body
        | _ -> apply_tail_c c vf vx
      with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
@@ -3672,9 +3669,9 @@ and apply_tail_c c vf vx =
   | VFun (fenv, params, body) ->
     (match params with
      | []      -> raise (EvalError "function with no parameters")
-     | [p]     -> eval_in c true (bind_param p vx fenv) body
+     | [p]     -> eval_in c true (bind_pat p vx fenv) body
      | p :: rest ->
-       let env' = bind_param p vx fenv in
+       let env' = bind_pat p vx fenv in
        VFun (env', rest, body))
   | VFix (name, fenv, params, body) ->
     (* `vf` is the value being bound, so binding it costs nothing to build.
@@ -3684,8 +3681,8 @@ and apply_tail_c c vf vx =
     let fenv' = (name, vf) :: fenv in
     (match params with
      | []        -> raise (EvalError "function with no parameters")
-     | [p]       -> eval_in c true (bind_param p vx fenv') body
-     | p :: rest -> VFun (bind_param p vx fenv', rest, body))
+     | [p]       -> eval_in c true (bind_pat p vx fenv') body
+     | p :: rest -> VFun (bind_pat p vx fenv', rest, body))
   | VFixGroup (bindings, fenv, my_name) ->
     let fenv' = List.fold_left (fun acc (n, _, _) ->
       (n, VFixGroup (bindings, fenv, n)) :: acc) fenv bindings in
@@ -3718,7 +3715,7 @@ and bind_first_c c fenv p a =
   if Atomic.get interrupt_requested <> 0 || Atomic.get checks_wanted <> 0
   then check_interrupt_now ();
   if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
-  bind_param p a fenv
+  bind_pat p a fenv
 
 (* `apply_c c (VFun (env, [p], body)) vx`, without the closure. *)
 and call1_c c env p body vx =
@@ -3728,7 +3725,7 @@ and call1_c c env p body vx =
   if c.depth >= c.depth_cap || c.depth >= max_call_depth then too_deep c;
   c.depth <- c.depth + 1;
   let v =
-    (try eval_in c true (bind_param p vx env) body
+    (try eval_in c true (bind_pat p vx env) body
      with e -> c.depth <- c.depth - 1; raise e) in
   c.depth <- c.depth - 1;
   c.at_line <- line;
@@ -3741,26 +3738,16 @@ and call1_c c env p body vx =
 and app2_c c tail env fenv p1 p2 body va x =
   let env1 = bind_first_c c fenv p1 va in
   let vx = eval_in c false env x in
-  if tail then eval_in c true (bind_param p2 vx env1) body
+  if tail then eval_in c true (bind_pat p2 vx env1) body
   else call1_c c env1 p2 body vx
 
-(* `bind_pat` for a parameter: no list is a prefix, and there is no
-   optional argument, which made each call two. *)
-and bind_param (p : pat) v (env : env) : env =
-  match p with
-  | PVar name -> (name, v) :: env
-  | _ ->
-    let env' = match_pat false p v env in
-    if env' == no_match then raise (EvalError "pattern match failure")
-    else env'
-
-and bind_pat ?(prefix = false) (p : pat) v (env : env) : env =
+and bind_pat (p : pat) v (env : env) : env =
   match p with
   (* A parameter that is a name, which is most of them, binds without
      building the option `try_match` answers with. *)
   | PVar name | PLocated (_, PVar name) -> (name, v) :: env
   | _ ->
-    let env' = match_pat prefix p v env in
+    let env' = match_pat p v env in
     if env' == no_match then raise (EvalError "pattern match failure")
     else env'
 
@@ -3768,7 +3755,7 @@ and eval_match c (tail : bool) (env : env) sv cases =
   match cases with
   | [] -> raise (EvalError "non-exhaustive match")
   | (p, guard, body) :: rest ->
-    let env' = match_pat false p sv env in
+    let env' = match_pat p sv env in
     if env' == no_match then eval_match c tail env sv rest
     else begin
       let passes = match guard with

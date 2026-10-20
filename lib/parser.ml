@@ -3376,6 +3376,19 @@ let parse_program_generic ~on_item tokens =
     | Token.Let ->
       let saved = mark s in
       ignore (advance s);
+      (* Top-level pattern destructuring: let <pat> = <expr> *)
+      let top_pattern () =
+        let p = pat_ s in
+        expect s Token.Eq;
+        let body = locate s (fun () -> parse_contract_body s) in
+        if peek s = Token.In then begin
+          (* Actually a let-in expression — backtrack and parse as TLExpr *)
+          rewind s saved;
+          let e = locate s (fun () -> expr_ 0 s) in
+          items := !items @ [Ast.TLExpr e]
+        end else
+          items := !items @ [Ast.TLLetPat (p, body)]
+      in
       (match peek s with
        (* `_` is a binder like any other here. Left out, it fell through to
           the expression parser, where `let _ = e` takes everything below it
@@ -3388,21 +3401,22 @@ let parse_program_generic ~on_item tokens =
           `let (0) = 0` was an item and `let 0 = 0` a `let` taking the rest
           of the file as its body, so `wand f`, which drops the brackets
           around a literal, turned the one into the other. Found by
-          test/fuzz. *)
+          test/fuzz.
+
+          A constructor is a binder too: `let Pod(name) = p`, `let Wrap x =
+          w`, `let Foo.Conf(port) = c`. A function's name cannot start with
+          a capital, so an upper-case name with anything but `=` or `:`
+          after it is a pattern. It went to the function branch below,
+          which named a function `Pod` and refused it, or read `let Some x
+          = o` as a function `Some` and left `x` unbound -- while the same
+          line inside a body was a pattern (#208). An upper-case name alone
+          still binds a module: `let HTML = import ./html`. *)
        | Token.LBracket | Token.LParen | Token.LBrace | Token.Underscore
        | Token.Int _ | Token.Float _ | Token.String _ | Token.RawStr _
        | Token.Bool _ ->
-         (* Top-level pattern destructuring: let <pat> = <expr> *)
-         let p = pat_ s in
-         expect s Token.Eq;
-         let body = locate s (fun () -> parse_contract_body s) in
-         if peek s = Token.In then begin
-           (* Actually a let-in expression — backtrack and parse as TLExpr *)
-           rewind s saved;
-           let e = locate s (fun () -> expr_ 0 s) in
-           items := !items @ [Ast.TLExpr e]
-         end else
-           items := !items @ [Ast.TLLetPat (p, body)]
+         top_pattern ()
+       | Token.Upper _ when (let t = peek2 s in t = Token.Dot || is_pat_atom_start t) ->
+         top_pattern ()
        | Token.Ident _ | Token.Upper _ ->
          let name_loc = peek_loc s in
          let name = match advance s with

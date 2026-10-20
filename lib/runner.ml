@@ -2297,7 +2297,7 @@ let run_item ?modul env item =
       (name, VFixGroup (bindings, env, name)) :: acc) env bindings
   | Ast.TLLetPat (_, body) when Option.is_some (import_kind_of body) -> env  (* pre-loaded *)
   | Ast.TLLetPat (pat, e) ->
-    Evaluator.bind_pat ~prefix:true pat (eval env e) env
+    Evaluator.bind_pat pat (eval env e) env
   | Ast.TLImport _ -> env  (* already loaded by load_imports_for *)
   (* An implementation declares the module's own bindings, so each one lands
      exactly where writing it as a top-level `let` would put it. Nothing is
@@ -4423,7 +4423,7 @@ let run_session ?(evaluate = true) (sess : session) (src : string)
               ) bindings
             | Ast.TLLetPat (_, body) when Option.is_some (import_kind_of body) -> ()  (* pre-loaded *)
             | Ast.TLLetPat (pat, e) ->
-              env_ref := Evaluator.bind_pat ~prefix:true pat (eval !env_ref e) !env_ref
+              env_ref := Evaluator.bind_pat pat (eval !env_ref e) !env_ref
             | Ast.TLImplement (im, _) ->
               List.iter (fun (name, params, body, _) ->
                 let v = match params with

@@ -25,7 +25,7 @@ match Proc.args () with
   FS.stream_lines (Path.join (Path.of_string dir) ./events.jsonl)
   |> Stream.filter_map event
   |> Stream.fold_left
-    (fn m (Event(endpoint, ok)) -> Map.update endpoint (0, 0) (fn c -> add c ok) m)
+    (fn m Event(endpoint, ok) -> Map.update endpoint (0, 0) (fn c -> add c ok) m)
     Map.empty
   |> Map.to_list
   |> List.sort

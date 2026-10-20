@@ -16,3 +16,7 @@ each break a different way.
 
 A `let ... in` and a block binding parse their head as a pattern already
 and need no brackets, so the rule is the top level's alone.
+
+Since #208 the top level reads an upper-case head with more after it as a
+pattern, so `let Some x = Some 1` needs no brackets and `wand f` drops
+them. The other two shapes still need them, and keep them.

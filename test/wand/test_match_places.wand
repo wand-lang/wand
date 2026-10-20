@@ -34,7 +34,7 @@ let nested p =
 
 let sum_pair (Pair (a, b)) = a - b
 
-let net (Sale(amount, id)) = amount - id
+let net Sale(amount, id) = amount - id
 
 test "one arm, each constructor in turn" (fn t ->
   t.eq

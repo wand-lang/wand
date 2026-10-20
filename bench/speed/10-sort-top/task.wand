@@ -18,7 +18,7 @@ match Proc.args () with
   FS.read_file! (Path.join (Path.of_string dir) ./sales.csv)
   |> CSV.rows Sale.decoder
   |> Result.get!
-  |> List.sort_by (fn (Sale(id, amount)) -> (0 - amount, id))
+  |> List.sort_by (fn Sale(id, amount) -> (0 - amount, id))
   |> List.take 100
-  |> List.each (fn (Sale(id, amount)) -> IO.println "%{id} %{amount}")
+  |> List.each (fn Sale(id, amount) -> IO.println "%{id} %{amount}")
 | [] -> Proc.exit 2

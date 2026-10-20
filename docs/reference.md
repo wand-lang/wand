@@ -603,6 +603,48 @@ let x : Int = 42
 let name : String = "wand"
 ```
 
+### Destructuring
+
+The left side of a `let` is a pattern, so one `let` can take a value apart
+and give a name to each part. Any pattern that a `match` arm takes is
+correct here, with the same meaning:
+
+```ocaml
+let (code, body) = response              -- a tuple
+let ((a, b), c) = ((1, 2), 3)            -- nested
+let (_, status) = response               -- `_` keeps a part without a name
+let [first, second] = pair_list          -- a list of exactly two
+let [head :: rest] = lines               -- the first element, and the rest
+let [a, b :: _] = args                   -- the first two of a longer list
+let {host, port = p} = config            -- a map: `host` punned, `port` renamed
+let Pod(name, restarts) = pod            -- named fields, punned
+let Pod(name = n) = pod                  -- one field, renamed
+let Wrap inner = wrapped                 -- a positional constructor
+let Foo.Conf(port) = conf                -- a constructor written with its type
+```
+
+The same forms work at the top of a file, in a block and in a `let ... in`.
+A parameter is a pattern too: [Destructuring arguments](#destructuring-arguments)
+shows each form as a function's argument.
+
+A pattern that does not match the value raises "pattern match failure"
+during the run. The shape of a tuple or of a record is part of its type, so
+those patterns always match. The rest can fail:
+
+- A list pattern gives the length: `let [a, b] = xs` fails unless `xs` has
+  exactly two elements, as `| [a, b] ->` does in a `match`. Write
+  `[a, b :: _]` for the first two of a list that can be longer.
+- A constructor of a type with more than one: `let Some x = o` fails when
+  `o` is `None`.
+- A map pattern names keys, and fails when a key is not in the map. It
+  ignores the keys it does not name.
+
+A function that destructures with a pattern that can fail can raise, so
+`wand t` asks for a `!` in its name (V-BANG1). When the value can have
+more than one shape, use `match`, which says what to do with each. A
+constructor with no fields needs brackets at the top of a file,
+`let (None) = x`, because `let None = x` gives the name `None` to a value.
+
 ---
 
 ## Functions
@@ -718,6 +760,55 @@ the line break, because you see the whole definition at once.
 Each member of an `and` group must be a function with at least one
 parameter. wand evaluates eagerly, so a plain value cannot use a sibling that
 does not exist yet. Only the body of a function waits for a call.
+
+### Destructuring arguments
+
+A parameter is a pattern, as the left side of a `let` is. So a function can
+take its argument apart where it names it, with no `let` or `match` in the
+body. Each form that [Destructuring](#destructuring) shows is correct here:
+
+```ocaml
+type Pod(name: String, restarts: Int)
+type Amount = Bytes Int
+
+let describe Pod(name, restarts) = "%{name}: %{restarts}"   -- named fields
+let restarted? Pod(restarts = n) = n > 0                    -- one field, renamed
+let bytes (Bytes n) = n                                     -- a positional payload
+let swap (a, b) = (b, a)                                    -- a tuple
+let add_pair n (a, b) = n + a + b                           -- after a plain parameter
+let endpoint! {host, port} = "%{host}:%{port}"              -- a map
+let first_two! [a, b :: _] = (a, b)                         -- a list
+
+List.map (fn Pod(name) -> name) pods                        -- in a `fn`
+Map.to_list counts |> List.map (fn (k, v) -> "%{k}=%{v}")
+```
+
+Most patterns need no brackets of their own here. A tuple, a list and a map
+have brackets already, and a field list stands against its name. Two forms
+need them:
+
+- A positional payload. Parameters are separated by spaces, so
+  `let bytes Bytes n = n` is a function of two parameters, `Bytes` and `n`.
+  Write `let bytes (Bytes n) = n`, as in OCaml.
+- A constructor written with its type: `fn (Foo.Pod(name)) -> name`. A `.`
+  ends the parameters.
+
+A tuple and a record always match, because their shape is part of the type.
+The other patterns can fail: a list of the wrong length, a map without the
+key, a constructor of a type with more than one. A function with such a
+parameter can raise, so `wand t` asks for a `!` in its name (V-BANG1). To
+cover each case, write one equation for each, as
+[multi-equation functions](#functions) do:
+
+```ocaml
+type Shape = Circle Int | Rect Int Int
+
+let area (Circle r) = 3 * r * r
+let area (Rect w h) = w * h
+
+let sum [] = 0
+let sum [h :: t] = h + sum t
+```
 
 ### A call in tail position
 
@@ -1426,31 +1517,31 @@ the tail: `[a, b, c :: t]` is the same pattern as `[a :: b :: c :: t]`, and
 Cons is `::`, never a single `:`. A `:` gives a name a type, so `[h : t]` and
 `(h : t)` are parse errors, and `wand t --fix` changes each `:` to `::`.
 
-The same patterns work in a `let`, with one difference. A `match` arm gives
-the whole shape, because a longer list belongs to another arm. A `let` has no
-other arm. It only binds. So in a `let` a list pattern names the first
-elements and ignores the rest. A map pattern behaves the same way with
-keys:
+The same patterns work in a `let`, with the same meaning. A list pattern
+gives the length, so a `[_ :: _]` tail takes the rest of a longer list:
 
 ```ocaml
 let xs = [1, 2, 3]
 
-let [a, b, c] = xs      -- a = 1, b = 2, c = 3
-let [a, b]    = xs      -- a = 1, b = 2, the 3 is not consulted
-let [h :: t]  = xs      -- h = 1, t = [2, 3]
+let [a, b, c]   = xs    -- a = 1, b = 2, c = 3
+let [a, b :: _] = xs    -- a = 1, b = 2
+let [h :: t]    = xs    -- h = 1, t = [2, 3]
 ```
 
 The shape of a tuple is part of its type. So a wrong pattern for a tuple is
 a type error. The length of a list is not part of its type. So a `let` that
-names more elements than the list holds is accepted, and it fails during the
-run:
+names a different number of elements than the list holds is accepted, and it
+fails during the run:
 
 ```ocaml
 let [a, b] = [1]
 -- runtime error: pattern match failure
+let [a, b] = [1, 2, 3]
+-- runtime error: pattern match failure
 ```
 
-Use `match` when even the elements you name may not be there.
+Use `match` when the length is not known. [Destructuring](#destructuring)
+has every pattern a `let` takes.
 
 Multi-equation over lists:
 
@@ -4265,7 +4356,7 @@ v.x
 Match on the constructor to read a field only some of them have.
 
 A pattern that names one constructor of several can fail. A binding that
-uses one says so. Over `Circle | Square`, `let area (Circle(radius = r)) = r`
+uses one says so. Over `Circle | Square`, `let area Circle(radius = r) = r`
 has the type `Shape -> Int ! {Raise}`, and the name wants a `!`. What decides
 this is whether the value could be another constructor. Whether the fields
 have names does not matter. A type with one constructor has nothing to
@@ -4771,8 +4862,8 @@ let {filter, map} = import List
 map (fn x -> x * 2) [1, 2]     -- [2, 4] — still List.map
 ```
 
-Only a list can be too short during a run in a way that its type did not
-catch. wand checks a module at the import, and a missing name is an error
+Only a list can have the wrong length during a run in a way that its type
+did not catch. wand checks a module at the import, and a missing name is an error
 there.
 
 ### Stdlib bound to custom name

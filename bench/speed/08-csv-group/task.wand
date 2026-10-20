@@ -22,7 +22,7 @@ match Proc.args () with
   |> CSV.rows Sale.decoder
   |> Result.get!
   |> List.fold_left
-    (fn m (Sale(region, product, amount)) -> Map.update
+    (fn m Sale(region, product, amount) -> Map.update
       "%{region} %{product}"
       (0, 0)
       (fn c -> add c amount)

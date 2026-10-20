@@ -1,0 +1,44 @@
+let {test} = import Test
+
+-- A `let` takes any pattern a `match` arm takes. At the top of a file a
+-- constructor is a pattern too, as it is inside a body (#208).
+
+type Pod(name: String, tries: Int)
+
+type Wrapped = Wrap Int
+
+let pod = Pod(name = "web", tries = 2)
+
+let Pod(name, tries) = pod
+test "named fields, punned" (fn t -> t.eq ("web", 2) (name, tries))
+
+let Pod(name = pod_name) = pod
+test "a named field, renamed" (fn t -> t.eq "web" pod_name)
+
+let Wrap wrapped = Wrap 5
+test "a positional constructor" (fn t -> t.eq 5 wrapped)
+
+let Some found = Some "x"
+test "a constructor of a type with several" (fn t -> t.eq "x" found)
+
+let Wrapped.Wrap qualified = Wrap 7
+test "a constructor written with its type" (fn t -> t.eq 7 qualified)
+
+let ((left, right), last) = ((1, 2), 3)
+test "a nested tuple" (fn t -> t.eq 6 (left + right + last))
+
+let {port, host = server} = {port = "80", host = "a"}
+test "a map, punned and renamed" (fn t -> t.eq ("80", "a") (port, server))
+
+test "in a body, the same patterns" (fn t ->
+  let Pod(name) = pod;
+  let Wrap n = Wrap 1;
+  t.eq ("web", 1) (name, n))
+
+test "a pattern that does not match raises" (fn t ->
+  t.raises (fn () -> (let Some x = None; x + 1)))
+
+test "a parameter takes a pattern" (fn t ->
+  let total (a, b) = a + b;
+  let named = fn Pod(name) -> name;
+  t.eq (3, "web") (total (1, 2), named pod))

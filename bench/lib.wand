@@ -75,12 +75,12 @@ let start lang (prog: Path) (dir: Path) args stdin =
   stdin |> $?(cd %{dir} && %{interp} %{prog} %{args})
 
 -- What went wrong with one case, or `None` when it passed.
-let run_case! lang (task: Path) (prog: Path) (Case(name, args, stdin, files, stdout, code)) =
+let run_case! lang (task: Path) (prog: Path) Case(name, args, stdin, files, stdout, code) =
   with FS.temp_dir "bench_" as dir -> (
     let fixture = Path.join task (Path.of_string "fixture");
     if FS.dir? fixture then FS.copy_tree! fixture dir;
     List.each
-      (fn (File(path, text)) -> (
+      (fn File(path, text) -> (
         let file = Path.join dir (Path.of_string path);
         FS.mkdir! (Path.parent file);
         FS.write_file! file text

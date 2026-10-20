@@ -25,9 +25,9 @@ type Pod(metadata: Meta, status: Status)
 let pods = Decode.field "items" (Decode.list Pod.decoder)
 
 -- A pod's name, and how often it has restarted across its containers.
-let summary (Pod(metadata = Meta(name = name), status = Status(containerStatuses = cs))) = (
+let summary Pod(metadata = Meta(name = name), status = Status(containerStatuses = cs)) = (
   name,
-  List.fold_left (fn total (Container(restartCount = r)) -> total + r) 0 cs
+  List.fold_left (fn total Container(restartCount = r) -> total + r) 0 cs
 )
 
 let pad s =
