@@ -2027,14 +2027,17 @@ and emit_sequence ?col indent opening closing items =
    `+ b` and `- c`. A chain of `++` was joined onto one line past the margin
    (#188). Every one of these operators groups to the left, which is the
    shape `stages` takes apart. *)
-and emit_chain op indent a b =
+and chain_stages op e =
   let joins op' = op' = op || (bin_prec op = 50 && bin_prec op' = 50) in
   let rec stages e =
     match strip_located e with
     | BinOp (op', l, r) when joins op' -> stages l @ [(op', r)]
     | other -> [(op, other)]
   in
-  let all = stages (BinOp (op, a, b)) in
+  stages e
+
+and emit_chain op indent a b =
+  let all = chain_stages op (BinOp (op, a, b)) in
   (* Every stage starts at the pipeline's own column: the first where the
      pipeline begins, and each later one under the `|>` that leads it. So a
      stage that wraps closes its brackets in line with the ones it opened. *)
@@ -2096,12 +2099,26 @@ and emit_binop ?col indent op a b =
   in
   let oneline =
     side_str `Left a ^^ Doc.text (" " ^ op ^ " ") ^^ side_str `Right b in
-  (* A sum breaks only when it is one line and that line is too wide. An
-     operand that wraps of its own accord leaves the operator where it was:
-     `(with a as d -> (...)) - 1` keeps `- 1` on the bracket's line. *)
-  let sum_too_wide = bin_prec op = 50 && not (Doc.has_newline oneline) in
-  if (op = "|>" || op = "&&" || op = "||" || sum_too_wide) && not (fits col oneline)
-  then emit_chain op indent a b
+  (* A sum breaks only when every stage is one line and the line they make
+     is too wide. A stage that wraps of its own accord leaves the operator
+     where it was: `(with a as d -> (...)) - 1` keeps `- 1` on the
+     bracket's line. The stages are laid out flat here, not as `oneline`
+     does it, since `oneline`'s left side is the chain's own first stages
+     and those break first: the last `++` of a long chain stayed on the line
+     of the one before it. *)
+  let flat () =
+    match chain_stages op (BinOp (op, a, b)) with
+    | [] -> Doc.empty
+    | (_, first) :: rest ->
+      side_str `Left first
+      ^^ Doc.concat Doc.empty
+           (List.map (fun (op', e) -> Doc.text (" " ^ op' ^ " ") ^^ side_str `Right e) rest)
+  in
+  if op = "|>" || op = "&&" || op = "||" then
+    (if fits col oneline then oneline else emit_chain op indent a b)
+  else if prec = 50 then
+    (let flat = flat () in
+     if Doc.has_newline flat || fits col flat then oneline else emit_chain op indent a b)
   else oneline
 
 (* If `body` is `Annot (te, real_body)` -- a return-type annotation on a

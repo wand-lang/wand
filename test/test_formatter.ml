@@ -662,6 +662,15 @@ let test_a_long_sum_breaks () =
     "let t a b = aaaaaaaaaaaaaaaaaaaaaaaaaaaaa a + (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb b - ccccccccccccccc a b)"
     "let t a b =\n  aaaaaaaaaaaaaaaaaaaaaaaaaaaaa a\n  + (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb b - ccccccccccccccc a b)";
   fmt_eq "a short one stays on its line" "let x = [1] ++ [2] ++ [3]" "let x = [1] ++ [2] ++ [3]";
+  (* The first stages alone are too wide as well, and they broke first, so
+     the last `++` stayed on the line of the one before it (#202). *)
+  let long =
+    "let g =\n  [1]\n  ++ List.range 1 99999999999999\n  ++ List.range 1 99999999999999\n  ++ List.range 1 99999999999999\n  ++ List.range 1 9"
+  in
+  fmt_eq "every stage of a long chain breaks" long long;
+  fmt_eq "every stage of a long chain breaks, from one line"
+    "let g = [1] ++ List.range 1 99999999999999 ++ List.range 1 99999999999999 ++ List.range 1 99999999999999 ++ List.range 1 9"
+    long;
   (* A line that opens with `-` continues the statement above it, so the
      broken chain is the same subtraction, not a statement of `- 1`. *)
   let src =
