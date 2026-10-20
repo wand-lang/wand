@@ -46,11 +46,51 @@ let record (order : order) path key =
 
 exception Stop
 
-(* A scan over text the library has already accepted, so it can be simple
-   about everything but the places a key can stand: after a newline, after a
-   `[` that opens a header, after a `{` or a `,` inside an inline table. A
-   string, a comment and a scalar are skipped whole. *)
-let scan (src : string) : order =
+(* An inline table whose fields include dotted keys, written with each
+   dotted key as the inline tables it names: `{ x.a = 1, x.b = 2 }` is
+   `{ x = { a = 1, b = 2 } }`. A prefix shared by two fields is one table. *)
+let nested_inline text_between fields =
+  let module M = struct
+    type node = Leaf of string * string | Group of string * string * node list ref
+  end in
+  let open M in
+  let rec insert level parts value =
+    match parts with
+    | [] -> level
+    | [(_, text)] -> level @ [Leaf (text, value)]
+    | (name, text) :: rest ->
+      (match List.find_opt (function Group (n, _, _) -> n = name | Leaf _ -> false) level with
+       | Some (Group (_, _, kids)) -> kids := insert !kids rest value; level
+       | _ -> level @ [Group (name, text, ref (insert [] rest value))])
+  in
+  let top =
+    List.fold_left (fun level (parts, (a, b)) -> insert level parts (text_between a b)) [] fields
+  in
+  let rec render level =
+    "{ " ^ String.concat ", " (List.map (function
+      | Leaf (k, v) -> k ^ " = " ^ v
+      | Group (_, k, kids) -> k ^ " = " ^ render !kids) level) ^ " }"
+  in
+  render top
+
+(* One walk over the text gives two things: where each key stands, which is
+   the order above, and the text with every dotted key spelled as the table
+   it names, which is what the library is given.
+
+   The library, at 7.1.0, predates dotted keys (#201): `site.host = "x"` is
+   an error to it, where TOML 1.0 reads it as the key `host` in the table
+   `site`. So before it parses, a dotted key in a section moves to the end
+   of that section as a sub-table of its own -- `[site]` and then
+   `host = "x"` -- and one inside an inline table becomes an inline table
+   nested in it. The library merges a table that is opened twice, so two
+   dotted keys with one prefix land in the one table.
+
+   The walk is simple about everything but the places a key can stand:
+   after a newline, after a `[` that opens a header, after a `{` or a `,`
+   inside an inline table. A string, a comment and a scalar are skipped
+   whole. Where it cannot follow the text, the text goes to the library
+   unchanged, and the library says what is wrong with it, where. *)
+let analyse (src : string) : order * string * int array =
   let order : order = Hashtbl.create 16 in
   let n = String.length src in
   let pos = ref 0 in
@@ -105,14 +145,18 @@ let scan (src : string) : order =
     | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '-' -> true
     | _ -> false
   in
+  (* A part of a key: its name, and its text as written, quotes and all. *)
   let read_simple_key () =
-    match peek 0 with
-    | Some ('"' | '\'') -> read_string ()
-    | Some c when bare c ->
-      let start = !pos in
-      while !pos < n && bare src.[!pos] do advance 1 done;
-      String.sub src start (!pos - start)
-    | _ -> raise Stop
+    let start = !pos in
+    let name =
+      match peek 0 with
+      | Some ('"' | '\'') -> read_string ()
+      | Some c when bare c ->
+        while !pos < n && bare src.[!pos] do advance 1 done;
+        String.sub src start (!pos - start)
+      | _ -> raise Stop
+    in
+    (name, String.sub src start (!pos - start))
   in
   (* `a.b."c"`, as the list of its parts. *)
   let read_key () =
@@ -129,31 +173,64 @@ let scan (src : string) : order =
   let record_path base parts =
     let rec go path = function
       | [] -> path
-      | k :: rest -> record order path k; go (path @ [k]) rest
+      | (k, _) :: rest -> record order path k; go (path @ [k]) rest
     in
     go base parts
+  in
+  (* Pieces of the text to write differently: an inline table that holds a
+     dotted key, as its nested spelling. Kept sorted by where they start,
+     and never overlapping: one that holds another replaces it. *)
+  let replacements = ref [] in
+  let replace start stop text =
+    replacements :=
+      (start, stop, text)
+      :: List.filter (fun (a, b, _) -> a < start || b > stop) !replacements
+  in
+  (* The text from `a` to `b`, with the replacements inside it made. *)
+  let text_between a b =
+    let buf = Buffer.create (b - a) in
+    let at = ref a in
+    List.iter (fun (start, stop, text) ->
+      if start >= !at && stop <= b then begin
+        Buffer.add_string buf (String.sub src !at (start - !at));
+        Buffer.add_string buf text;
+        at := stop
+      end)
+      (List.sort compare !replacements);
+    Buffer.add_string buf (String.sub src !at (b - !at));
+    Buffer.contents buf
   in
   let rec read_value path =
     skip_space ~lines:false;
     match peek 0 with
     | Some ('"' | '\'') -> ignore (read_string ())
     | Some '{' ->
+      let open_at = !pos in
       advance 1;
-      let rec fields () =
+      (* Each field: its key's parts, and the text of its value. *)
+      let fields = ref [] in
+      let rec read_fields () =
         skip_space ~lines:true;
         match peek 0 with
         | Some '}' -> advance 1
-        | Some ',' -> advance 1; fields ()
+        | Some ',' -> advance 1; read_fields ()
         | Some _ ->
-          let target = record_path path (read_key ()) in
+          let parts = read_key () in
+          let target = record_path path parts in
           skip_space ~lines:false;
           if peek 0 <> Some '=' then raise Stop;
           advance 1;
+          skip_space ~lines:false;
+          let v_start = !pos in
           read_value target;
-          fields ()
+          fields := (parts, (v_start, !pos)) :: !fields;
+          read_fields ()
         | None -> raise Stop
       in
-      fields ()
+      read_fields ();
+      let fields = List.rev !fields in
+      if List.exists (fun (parts, _) -> List.length parts > 1) fields then
+        replace open_at !pos (nested_inline text_between fields)
     | Some '[' ->
       advance 1;
       let rec items () =
@@ -168,28 +245,90 @@ let scan (src : string) : order =
     | _ ->
       while !pos < n && not (List.mem src.[!pos] [','; ']'; '}'; '\n'; '#']) do advance 1 done
   in
+  (* What is written out: the text up to `copied` is done. A dotted key's
+     line is left out where it stands and its table written at the end of
+     its section, in `moved`. *)
+  let out = Buffer.create (n + 64) in
+  let moved = Buffer.create 64 in
+  let copied = ref 0 in
+  (* The source line of each line written, so an error the library finds in
+     the rewritten text names the line it came from. `out_lines` holds them
+     in reverse, one per newline written, after the first line's. *)
+  let line_at p =
+    let count = ref 1 in
+    for i = 0 to p - 1 do if src.[i] = '\n' then incr count done;
+    !count
+  in
+  let out_lines = ref [1] in
+  let moved_lines = ref [] in
+  let copy_upto p =
+    let text = text_between !copied p in
+    let line = ref (line_at !copied) in
+    String.iter (fun c ->
+      if c = '\n' then (incr line; out_lines := !line :: !out_lines)) text;
+    Buffer.add_string out text;
+    copied := p
+  in
+  let end_section p =
+    copy_upto p;
+    if Buffer.length moved > 0 then begin
+      if Buffer.length out > 0 && Buffer.nth out (Buffer.length out - 1) <> '\n' then begin
+        Buffer.add_char out '\n';
+        out_lines := List.hd !out_lines :: !out_lines
+      end;
+      Buffer.add_buffer out moved;
+      out_lines := !moved_lines @ !out_lines;
+      Buffer.clear moved;
+      moved_lines := []
+    end
+  in
   let current = ref [] in
+  (* The section's header as written, `server` or `"a b".c`, for the tables
+     its dotted keys move into. *)
+  let current_text = ref [] in
   let rec statements () =
     skip_space ~lines:true;
     match peek 0 with
-    | None -> ()
+    | None -> end_section n
     | Some '[' ->
+      end_section !pos;
       let array = peek 1 = Some '[' in
       advance (if array then 2 else 1);
       let parts = read_key () in
       advance (if array then 2 else 1);
       current := record_path [] parts;
+      current_text := List.map snd parts;
       statements ()
     | Some _ ->
-      let target = record_path !current (read_key ()) in
+      let line_at_ = !pos in
+      let parts = read_key () in
+      let target = record_path !current parts in
       skip_space ~lines:false;
       if peek 0 <> Some '=' then raise Stop;
       advance 1;
+      skip_space ~lines:false;
+      let v_start = !pos in
       read_value target;
+      (match List.rev parts with
+       | (_, last) :: (_ :: _ as prefix) ->
+         copy_upto line_at_;
+         let table = !current_text @ List.rev_map snd prefix in
+         let entry =
+           "[" ^ String.concat "." table ^ "]\n" ^ last ^ " = "
+           ^ text_between v_start !pos ^ "\n"
+         in
+         Buffer.add_string moved entry;
+         let from = line_at line_at_ in
+         String.iter (fun c -> if c = '\n' then moved_lines := from :: !moved_lines) entry;
+         copied := !pos
+       | _ -> ());
       statements ()
   in
-  (try statements () with Stop | Invalid_argument _ -> ());
-  order
+  match statements () with
+  | () -> (order, Buffer.contents out, Array.of_list (List.rev !out_lines))
+  | exception (Stop | Invalid_argument _) -> (order, src, [||])
+
+let scan src = let order, _, _ = analyse src in order
 
 (* ── From the library's value ──────────────────────────────────────────── *)
 
@@ -238,10 +377,26 @@ and of_library (order : order) path (v : Toml.Types.value) : t =
     in
     Table (List.map (fun (k, v) -> (k, of_library order (path @ [k]) v)) pairs)
 
+(* The library's message about the rewritten text, with its line put back to
+   the line of the source it came from. The column and the position belong
+   to the rewritten line, so they go. *)
+let source_message lines msg =
+  let re = Re.Pcre.regexp {|at line ([0-9]+) at column [0-9]+ \(position [0-9]+\)|} in
+  match Re.exec_opt re msg with
+  | None -> msg
+  | Some g ->
+    let line = int_of_string (Re.Group.get g 1) in
+    if line >= 1 && line <= Array.length lines then
+      let a, b = Re.Group.offset g 0 in
+      String.sub msg 0 a ^ Printf.sprintf "at line %d" lines.(line - 1)
+      ^ String.sub msg b (String.length msg - b)
+    else msg
+
 let parse (src : string) : (t, string) result =
-  match Toml.Parser.from_string src with
-  | `Ok tbl -> Ok (of_library (scan src) [] (Toml.Types.TTable tbl))
-  | `Error (msg, _) -> Error msg
+  let order, text, lines = analyse src in
+  match Toml.Parser.from_string text with
+  | `Ok tbl -> Ok (of_library order [] (Toml.Types.TTable tbl))
+  | `Error (msg, _) -> Error (if String.equal text src then msg else source_message lines msg)
 
 (* ── To text ───────────────────────────────────────────────────────────── *)
 

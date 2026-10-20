@@ -262,3 +262,44 @@ test "a quoted key has no quotes in it" (fn t ->
 -- document read back without it.
 test "an empty table is written" (fn t ->
   t.eq "[a]\n[b]\nx = 1\n" (TOML.stringify (TOML.parse! "[a]\n[b]\nx = 1\n")))
+
+-- ── Dotted keys ─────────────────────────────────────────────────────────
+
+-- `site.host = "x"` is the key `host` in the table `site`, as TOML 1.0
+-- says. The library wand parses with predates dotted keys and refused it
+-- (#201).
+let site_of! doc =
+  TOML.parse! doc |> TOML.field! "site" |> TOML.field! "host" |> TOML.get_string
+
+test "a dotted key at the top is a key of a table" (fn t ->
+  t.eq (Ok "example.com") (site_of! "site.host = \"example.com\"\nsite.port = 8080\n"))
+
+test "a dotted key in a section is a key of a sub-table" (fn t ->
+  t.eq
+    (Ok "a.pem")
+    (TOML.parse! "[server]\ntls.cert = \"a.pem\"\n"
+    |> TOML.field! "server"
+    |> TOML.field! "tls"
+    |> TOML.field! "cert"
+    |> TOML.get_string))
+
+test "a dotted key in an inline table nests" (fn t ->
+  t.eq
+    (Ok 2)
+    (TOML.parse! "point = { x.value = 1, y.value = 2 }\n"
+    |> TOML.field! "point"
+    |> TOML.field! "y"
+    |> TOML.field! "value"
+    |> TOML.get_int))
+
+test "dotted keys keep the order they were written in" (fn t ->
+  t.eq
+    (Ok ["name", "site", "after"])
+    (TOML.parse! "name = 1\nsite.host = \"x\"\nafter = 2\nsite.port = 3\n"
+    |> TOML.get_table
+    |> Result.map Map.keys))
+
+test "an error after a dotted key names the line it is on" (fn t ->
+  match TOML.parse "a = 1\nb.c = = 2\n" with
+  | Ok _ -> t.fail "expected an error"
+  | Error why -> t.ok (String.contains? "line 2" why))

@@ -6499,6 +6499,10 @@ A table built with `of` has the order of the map or the record it came
 from. `stringify` writes a table's own values before its sub-tables,
 because a value below a section header belongs to that section.
 
+A dotted key is a key of the table its prefix names, as TOML 1.0 says:
+`site.host = "x"` is the key `host` in the table `site`, at the top, in a
+section, and inside an inline table.
+
 ```ocaml
 import TOML
 
