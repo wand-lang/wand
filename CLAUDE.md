@@ -458,7 +458,7 @@ gives one name's type and examples.
 | `Map` | delete empty empty? filter from_list get(!) has? keys map merge set size to_list update values |
 | `FS` | append(!) append_lines(!) copy(!) copy_tree(!) create_file(!) cwd delete(!) delete_tree(!) dir? exists? file? glob glob_in list_dir(!) lock(!) lock_wait(!) mkdir(!) mtime(!) read_file(!) rename(!) size(!) stream_lines stream_lines_all temp_dir temp_file write_atomic(!) write_file(!) write_lines(!) write_lines_atomic(!) |
 | `Path` | absolute? basename between? clamp components extension join max min normalize of_string parent relative? relative_to(!) to_string with_extension |
-| `Regex` | capture compile(!) match? match_all replace replace_all split |
+| `Regex` | capture compile(!) match? match_all replace replace_all replace_all_with replace_with split |
 | `Option` | and_then default get! map none? or_else some? to_result |
 | `Result` | and_then default error? flatten get! map map_error ok? reason to_option |
 | `Int` | abs between? clamp max max_value min min_value of_string(!) pow to_string |

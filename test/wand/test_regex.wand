@@ -168,3 +168,30 @@ test "Regex.compile reads it too" (fn t ->
   t.eq
     (Ok true)
     (Result.map (fn r -> Regex.match? r "\xfd") (Regex.compile "[\\xfb-\\xfe]")))
+
+-- ── Replacing with a function (#198) ────────────────────────────────────
+
+-- The function is given what `capture` gives, so a group is reached by its
+-- place. A `$` in a plain replacement is a `$`.
+test "replace_all_with reaches the groups" (fn t ->
+  t.eq
+    "b at a d at c"
+    (Regex.replace_all_with
+      r/(\w+)@(\w+)/
+      (fn g -> match g with
+        | [_, user, host] -> "%{host} at %{user}"
+        | _ -> ""
+      )
+      "a@b c@d"))
+
+test "replace_with replaces the first match only" (fn t ->
+  t.eq "a11b2" (Regex.replace_with r/(\d)/ (fn g -> String.repeat 2 (List.get! 1 g)) "a1b2"))
+
+test "a group that matched nothing is the empty string" (fn t ->
+  t.eq "[]x" (Regex.replace_with r/(a)?x/ (fn g -> "[%{List.get! 1 g}]x") "x"))
+
+test "no match leaves the string as it was" (fn t ->
+  t.eq "abc" (Regex.replace_all_with r/z/ (fn _ -> "Y") "abc"))
+
+test "a $ in a plain replacement is a $" (fn t ->
+  t.eq "$1$1" (Regex.replace_all r/a/ "$1" "aa"))

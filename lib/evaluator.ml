@@ -6702,7 +6702,39 @@ let bool_of name = function
 let list_hof name (go : loc_cell -> value -> value list -> value) =
   VBuiltin (fun f -> VBuiltin (fun xs -> go (loc_cell ()) f (list_of name xs)))
 
+(* `Regex.replace_with` and `Regex.replace_all_with`: each match replaced by
+   what a function makes of it, given the list `Regex.capture` gives -- the
+   whole match, then each group, "" for one that matched nothing. The
+   function form rather than `$1` in the replacement, so no replacement that
+   holds a `$` changes meaning (#198). *)
+let regex_replace_with name ~all =
+  VBuiltin (function
+    | VRegex re -> VBuiltin (fun f -> VBuiltin (function
+      | VString s ->
+        let c = loc_cell () in
+        let replacement g =
+          match apply_c c f (VList (Array.to_list (Array.map (fun x -> VString x)
+                                       (Re.Group.all g)))) with
+          | VString r -> r
+          | _ -> raise (EvalError (name ^ ": the function must return a String"))
+        in
+        let buf = Buffer.create (String.length s) in
+        let last = ref 0 in
+        let matches = if all then Re.all re s else Option.to_list (Re.exec_opt re s) in
+        List.iter (fun g ->
+          take_step c;
+          let (b, e) = Re.Group.offset g 0 in
+          Buffer.add_string buf (String.sub s !last (b - !last));
+          Buffer.add_string buf (replacement g);
+          last := e) matches;
+        Buffer.add_string buf (String.sub s !last (String.length s - !last));
+        VString (Buffer.contents buf)
+      | _ -> raise (EvalError (name ^ ": expected String"))))
+    | _ -> raise (EvalError (name ^ ": expected Regex")))
+
 let list_hof_builtins : env = [
+  ("regex_replace_with", regex_replace_with "Regex.replace_with" ~all:false);
+  ("regex_replace_all_with", regex_replace_with "Regex.replace_all_with" ~all:true);
   ("list_map", list_hof "List.map" (fun c f xs ->
     let rec go acc = function
       | [] -> VList (List.rev acc)

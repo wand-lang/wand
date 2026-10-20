@@ -51,6 +51,26 @@ let replace re repl s = regex_replace re repl s
 -- "bonono" : String
 let replace_all re repl s = regex_replace_all re repl s
 
+-- Replace the first match with what a function makes of it. The function
+-- is given what `capture` gives: the whole match, then each group, and ""
+-- for a group that matched nothing.
+--
+-- >> Regex.replace_with r/(\d+)/ (fn g -> String.repeat 2 (List.get! 1 g)) "a1b2"
+-- "a11b2" : String
+let replace_with re f s = regex_replace_with re f s
+
+-- Replace every match with what a function makes of it, given what
+-- `capture` gives for that match. A group is reached by its place in the
+-- list, so the replacement is code rather than a string with `$1` in it,
+-- and a replacement that holds a `$` means what it says.
+--
+-- >> Regex.replace_all_with r/(\w+)@(\w+)/ (fn g ->
+-- ..   match g with
+-- ..   | [_, user, host] -> "%{host} at %{user}"
+-- ..   | _ -> "") "a@b c@d"
+-- "b at a d at c" : String
+let replace_all_with re f s = regex_replace_all_with re f s
+
 -- Split the string on matches of the regex.
 --
 -- >> Regex.split r/\s+/ "a  b   c"

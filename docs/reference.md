@@ -1954,6 +1954,8 @@ Regex.capture     r/(\w+)@(\w+)/ "a@b"     -- Some ["a@b", "a", "b"]
 Regex.capture     r/(\w+)@(\w+)/ "nope"    -- None
 Regex.replace     r/\d+/ "X" "a1b2"        -- "aXb2"
 Regex.replace_all r/\d+/ "X" "a1b2"        -- "aXbX"
+Regex.replace_all_with r/\d+/ (fn g -> "<" ++ List.head! g ++ ">") "a1b22"
+                                         -- "a<1>b<22>"
 Regex.split       r/\s+/ "a  b   c"        -- ["a", "b", "c"]
 Regex.match_all   r/\d+/ "a1b22c333"       -- ["1", "22", "333"]
 ```
@@ -5294,8 +5296,23 @@ match?      : Regex -> String -> Bool
 capture     : Regex -> String -> Option (List String)
 replace     : Regex -> String -> String -> String
 replace_all : Regex -> String -> String -> String
+replace_with     : Regex -> (List String -> String ! 'e) -> String -> String ! 'e
+replace_all_with : Regex -> (List String -> String ! 'e) -> String -> String ! 'e
 split       : Regex -> String -> List String
 match_all   : Regex -> String -> List String
+```
+
+`replace` and `replace_all` put their replacement in as written: a `$` in it
+is a `$`. To build the replacement from the match, `replace_with` and
+`replace_all_with` take a function, and give it what `capture` gives -- the
+whole match, then each group:
+
+```ocaml
+Regex.replace_all_with r/(\w+)@(\w+)/ (fn g ->
+  match g with
+  | [_, user, host] -> "%{host} at %{user}"
+  | _ -> "") "a@b c@d"
+-- "b at a d at c"
 ```
 
 A pattern matches bytes, not characters, so `.` is one byte and `r/^.$/`

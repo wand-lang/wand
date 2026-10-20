@@ -7492,6 +7492,14 @@ let stdlib_type_env : env = [
   (* The list functions that call a function they are given. Each performs
      what the function performs, when the list arrives, as the wand
      definitions they replace did. *)
+  ("regex_replace_with",
+   let e = Effect_set.unknown () in
+   generalize [] (TFun (TRegex, TFun (TFun (TList TString, TString, e),
+     TFun (TString, TString, e), Effect_set.pure), Effect_set.pure)));
+  ("regex_replace_all_with",
+   let e = Effect_set.unknown () in
+   generalize [] (TFun (TRegex, TFun (TFun (TList TString, TString, e),
+     TFun (TString, TString, e), Effect_set.pure), Effect_set.pure)));
   ("list_map",
    let a = fresh () and b = fresh () and e = Effect_set.unknown () in
    generalize [] (TFun (TFun (a, b, e), TFun (TList a, TList b, e), Effect_set.pure)));
