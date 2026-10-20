@@ -76,6 +76,30 @@ let test_one_name_puns () =
     (run_t ^ "let f (Run x) = x\nf (Run(a = 1, b = 2, c = 3))")
     "2:8: constructor 'Run' expects 3 argument(s), got 1"
 
+(* ── A `;` on an arm's own line is the arm's (#190) ─────────────────────── *)
+
+(* `| Error why -> log why; fallback` gives the arm the value `fallback`.
+   The `;` ended the arm and went to whatever held the `match`, so at the
+   top of a file it ended the definition, and the definition typechecked
+   with the arm's value Unit. *)
+let test_a_semicolon_on_an_arm_line () =
+  value "the arm's value is the last statement"
+    "let f r =\n  match r with\n  | Ok d -> d\n  | Error why -> why; \"fallback\"\nf (Error \"x\")"
+    "fallback";
+  value "a parameter after the ; is in scope"
+    "let f r name =\n  match r with\n  | Ok _ -> 0\n  | Error _ -> name; name + 1\nf (Error \"x\") 4"
+    "5";
+  value "a handle arm too"
+    "let f () =\n  handle 1 with\n  | return v -> v; v + 1\nf ()"
+    "2";
+  (* A `match` on one line gives its `;` to the binding, which ends there. *)
+  value "a match on one line"
+    "let f b = match b with | true -> 1 | false -> 0; f true" "1";
+  (* A `;` on a line of its own still ends a value that ends on an arm. *)
+  value "a ; below the arms"
+    "let f r =\n  let x =\n    match r with\n    | Ok n -> n\n    | Error _ -> 0\n  ;\n  x + 1\nf (Ok 1)"
+    "2"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -421,6 +445,7 @@ let () =
     ];
     "issues", [
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
+      Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [

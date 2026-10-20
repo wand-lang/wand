@@ -354,6 +354,18 @@ let last_loc s =
   if s.pos = 0 || s.pos > Array.length s.tokens then peek_loc s
   else snd s.tokens.(s.pos - 1)
 
+(* Whether the token just consumed -- an arm's `|` -- is the first on its
+   line. *)
+let last_starts_line s =
+  let last = s.pos - 1 in
+  if last < 0 || last >= Array.length s.tokens then false
+  else begin
+    let line = (snd s.tokens.(last)).Token.line in
+    let k = ref (last - 1) in
+    while !k >= 0 && is_skippable (fst s.tokens.(!k)) do decr k done;
+    !k < 0 || (snd s.tokens.(!k)).Token.line < line
+  end
+
 (* `start` widened to stop at the last token consumed. `peek` never moves
    `pos`, and `advance` steps past skippables before consuming, so
    `tokens.(pos - 1)` is always the last real token of whatever just
@@ -2268,6 +2280,7 @@ and match_ s =
   s.with_owners <- s.with_owners - 1;
   let arms_loc = peek_loc s in
   let cases = arms_ s (fun () ->
+    let own_line = last_starts_line s in
     (* Taken before the pattern is read: the arguments of a constructor
        are evaluated right to left, so written inline this was the
        position after it. *)
@@ -2284,7 +2297,7 @@ and match_ s =
       end else None
     in
     expect s Token.Arrow;
-    let body = locate s (fun () -> statements_ s) in
+    let body = locate s (fun () -> arm_body_ ~own_line s) in
     (p, guard, body))
   in
   (* A match with no arms has no value for any input, so nothing it could
@@ -2434,6 +2447,40 @@ and statements_ s =
        in
        chain first (List.rev !rest))
 
+(* An arm's body. Written on the arm's own line, it is every statement a
+   `;` joins to it on that line: `| Error why -> log why; fallback` is an
+   arm whose value is `fallback`, as CLAUDE.md and the reference say an arm
+   reads a `;` on it. The `;` used to end the arm and pass to whatever held
+   the `match`, so at the top of a file it ended the definition, and
+   `fallback` was a statement of the file: the definition typechecked with
+   the arm's value `Unit`, and ran (#190).
+
+   Only for an arm that starts its own line, and only on that line. A
+   `match` written on one line, `let f b = match b with | true -> 1 | false
+   -> 0; f true`, gives its `;` to the binding, which is what ends a
+   binding's value on one line. A `;` that ends the line still passes up,
+   which is how a binding whose value ends on an arm has always ended, and
+   a body on lines of its own sequences as any body does. *)
+and arm_body_ ~own_line s =
+  let on_the_arrow_line = own_line && not (has_newline_before_next s) in
+  let first = statements_ s in
+  let rec same_line acc =
+    match semicolon_ahead s with
+    | Some (j, false) when on_the_arrow_line ->
+      (match token_after s j with
+       | Some (t, loc)
+         when is_expr_start t && loc.Token.line = (snd s.tokens.(j)).Token.line ->
+         ignore (advance s); (* the `;` *)
+         same_line (statement_ s :: acc)
+       | _ -> List.rev acc)
+    | _ -> List.rev acc
+  in
+  let rec chain first = function
+    | [] -> first
+    | next :: more -> Ast.Seq (first, chain next more)
+  in
+  chain first (same_line [])
+
 and fn_ s =
   (* fn already consumed *)
   let params = ref [] in
@@ -2501,12 +2548,13 @@ and parse_handle_ s =
         Token.pp t)
   in
   let cases = arms_ s (fun () ->
+    let own_line = last_starts_line s in
     match peek s with
       | Token.Return ->
         ignore (advance s);
         let p = pat_atom_ s in
         expect s Token.Arrow;
-        let b = locate s (fun () -> statements_ s) in
+        let b = locate s (fun () -> arm_body_ ~own_line s) in
         Ast.ReturnCase (p, b)
       | _ ->
         (* Several operations share one arm as the alternatives of a `match`
@@ -2526,7 +2574,7 @@ and parse_handle_ s =
           alts := !alts @ [(op, p)]
         done;
         expect s Token.Arrow;
-        let b = locate s (fun () -> statements_ s) in
+        let b = locate s (fun () -> arm_body_ ~own_line s) in
         Ast.EffectCase (!alts, cont_name, b))
   in
   Ast.Handle (body, cases)

@@ -335,7 +335,10 @@ This holds inside a `( ... )` block too: under an arm in a block, a line-end
 `;` keeps the next line in the arm. A line that falls back inside the
 body's column is not part of it. A body
 written on the `=` or `->` line is one statement; to sequence there, use
-parentheses: `fn x -> (log! x; x)`.
+parentheses: `fn x -> (log! x; x)`. An arm that starts its own line is the
+exception: `| Error why -> log why; 0` has the value `0`, since an arm
+reads a `;` on its own line as part of itself. A `match` written all on one
+line gives its `;` to the binding around it.
 
 `in`, the block's `;` and the newline that ends a right-hand side all bind
 the name over the same body, so they are one thing and `wand f` writes the

@@ -931,6 +931,21 @@ one statement, and the lines under it continue that statement. A line after a
 `;` that falls back inside the body's column is not part of the body, and
 wand reports it, since the `;` there ended the definition.
 
+An arm that starts its own line is the exception: a `;` on the arm's line
+joins the statement after it, on that line, to the arm. The arm's value is
+the last of them:
+
+```ocaml
+match Int.of_string text with
+| Ok n -> n
+| Error why -> IO.println_err why; 0
+```
+
+`0` is the value of the `Error` arm, and `wand f` writes the arm as
+`| Error why -> (IO.println_err why; 0)`. A `match` written on one line, as
+`let f b = match b with | true -> 1 | false -> 0; f true`, gives its `;` to
+the binding, which ends there. So does a `;` at the end of an arm's line.
+
 A `;` at the start of a line says the same as one at the end of the line
 above. This includes a `;` on a line of its own after a binding whose value
 ends on a `match` or `handle` arm. The `;` is to the left of the arms, so no
