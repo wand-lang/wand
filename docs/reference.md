@@ -4805,7 +4805,7 @@ imports clean however much its functions do. The effects arrive when
 something calls one. They also travel the whole chain: a file that imports
 a file that imports one of these performs it too.
 
-### Destructured imports
+### Destructuring imports
 
 Import specific names from a module by naming them in braces:
 
