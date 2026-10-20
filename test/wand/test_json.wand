@@ -177,9 +177,10 @@ test "read_file ok" (fn t ->
   with FS.temp_file "wand_json_rd_" ".json" as p -> (
     FS.write_file! p `{"greeting":"hello"}`;
     let outcome =
-      (match JSON.read_file p with
-       | Ok j -> JSON.stringify (JSON.field! "greeting" j)
-       | Error _ -> "");
+      match JSON.read_file p with
+      | Ok j -> JSON.stringify (JSON.field! "greeting" j)
+      | Error _ -> ""
+    in
     t.eq `"hello"` outcome
   ))
 

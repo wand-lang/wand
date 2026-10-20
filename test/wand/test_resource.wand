@@ -80,8 +80,9 @@ test "released when a handler does resume" (fn t ->
 -- as `Fun.protect`'s finally and has whatever it raises wrapped.
 test "a handler may decline to resume an operation performed in a release" (fn t -> (
   let out =
-    (handle with tracked "n" as _ -> "body" with
-     | FS!delete _ _ -> "declined");
+    handle with tracked "n" as _ -> "body" with
+    | FS!delete _ _ -> "declined"
+  in
   -- The delete never reached the disk, so the marker is still there.
   FS.delete! (marker "n");
   t.eq "declined" out
@@ -90,8 +91,9 @@ test "a handler may decline to resume an operation performed in a release" (fn t
 -- Each bracket the unwinding passes through wraps the raise once more.
 test "and through two brackets" (fn t -> (
   let out =
-    (handle with tracked "o" as _ -> with tracked "p" as _ -> "body" with
-     | FS!delete _ _ -> "declined");
+    handle with tracked "o" as _ -> with tracked "p" as _ -> "body" with
+    | FS!delete _ _ -> "declined"
+  in
   FS.delete! (marker "o");
   FS.delete! (marker "p");
   t.eq "declined" out
@@ -146,8 +148,9 @@ test "temp_dir cleans up when the body raises" (fn t -> (
   let dir = FS.read_file! note;
   FS.delete! note;
   let raised =
-    (match r with
-     | Error _ -> true
-     | Ok _ -> false);
+    match r with
+    | Error _ -> true
+    | Ok _ -> false
+  in
   t.eq (true, false) (raised, FS.exists? (Path.of_string dir))
 ))

@@ -2205,6 +2205,11 @@ and emit_block ?col ?(bare = false) indent e =
      a keyword no arm can swallow, and which needs no brackets and no extra
      column. So an arm-ended binding keeps the `in` it was written with, and
      every other statement takes the `;`. *)
+  (* Whether a binding whose value ends on an arm takes `in` rather than
+     brackets. Not on one line: an `in` with its body on the same line
+     narrows, and these do not. Written at the end of its line, an `in`
+     gives the name to the rest of the block, as the `;` does (#203). *)
+  let use_in = ref bare in
   let rec items ind e =
     match strip_located e with
     | Seq (a, b) ->
@@ -2227,7 +2232,7 @@ and emit_block ?col ?(bare = false) indent e =
        `let ... in`. *)
     | Let (p, e1, body, _) ->
       let above = match starts_at (loc_of e1) with Some hi -> lead hi | None -> [] in
-      let in_term = bare && printed_ends_in_an_arm e1 in
+      let in_term = !use_in && printed_ends_in_an_arm e1 in
       let text = emit_binding ~col:ind ~in_terminated:in_term ind p e1 in
       advance_past (loc_of e1);
       (above, text, in_term) :: items ind body
@@ -2255,7 +2260,9 @@ and emit_block ?col ?(bare = false) indent e =
      the measuring walk and the real one run at two different indents, so
      neither answer is the other's and the cache cannot pair them. Flat, the
      question costs one pass. *)
+  use_in := false;
   let probe = with_width max_int (fun () -> items indent e) in
+  use_in := true;
   let probe_claimed = !claimed in
   prev_end := max_int; claimed := false;
   let oneline =
@@ -2294,11 +2301,13 @@ and emit_block ?col ?(bare = false) indent e =
     let ind = Doc.spaces indent in
     let inner = Doc.spaces (indent + 2) in
     let n = List.length stmts in
-    let piece i (above, text, _) =
+    let piece i (above, text, in_term) =
       Doc.concat Doc.empty
         (List.map (fun c -> inner ^^ Doc.text c ^^ Doc.text "\n") above)
       ^^ inner ^^ text
-      ^^ (if i < n - 1 then Doc.text ";\n" else Doc.empty)
+      ^^ (if i >= n - 1 then Doc.empty
+          else if in_term then Doc.text "\n" ^^ inner ^^ Doc.text "in\n"
+          else Doc.text ";\n")
     in
     Doc.whole_bracket
       [Doc.text "(\n"; Doc.concat Doc.empty (List.mapi piece stmts);
@@ -2342,8 +2351,8 @@ and emit_fn_clauses ~col indent p params fbody =
    the terminator, as a newline is at the top level of a file. *)
 (* A binding in a block. Its value is always followed by the block's `;` --
    a block cannot end with a `let`, so there is always something after it --
-   which is why a value ending in an arm is bracketed here and not asked
-   about. *)
+   which is why a value ending in an arm is bracketed here, unless the
+   block writes `in` after it (`in_terminated`). *)
 and emit_binding ?col ?(in_terminated = false) indent p e1 =
   let col = match col with Some c -> c | None -> indent in
   (* One column further in inside the bracket, so the arms sit under the
@@ -2393,6 +2402,17 @@ and emit_let ?col indent p e1 e2 =
   let above =
     Doc.concat Doc.empty
       (List.map (fun c -> ind0 ^^ Doc.text c.c_text ^^ Doc.text "\n") after_in) in
+  (* This `let ... in` narrows, so its body opens on the `in` line. An `in`
+     that ends its line gives the name to the rest of the body (#203), so
+     the body below it would take the statements after the `;` too. When
+     the binding does not fit on one line, the `in` goes to a line of its
+     own with the body after it, and a comment above the body goes above
+     the `in`. *)
+  let narrowed_tail () =
+    let at = indent + 3 in
+    above ^^ ind0 ^^ Doc.text "in "
+    ^^ bracket_if_wrapped_app_at ~anchor:at e2 (emit_expr ~col:at at e2)
+  in
   match e1 with
   | Fn (params, fbody) ->
     (* A *raw* (non-`Located`) `Fn` as a `let` RHS only ever comes from the
@@ -2422,9 +2442,9 @@ and emit_let ?col indent p e1 e2 =
           | _ -> false)
     in
     emit_fn_clauses ~col indent p params fbody
-    ^^ Doc.text "\n" ^^ ind
-    ^^ (if commented || tail_on_its_own_line then Doc.text "in\n" ^^ above ^^ ind ^^ tail
-       else Doc.text "in " ^^ tail)
+    ^^ Doc.text "\n"
+    ^^ (if commented || tail_on_its_own_line then narrowed_tail ()
+       else ind ^^ Doc.text "in " ^^ tail)
   | Annot (te, body) ->
     (* Reprinting an `Annot`'d let RHS via inline `expr : Type` syntax would
        be genuinely ambiguous: the parser's infix `:` in expression position
@@ -2446,10 +2466,7 @@ and emit_let ?col indent p e1 e2 =
     let head = Doc.text ("let " ^ name ^ " : " ^ emit_type_expr te) in
     let oneline = head ^^ Doc.text " = " ^^ bodys ^^ Doc.text " in " ^^ e2s in
     if (not commented) && fits col oneline then oneline
-    else
-      let ind = Doc.spaces indent in
-      head ^^ Doc.text " = " ^^ bodys ^^ Doc.text " in\n"
-      ^^ above ^^ ind ^^ e2s
+    else head ^^ Doc.text " = " ^^ bodys ^^ Doc.text "\n" ^^ narrowed_tail ()
   | _ ->
   let e1s = emit_expr indent e1 in
   (* A wrapped application after `in` needs its brackets for the same reason
@@ -2458,24 +2475,24 @@ and emit_let ?col indent p e1 e2 =
   let e2s = bracket_if_wrapped_app_at ~anchor:indent e2 (emit_expr indent e2) in
   let oneline =
     Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text " in " ^^ e2s in
-  let ind = Doc.spaces indent in
   if (not commented) && fits col oneline then oneline
   else
-    (* Splitting after `in` is the first thing to try, but the binding alone
-       may still be too long -- and the value was rendered as though it began
-       at the margin, not after `let name = `. Given its own line it gets the
-       room the measurement assumed, and wraps on its own terms. *)
+    (* The `in` goes below the value with the body after it, since this
+       binding narrows. The binding alone may still be too long -- and the
+       value was rendered as though it began at the margin, not after
+       `let name = `. Given its own line it gets the room the measurement
+       assumed, and wraps on its own terms. *)
     let bound =
       Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text " in" in
-    if fits col bound then
+    if fits col bound && opens_a_bracket e2 && not commented then
       (* A bracketed tail after `in` opens on the same line, brace-style,
          like a bracketed value after `=`. *)
-      (if opens_a_bracket e2 && not commented then
-         bound ^^ Doc.text " " ^^ emit_expr ~col:(col + Doc.width bound + 1) indent e2
-       else bound ^^ Doc.text "\n" ^^ above ^^ ind ^^ e2s)
+      bound ^^ Doc.text " " ^^ emit_expr ~col:(col + Doc.width bound + 1) indent e2
+    else if fits col bound then
+      Doc.text ("let " ^ emit_pat p ^ " = ") ^^ e1s ^^ Doc.text "\n" ^^ narrowed_tail ()
     else
       emit_bound_value ~col indent (Doc.text ("let " ^ emit_pat p)) e1
-      ^^ Doc.text "\n" ^^ ind ^^ Doc.text "in\n" ^^ above ^^ ind ^^ e2s
+      ^^ Doc.text "\n" ^^ narrowed_tail ()
 
 (* The `let f ... and g ...` group on its own, without whatever reads it:
    the `in` form puts its body below, the block form puts a `;`. *)

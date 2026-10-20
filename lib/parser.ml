@@ -2175,7 +2175,17 @@ and let_ ?(block = false) s =
   let style_for ~narrows = if narrows then Ast.LetIn else Ast.LetBlock in
   let consume_rest () =
     if peek s = Token.In then begin
+      let in_line = (peek_loc s).Token.line in
       ignore (advance s);
+      (* An `in` that ends its line binds the name over the rest of the
+         body, as the newline does. A body of lines takes a newline as a
+         `;`, so read by the rule below, every `in` at the end of a line
+         narrowed, and `let y = x in` gave `y` to the next line and to
+         nothing after it (#203). *)
+      if (peek_loc s).Token.line > in_line && is_expr_start (peek s) then
+        (if block then (paren_seq s, Ast.LetBlock)
+         else (parse_body s, style_for ~narrows:false))
+      else
       let body = locate s (fun () -> expr_ 0 s) in
       (* A `;` narrows only inside a block, where it is the block's own
          separator and the statements after it are the ones the name must

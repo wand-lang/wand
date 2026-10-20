@@ -1092,9 +1092,13 @@ in
 Resource.make acquire release
 ```
 
-`in` also stays where it narrows — written ahead of a `;`, it keeps the name
-off the statements below, which is meaning rather than spelling:
-`(let x = 1 in x + 1; 9)` gives `x` to `x + 1` and to nothing after it.
+An `in` at the end of a line, or on a line of its own, gives the name to the
+rest of the body, as the `;` does, however many statements follow it.
+
+`in` also stays where it narrows — with its body on the same line and a `;`
+after that body, it keeps the name off the statements below, which is
+meaning rather than spelling: `(let x = 1 in x + 1; 9)` gives `x` to `x + 1`
+and to nothing after it.
 
 The brackets stay where the statements are not all bindings. A `;` ends a
 binding's right-hand side and hands the rest to its body, and that is the

@@ -93,10 +93,11 @@ test "only one worker takes a lock" (fn t -> (
   FS.mkdir! (Path.of_string dir);
   let guard = Path.of_string "%{dir}/one.lock";
   let attempt =
-    (fn n -> with FS.lock guard as taken ->
-     match taken with
-     | Ok _ -> (Clock.sleep 150ms; "took")
-     | Error _ -> "held");
+    fn n -> with FS.lock guard as taken ->
+    match taken with
+    | Ok _ -> (Clock.sleep 150ms; "took")
+    | Error _ -> "held"
+  in
   let outcomes = Par.map 4 attempt ["a", "b", "c", "d"];
   FS.delete_tree! (Path.of_string dir);
   t.eq 1 (List.length (List.filter (fn r -> r == Ok "took") outcomes))
@@ -127,10 +128,11 @@ test "a waiting worker takes the lock once it is free" (fn t -> (
   FS.mkdir! (Path.of_string dir);
   let guard = Path.of_string "%{dir}/one.lock";
   let attempt =
-    (fn _ -> with FS.lock_wait 3s guard as taken ->
-     match taken with
-     | Ok _ -> (Clock.sleep 150ms; "took")
-     | Error _ -> "held");
+    fn _ -> with FS.lock_wait 3s guard as taken ->
+    match taken with
+    | Ok _ -> (Clock.sleep 150ms; "took")
+    | Error _ -> "held"
+  in
   let outcomes = Par.map 2 attempt ["a", "b"];
   FS.delete_tree! (Path.of_string dir);
   t.eq [Ok "took", Ok "took"] outcomes

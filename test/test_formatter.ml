@@ -2337,6 +2337,23 @@ let test_a_semicolon_that_begins_a_line_is_written_back () =
     "let run th =\n  let t = match th with\n    | 1 -> 1\n    | _ -> 0\n  ;\n  let u = t + 1;\n  u\nrun 1"
     "2"
 
+(* In a block, a value that ends on an arm takes `in` at the end of its
+   line, as a bare body does, and not brackets round the `match`. An `in`
+   that ends its line gives the name to the rest of the block (#203). *)
+let test_an_arm_ended_value_in_a_block_takes_in () =
+  let block =
+    "let f! x = (\n  let y =\n    match x with\n    | 0 -> \"a\"\n    | _ -> \"b\"\n  in\n  IO.println y;\n  IO.println y\n)"
+  in
+  fmt_eq "the match has no brackets"
+    "let f! x =\n  let y =\n    match x with\n    | 0 -> \"a\"\n    | _ -> \"b\"\n  ;\n  IO.println y\n  IO.println y"
+    block;
+  fmt_eq "and comes back the same" block block;
+  (* A narrowing `in` that does not fit keeps its body on the `in` line,
+     so the statement after the `;` stays outside the name. *)
+  ok_after_format "a long narrowing in keeps its meaning"
+    "import String\nlet y = 1\nlet f x = (\n  let y = \"a value long enough that this binding does not fit on one line\" ++ x in String.length y;\n  y\n)\nf \"b\""
+    "1"
+
 let test_a_newline_binding_stops_at_the_next_definition () =
   fmt_eq "the definition below stays its own"
     "let f () =\n  let a = 1\n  a + 1\n\nlet g () = 2"
@@ -2645,5 +2662,7 @@ let () =
         test_a_map_literal_pun_is_kept;
       Alcotest.test_case "a ; that begins a line is written back" `Quick
         test_a_semicolon_that_begins_a_line_is_written_back;
+      Alcotest.test_case "an arm-ended value in a block takes in (#203)" `Quick
+        test_an_arm_ended_value_in_a_block_takes_in;
     ];
   ]

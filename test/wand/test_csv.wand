@@ -42,9 +42,10 @@ test "read_file row count and header" (fn t ->
   with FS.temp_file "wand_csv_rd_" ".csv" as p -> (
     FS.write_file! p "name,age\nAlice,30\nBob,25\n";
     let outcome =
-      (match CSV.read_file p with
-       | Ok rows -> (List.length rows, List.head! (List.head! rows))
-       | Error _ -> (-1, ""));
+      match CSV.read_file p with
+      | Ok rows -> (List.length rows, List.head! (List.head! rows))
+      | Error _ -> (-1, "")
+    in
     t.eq (3, "name") outcome
   ))
 
