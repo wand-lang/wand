@@ -61,13 +61,6 @@ directory:
 curl -fsSL https://raw.githubusercontent.com/wand-lang/wand/main/install.sh | sh
 ```
 
-In GitHub Actions, use [wand-lang/setup-wand](https://github.com/wand-lang/setup-wand):
-
-```yaml
-- uses: wand-lang/setup-wand@v1
-- run: wand ci/deploy.wand
-```
-
 Without curl, take the archive for your platform from the
 [releases page](https://github.com/wand-lang/wand/releases) and unpack it. It
 holds one binary and nothing else. Each release has static Linux builds

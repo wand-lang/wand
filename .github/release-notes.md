@@ -1,11 +1,7 @@
-## 0.110.1 - 2026-10-20
+## 0.110.2 - 2026-10-20
 
-This release does not change wand. It tells how to install wand in the reference, and starts the build of the site when a release is published.
-
-### Added
-
-- A published release starts the build of the site, so the site shows the release at once.
+This release does not change wand. It makes the install steps in the reference's Quick start shorter.
 
 ### Documentation
 
-- The reference's Quick start tells how to install wand.
+- The reference's Quick start no longer shows the GitHub Actions step. The README still shows it.

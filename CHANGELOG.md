@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.110.2] - 2026-10-20
+
+### Documentation
+
+- The reference's Quick start no longer shows the GitHub Actions step. The README still shows it.
+
 ## [0.110.1] - 2026-10-20
 
 ### Added
