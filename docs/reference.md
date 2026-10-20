@@ -4541,6 +4541,19 @@ Utils.my_function 42
 Utils.greeting
 ```
 
+A constructor is reached the same way, and a pattern names it the same
+way, as an arm, inside another constructor and as a parameter:
+
+```ocaml
+let Doc = import ./doc         -- type Section(title: String, body: String)
+
+match found with
+| Some Doc.Section(title) -> title
+| None -> ""
+
+List.map (fn Doc.Section(body) -> body) sections
+```
+
 ### What an import runs
 
 An import evaluates the file's bindings. It does not evaluate the

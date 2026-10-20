@@ -140,6 +140,23 @@ let test_puns_before_a_named_field () =
     (fn_t ^ "let f r = Fn(r, line = 2)\n(f (Fn(name = \"a\", short = \"b\", line = 1))).line")
     "2"
 
+(* ── A constructor pattern inside another, or through a module (#195) ─── *)
+
+(* `Ok D(name, doc)`, `Some M.Section(body)` and `fn M.Section(body) -> ...`
+   needed brackets around the inner pattern, and the errors did not say so:
+   "constructor 'Ok' expects 1 argument(s), got 2" and "expected ->, got
+   .". Each is one pattern now. *)
+let test_a_constructor_pattern_inside_another () =
+  value "a record pattern inside Ok"
+    "type D(name: String, doc: String)\nmatch Ok (D(name = \"n\", doc = \"d\")) with\n| Ok D(name, doc) -> name ++ doc\n| Error e -> e"
+    "nd";
+  value "a module's constructor inside Some"
+    "import HTTP\nmatch Some HTTP.POST with\n| Some HTTP.GET -> 1\n| Some HTTP.POST -> 2\n| _ -> 0"
+    "2";
+  value "a module's constructor as a fn parameter"
+    "import HTTP\n(fn HTTP.Server(port) -> port) (HTTP.Server(port = :80))"
+    ":80"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -488,6 +505,8 @@ let () =
       Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
       Alcotest.test_case "a field read waits (#193)" `Quick test_a_field_read_waits;
       Alcotest.test_case "puns before a named field (#194)" `Quick test_puns_before_a_named_field;
+      Alcotest.test_case "a constructor pattern inside another (#195)" `Quick
+        test_a_constructor_pattern_inside_another;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [

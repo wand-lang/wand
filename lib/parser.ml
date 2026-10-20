@@ -1320,6 +1320,31 @@ and pat_atom_ s =
      apart, so it needs no separate form. *)
   | Token.RawStr str -> ignore (advance s); String str
   | Token.Bool b     -> ignore (advance s); Bool b
+  (* `M.Section(body)`, `m.Live`: a constructor reached through a module,
+     in a constructor's argument or a parameter. A whole pattern read these,
+     and an atom did not, so `Some M.Section(body)` and
+     `fn M.Section(body) -> body` were "expected ->, got ." (#195). The
+     constructor takes a bracket against its name, as a bare one does. *)
+  | (Token.Ident name | Token.Upper name) when peek2 s = Token.Dot
+      && (match peek3 s with Token.Upper _ -> true | _ -> false) ->
+    let at = peek_loc s in
+    ignore (advance s); ignore (advance s);
+    let c = match advance s with Token.Upper c -> c | _ -> assert false in
+    (* `one.PullPolicy.Always`: a type, then one of its constructors. *)
+    let base, c =
+      if peek s = Token.Dot && (match peek2 s with Token.Upper _ -> true | _ -> false) then begin
+        ignore (advance s);
+        match advance s with Token.Upper c2 -> (Some c, c2) | _ -> assert false
+      end else (None, c)
+    in
+    let ctor_end = (last_loc s).Token.end_offset in
+    let body =
+      if peek s = Token.LParen && (peek_loc s).Token.offset = ctor_end
+      then pconstr_body_ s c
+      else PConstr (c, [])
+    in
+    let inner = match base with Some t -> PQualified (t, body) | None -> body in
+    PLocated (span_to_here s at, PQualified (name, inner))
   | Token.Ident name -> ignore (advance s); PVar name
   | Token.Underscore -> ignore (advance s); Wild
   | Token.Upper name ->
