@@ -50,22 +50,48 @@ For what wand is and why, see the [README](../README.md).
 
 ## Quick start
 
+### Install
+
+On a laptop, one line installs `wand` in `~/.local/bin`, with no sudo. The
+script finds the platform, verifies the checksum and runs the binary once.
+Set `WAND_VERSION` to pin a release, and `WAND_INSTALL_DIR` to choose the
+directory:
+
 ```sh
-wand script.wand        # run a script
+curl -fsSL https://raw.githubusercontent.com/wand-lang/wand/main/install.sh | sh
+```
+
+In GitHub Actions, use [wand-lang/setup-wand](https://github.com/wand-lang/setup-wand):
+
+```yaml
+- uses: wand-lang/setup-wand@v1
+- run: wand ci/deploy.wand
+```
+
+Without curl, take the archive for your platform from the
+[releases page](https://github.com/wand-lang/wand/releases) and unpack it. It
+holds one binary and nothing else. Each release has static Linux builds
+(x86_64, aarch64) and macOS builds (aarch64, x86_64). To build from source,
+read [Building](#building).
+
+### Run
+
+```sh
+wand script.wand             # run a script
 wand --dry-run deploy.wand   # report what it would change, without doing it
 wand --trace deploy.wand     # run it, reporting each effect as it happens
-wand i                  # interactive session
-wand -e "1 + 2"         # evaluate an expression
-wand t script.wand      # typecheck a file without running it
-wand t .                # typecheck every .wand file from here down
-wand d "List.map"       # show doc string
-wand d                  # list the modules in scope
-wand d --index          # every module's members, with signatures
-wand f script.wand      # format a file in place
-wand f .                # format every .wand file from here down
-wand s                  # run every test_*.wand from here down
-wand h                  # help
-wand v                  # print the version
+wand i                       # interactive session
+wand -e "1 + 2"              # evaluate an expression
+wand t script.wand           # typecheck a file without running it
+wand t .                     # typecheck every .wand file from here down
+wand d "List.map"            # show doc string
+wand d                       # list the modules in scope
+wand d --index               # every module's members, with signatures
+wand f script.wand           # format a file in place
+wand f .                     # format every .wand file from here down
+wand s                       # run every test_*.wand from here down
+wand h                       # help
+wand v                       # print the version
 ```
 
 ---
