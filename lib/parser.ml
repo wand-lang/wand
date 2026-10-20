@@ -491,6 +491,38 @@ let peek_named_args s =
     end else false
   end
 
+(* `Fn(name, short, line = 1)`: two or more bare names, then a named field.
+   A construction puns its fields when the first one is named, and a
+   pattern already reads this order. One bare name before a named field is
+   the record update `T(r, b = 3)`, which updates `r`; two or more cannot be
+   an update, so they are puns. The form was a parse error at the `=`,
+   "expected ), got =", which said nothing about why (#194). *)
+let peek_puns_then_named s =
+  let arr = s.tokens in
+  let n = Array.length arr in
+  let i = ref s.pos in
+  let skip () = while !i < n && is_skippable (fst arr.(!i)) do incr i done in
+  skip ();
+  if !i >= n || fst arr.(!i) <> Token.LParen then false
+  else begin
+    incr i;
+    let puns = ref 0 in
+    let rec go () =
+      skip ();
+      if !i >= n then false
+      else match fst arr.(!i) with
+        | Token.Ident _ ->
+          incr i; skip ();
+          if !i < n && fst arr.(!i) = Token.Comma then (incr i; incr puns; go ())
+          else !i < n && fst arr.(!i) = Token.Eq && !puns >= 2
+        | t when is_field_name t ->
+          incr i; skip ();
+          !i < n && fst arr.(!i) = Token.Eq && !puns >= 2
+        | _ -> false
+    in
+    go ()
+  end
+
 (* `T(type, status = s)` -- a keyword standing where a field's short form
    would go. Reading it as a field list is what lets the message name the
    fix, and costs nothing: a keyword alone in brackets is a parse error
@@ -1724,7 +1756,7 @@ and constr_body_ s name =
      All three shapes below need it, and all three want the same `(`, so the
      question is asked once. *)
   let takes_a_bracket = peek s = Token.LParen && not (newline_breaks_expr s) in
-  if takes_a_bracket && (peek_named_args s || peek_keyword_pun s) then begin
+  if takes_a_bracket && (peek_named_args s || peek_keyword_pun s || peek_puns_then_named s) then begin
     ignore (advance s); (* consume LParen *)
     let fields = ref [] in
     if peek s <> Token.RParen then begin

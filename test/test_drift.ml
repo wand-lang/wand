@@ -126,6 +126,20 @@ let test_a_field_read_waits () =
     (shared ^ "let names ms = List.map (fn m -> m.name) ms\nlet a = names [Module(name = \"FS\", size = 1)]\nnames [Info(name = \"x\", group = \"g\")]")
     "expected Module, got Info"
 
+(* ── Two puns before a named field (#194) ──────────────────────────────── *)
+
+(* `Fn(name, short, line = 1)` puns `name` and `short`. One bare name before
+   a named field is the update `T(r, b = 3)`; two or more cannot be. The
+   form was a parse error at the `=`. *)
+let test_puns_before_a_named_field () =
+  let fn_t = "type Fn(name: String, short: String, line: Int)\n" in
+  value "two puns, then a named field"
+    (fn_t ^ "let make name short = Fn(name, short, line = 1)\n(make \"a\" \"b\").short")
+    "b";
+  value "one bare name is still the update"
+    (fn_t ^ "let f r = Fn(r, line = 2)\n(f (Fn(name = \"a\", short = \"b\", line = 1))).line")
+    "2"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -473,6 +487,7 @@ let () =
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
       Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
       Alcotest.test_case "a field read waits (#193)" `Quick test_a_field_read_waits;
+      Alcotest.test_case "puns before a named field (#194)" `Quick test_puns_before_a_named_field;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [

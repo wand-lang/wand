@@ -4013,6 +4013,16 @@ Point(x, y = 9)
 --   updated, not a field. Write 'Point(y = ..., x)' to pun it
 ```
 
+Two or more bare names before a named field cannot be an update, which has
+one record, so they pun:
+
+```ocaml
+type Fn(name : String, short : String, line : Int)
+let name = "read_file"
+let short = "read"
+Fn(name, short, line = 1)   -- Fn(name = "read_file", short = "read", line = 1)
+```
+
 One name alone puns too. `Run(a)` is `Run(a = a)` when `a` is a field of
 `Run`. When `B` has one field and the name is not that field, `B(x)` puts `x`
 in that field. When the record has more fields and the name is none of them,
