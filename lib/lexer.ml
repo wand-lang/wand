@@ -351,10 +351,14 @@ let read_raw_string s =
       let at = { Token.p_line = s.line; p_col = s.col; p_offset = s.pos + s.base } in
       let body =
         read_interp_body s
+          (* Both ways out, and the one that keeps the backtick string
+             first: an interpolation can hold an ordinary string, and that
+             string can escape the percent (#199). *)
           ~unterminated:"unterminated %{...} interpolation in a `...` \
                          string. A `...` string cannot hold a literal %{ \
-                         -- for that text, use an ordinary \"...\" string \
-                         and write \\%{" in
+                         as itself -- write it as %{\"\\%{\"}, an \
+                         interpolation of the ordinary string \"\\%{\", \
+                         or use an ordinary \"...\" string and write \\%{" in
       parts := !parts @ [(lit, body, at)];
       loop ()
     | c -> Buffer.add_char buf c; loop ()

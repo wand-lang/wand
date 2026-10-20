@@ -364,7 +364,12 @@ let test_backtick_literal_percent_brace () =
   (* A `...` string cannot hold a literal %{ -- the error must say where
      to go instead, because generated shell/template text will hit it. *)
   expect_error "literal %{ in backticks" "`literal %{ text`"
-    "use an ordinary \"...\" string and write \\%{"
+    "use an ordinary \"...\" string and write \\%{";
+  (* And the way that keeps the backtick string (#199). *)
+  expect_error "names the interpolation too" "`literal %{ text`"
+    "write it as %{\"\\%{\"}";
+  value "an interpolation of an ordinary string writes %{"
+    "`x %{\"\\%{\"}y}`" "x %{y}"
 
 (* ── Round two: what the cold-model run surfaced ──────────────────────────── *)
 

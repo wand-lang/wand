@@ -413,10 +413,17 @@ let user = "ada"
 `{"name": "%{user}", "role": "admin"}`
 ```
 
-So `%{` is the one sequence a backtick string cannot hold. Write that text
-in an ordinary string and escape the percent: `"\%{literal}"`.
-[Primitives](#primitives) lists the same escape. If a `%{` in a backtick
-string never closes, lexing fails, and the error names this workaround.
+So `%{` is the one sequence a backtick string cannot hold as itself. An
+interpolation can hold an ordinary string, and that string can escape the
+percent, so `%{"\%{"}` writes `%{` and keeps the backtick string:
+
+```ocaml
+`let status = "%{"\%{"}dirty} changed"`   -- let status = "%{dirty} changed"
+```
+
+The other way is an ordinary string, with the percent escaped:
+`"\%{literal}"`. [Primitives](#primitives) lists the same escape. If a `%{`
+in a backtick string never closes, lexing fails, and the error names both.
 Generated shell and template text usually fails this way.
 
 A backtick string is an ordinary `String`. The syntax changes how you write
