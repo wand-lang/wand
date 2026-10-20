@@ -61,9 +61,10 @@ let test_one_name_puns () =
     "type B(n: Int)\nmatch B(n = 4) with\n| B(x) -> x" "4";
   value "one field, another name, in a construction"
     "type B(n: Int)\nlet x = 4\n(B(x)).n" "4";
-  (* A constructor that does not name its fields keeps its payload. *)
-  value "Some" "match Some 3 with\n| Some(x) -> x\n| None -> 0" "3";
-  value "a payload" "type Box = Box String | Empty\nmatch Box \"s\" with\n| Box(s) -> s\n| Empty -> \"\"" "s";
+  (* A constructor that does not name its fields has no field list, so a
+     bracket against its name is refused, with the payload's form (#207). *)
+  expect_error "Some" "match Some 3 with\n| Some(x) -> x\n| None -> 0" "write `Some x`";
+  expect_error "a payload" "type Box = Box String | Empty\nmatch Box \"s\" with\n| Box(s) -> s\n| Empty -> \"\"" "write `Box s`";
   (* A name that is none of the fields of a larger record is an error that
      says so, at the pattern. *)
   expect_error "another name, in a parameter"
@@ -246,8 +247,11 @@ let test_unit_payload () =
   value "a user constructor"
     "type T = U Unit | V\nmatch U () with\n| U () -> 1\n| V -> 2" "1";
   value "nested" "match Some (Ok ()) with\n| Some (Ok ()) -> 1\n| _ -> 2" "1";
-  value "no space" "match Ok () with | Ok() -> 1 | Error _ -> 2" "1";
-  value "a constructor that carries nothing" "type C = Red | Green\nmatch Red with\n| Red() -> 1\n| Green -> 2" "1";
+  (* Against the name, a bracket is a field list, and neither constructor
+     has fields (#207). *)
+  expect_error "no space" "match Ok () with | Ok() -> 1 | Error _ -> 2" "write `Ok ()`";
+  expect_error "a constructor that carries nothing"
+    "type C = Red | Green\nmatch Red with\n| Red() -> 1\n| Green -> 2" "write `Red`";
   (* `Ok ()` covers `Ok _`, so the two arms are the whole of a Result. *)
   value "covers the constructor" "let f r = match r with | Ok () -> 1 | Error _ -> 2\nf (Ok ())" "1";
   expect_error "Error is still needed"

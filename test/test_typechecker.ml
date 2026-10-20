@@ -1152,8 +1152,8 @@ let test_program_level_inference__match_on_constructors () =
   prog_is "payload case" "type Wrap = Wrap Int\nlet unwrap w = match w with\n| Wrap n -> n\nunwrap (Wrap 42)" "Int"
 
 let test_program_level_inference__named_field_typedef () =
-  prog_is "field access" "type Point (x : Int, y : Int)\nlet p = Point (x = 1, y = 2)\np.x" "Int";
-  prog_is "second field" "type Point (x : Int, y : Int)\nlet p = Point (x = 1, y = 2)\np.y" "Int"
+  prog_is "field access" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int";
+  prog_is "second field" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.y" "Int"
 
 let test_program_level_inference__constructor_errors () =
   rejects "unknown ctor" "Bogus";
@@ -1177,7 +1177,7 @@ let test_type_annotation_syntax () =
 let test_constructor_field_grouping () =
   prog_is "single field grouped application" "type Wrap = Wrap (List Int); let w = Wrap [1, 2, 3]; w" "Wrap";
   prog_is "single field grouped tuple" "type Pair = Pair (Int, Int); let p = Pair (1, 2); p" "Pair";
-  prog_is "named field with colon" "type Point (x : Int, y : Int)\nlet p = Point (x = 1, y = 2)\np.x" "Int"
+  prog_is "named field with colon" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int"
 
 
 (* ── Rejections gathered from the wand-level suites ──────────────────────── *)
@@ -1451,8 +1451,8 @@ let test_constructor_and_pattern_errors () =
   rejects "unknown constructor" "Bogus";
   rejects_program "wrong constructor arity" "type Wrap = Wrap Int; Wrap 1 2";
   rejects_program "unknown field in a pattern"
-    "type Point (x : Int, y : Int)\nlet p = Point (x = 1, y = 2)\n\
-     let sum = match p with | Point (x = a, z = b) -> a + b\nsum";
+    "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\n\
+     let sum = match p with | Point(x = a, z = b) -> a + b\nsum";
   rejects_program "and-bound member must be a function"
     "let f n = n\nand g = 5\nf 1";
   rejects_program "annotation contradicts the value" "let x : Bool = 42; x";
@@ -1514,7 +1514,7 @@ let test_did_you_mean_suggestions () =
   in
   suggests "let name = 1; naem" "name";
   suggests "type Color = Red | Green; Gren" "Green";
-  suggests "type Point (x : Int, y : Int)\nlet p = Point (x = 1, y = 2)\np.xy" "x";
+  suggests "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.xy" "x";
   (* Including a mistyped keyword, which fails in the parser rather than
      the checker. *)
   suggests "lte x = 1; x" "let"
@@ -1613,7 +1613,7 @@ let test_applied_types_round_trip () =
    What decides it is whether the value could be another constructor, not
    whether the fields were written by name. Reading a named pattern as
    irrefutable on the strength of its spelling alone let
-   `let area (Circle (radius = r)) = r` over `Circle | Square` claim to be
+   `let area (Circle(radius = r)) = r` over `Circle | Square` claim to be
    total, and reading a positional one as refutable regardless made
    `let unwrap (Wrap n) = n` claim a risk that a single-constructor type
    cannot carry. *)
@@ -1623,7 +1623,7 @@ let test_a_failable_pattern_raises () =
   Alcotest.(check string) "a named pattern over two constructors"
     "Shape -> Int ! {Raise}"
     (type_of "named, several constructors"
-       (shapes ^ "let f (Circle (radius = r)) = r in f"));
+       (shapes ^ "let f (Circle(radius = r)) = r in f"));
   Alcotest.(check string) "a positional one over two constructors"
     "Result 'b 'a -> 'a ! {Raise}"
     (type_of "positional, several constructors" "let f (Ok v) = v in f");
@@ -1632,13 +1632,13 @@ let test_a_failable_pattern_raises () =
     (type_of "positional, one constructor" (one ^ "let f (Wrap n) = n in f"));
   Alcotest.(check string) "a named pattern over one constructor"
     "Boxed -> Int"
-    (type_of "named, one constructor" (one ^ "let f (Boxed (item = i)) = i in f"));
+    (type_of "named, one constructor" (one ^ "let f (Boxed(item = i)) = i in f"));
   (* Whatever the outer constructor, a field pattern that can fail is still
      a way for the binding to fail. *)
   Alcotest.(check string) "a failable pattern inside a named field"
     "Holder -> Int ! {Raise}"
     (type_of "nested" ("type Holder (items : List Int)\n"
-                       ^ "let f (Holder (items = [a])) = a in f"));
+                       ^ "let f (Holder(items = [a])) = a in f"));
   (* A binding is not different from a parameter: both fail where they
      stand. *)
   Alcotest.(check string) "a let binding that can fail"

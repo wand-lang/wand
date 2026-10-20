@@ -1382,6 +1382,13 @@ let source_line file n =
   | None -> None
   | Some src -> List.nth_opt (String.split_on_char '\n' src) (n - 1)
 
+(* The text of `file` between two offsets, as it was lexed. *)
+let source_text file start stop =
+  match Hashtbl.find_opt sources file with
+  | Some src when 0 <= start && start <= stop && stop <= String.length src ->
+    Some (String.sub src start (stop - start))
+  | _ -> None
+
 let tokenize ?(file = "") ?(line = 1) ?(col = 1) ?(base = 0) ?(bare_urls = false) src =
   if line = 1 && col = 1 && base = 0 then Hashtbl.replace sources file src;
   let s = make ~file ~line ~col ~base ~bare_urls src in

@@ -562,7 +562,7 @@ let type = 1
 -- parse error: 'type' is a reserved word; use another name, such as `type_`
 ```
 
-A field name is the exception: `c.type` and `Condition (type = "Ready")`
+A field name is the exception: `c.type` and `Condition(type = "Ready")`
 are allowed (see [A keyword names a field](#a-keyword-names-a-field)).
 
 `result` is not reserved. It is an ordinary name, and only an `ensures`
@@ -3068,7 +3068,7 @@ import Decode
 import JSON
 
 let pod =
-  (Decode.map2 (fn n r -> Pod (name = n, restarts = r))
+  (Decode.map2 (fn n r -> Pod(name = n, restarts = r))
      (Decode.field "name" Decode.string)
      (Decode.field "restarts" Decode.int))
 
@@ -3111,7 +3111,7 @@ Decode.one_of [a, b, ...]      -- the first that works
 
 ```ocaml
 let pod =
-  Decode.succeed (fn n r -> Pod (name = n, restarts = r))
+  Decode.succeed (fn n r -> Pod(name = n, restarts = r))
   |> Decode.and_map (Decode.field "name" Decode.string)
   |> Decode.and_map (Decode.field "restarts" Decode.int)
 ```
@@ -3129,7 +3129,7 @@ let pod =
   (Decode.and_then (fn n ->
      Decode.and_then (fn r ->
        if r < 0 then Decode.fail "restarts cannot be negative"
-       else Decode.succeed (Pod (name = n, restarts = r)))
+       else Decode.succeed (Pod(name = n, restarts = r)))
        (Decode.field "restarts" Decode.int))
      (Decode.field "name" Decode.string))
 ```
@@ -3299,7 +3299,7 @@ there. The type already says this:
 ```ocaml
 type Job (name : String, owner : Option String)
 
-{"name": "build"}                  -- Ok (Job (name = "build", owner = None))
+{"name": "build"}                  -- Ok (Job(name = "build", owner = None))
 {"name": "build", "owner": 3}      -- Error .owner: expected String, got Int
 ```
 
@@ -3969,7 +3969,7 @@ type Point  (x : Int, y : Int)
 type Circle (radius : Int)
 
 let p = Point  (x = 3, y = 4)
-let c = Circle (radius = 5)
+let c = Circle(radius = 5)
 
 p.x        -- 3
 c.radius   -- 5
@@ -3980,10 +3980,10 @@ c.radius   -- 5
 Name each field, in any order. Give every one of them:
 
 ```ocaml
-Point (x = 1, y = 2)
-Point (y = 2, x = 1)    -- same thing
+Point(x = 1, y = 2)
+Point(y = 2, x = 1)    -- same thing
 
-Point (x = 1)
+Point(x = 1)
 -- type error: constructor 'Point' is missing field 'y'
 ```
 
@@ -4029,8 +4029,8 @@ the field.
 
 A default and an `Option` state different things. They compose. `Option` is
 about the value: the value may be nothing. A default is about the writing:
-the field may be left out. So `tag : Option String = Some("none")` is a field
-you can omit. Omitting it gives `Some("none")`, not `None`.
+the field may be left out. So `tag : Option String = Some "none"` is a field
+you can omit. Omitting it gives `Some "none"`, not `None`.
 
 #### Puns
 
@@ -4082,8 +4082,8 @@ let x = 2
 B(x)                    -- B(n = 2)
 ```
 
-`wand f` keeps one name in brackets as it is written: `Run(a)` and
-`Some(x)` stay as they are, and do not become `Run(a = a)` or `Some x`.
+`wand f` keeps one name in brackets as it is written: `Run(a)` stays as it
+is, and does not become `Run(a = a)`.
 
 `wand f` writes a construction's puns all or none: every field puns, or every
 field carries its name. The update above is a spelling that a mixed one can
@@ -4100,13 +4100,13 @@ reads as itself there:
 ```ocaml
 type Condition (type : String, status : String, when : String = "now")
 
-let c = Condition (type = "Ready", status = "True")
+let c = Condition(type = "Ready", status = "True")
 
 c.type                              -- "Ready"
-Condition (c, type = "Available")   -- an update names one too
+Condition(c, type = "Available")   -- an update names one too
 
 match c with
-| Condition (type = k) -> k
+| Condition(type = k) -> k
 ```
 
 This is what lets a type match the document it was written for. `type` is
@@ -4118,7 +4118,7 @@ A pun is the one field position this does not reach, since the bare name
 binds as well as names:
 
 ```ocaml
-Condition (type, status = "True")
+Condition(type, status = "True")
 -- parse error: 'type' is a keyword, so this field cannot take the short
 --   form: write 'type = type_'
 ```
@@ -4129,10 +4129,10 @@ A record with the same values but for the fields you name. Put the record
 first, then what changes:
 
 ```ocaml
-let p = Point (x = 1, y = 2)
+let p = Point(x = 1, y = 2)
 
-Point (p, y = 9)          -- Point (x = 1, y = 9)
-Point (p, x = 8, y = 9)   -- Point (x = 8, y = 9)
+Point(p, y = 9)          -- Point(x = 1, y = 9)
+Point(p, x = 8, y = 9)   -- Point(x = 8, y = 9)
 ```
 
 The type is named, as it is in a construction. A field not named keeps the
@@ -4149,13 +4149,13 @@ it:
 ```ocaml
 let magnitude p =
   match p with
-  | Point (x = a, y = b) -> a * a + b * b
+  | Point(x = a, y = b) -> a * a + b * b
 
 let area c =
-  let Circle (radius = r) = c in
+  let Circle(radius = r) = c in
   r * r
 
-let just_x p = match p with | Point (x = a) -> a
+let just_x p = match p with | Point(x = a) -> a
 ```
 
 A field puns when its name is the name you want for it. A map pattern puns
@@ -4179,21 +4179,36 @@ that field, so `B(x)` binds `x` to the only field of `B`. When the record
 has more fields and the name is none of them, the error names the field that
 is not there.
 
-The same spelling means the tuple on a constructor whose payload is a tuple.
-That reading has not changed:
+#### A bracket against the name is a field list
+
+A bracket written against a constructor's name, with no space, is its field
+list, and only a constructor with named fields has one. A bracket after a
+space is an ordinary argument. So the text alone says what a bracket is:
+
+| Written | Means |
+|---|---|
+| `Pod(name, tries)`, `Pod(name = "a")`, `Stats()` | named fields: `Pod` and `Stats` name theirs |
+| `Wrap 1`, `Wrap (f x)`, `Some x` | the payload of a constructor with positional fields |
+| `Span (a, b)` | one tuple payload, for `type Span = Span (Int, Int)` |
+| `Rect 1 2` | two positional fields, for `type Rect = Rect Int Int` |
+| `Ok ()` | `Ok` given the unit |
+
+Each wrong spelling is an error that says what to write, and `wand t --fix`
+writes it:
 
 ```ocaml
-type Span (Int, Int)
-
-let width s = match s with | Span(a, b) -> b - a
+Wrap(v)                 -- type error: 'Wrap' has no named fields, so a bracket
+                        --   against its name is not a field list: write `Wrap v`
+Span(a, b)              -- ... write `Span (a, b)`
+Rect(1, 2)              -- ... write `Rect 1 2`
+Ok()                    -- ... write `Ok ()`
+Red()                   -- type error: 'Red' takes no arguments ...: write `Red`
+Pod (name = "a")        -- parse error: a field list goes against the
+                        --   constructor's name, with no space: write `Pod(`
 ```
 
-A construction reads its bare names the same way. The declaration decides
-which of the two readings a pattern has. The spelling does not decide it, so
-the space in `Pod (name, restarts)` decides nothing.
-
-A single name is a payload under either reading. `Wrap(v)` binds what `Wrap`
-holds. A declaration has nothing to settle there.
+The same holds in a pattern, a construction and an update. The value
+printer still shows a value as `Rect(1, 2)`; that is output, not source.
 
 #### Named fields in a type with several constructors
 
@@ -4211,13 +4226,13 @@ type.
 ```ocaml
 type Sized = Small (x : Int, u : Int) | Large (x : Int, w : Int)
 
-(Large (x = 7, w = 9)).x     -- 7, every constructor has x
+(Large(x = 7, w = 9)).x     -- 7, every constructor has x
 ```
 
 ```ocaml
 type Mixed = Counted (x : Int) | Named (y : String)
 
-let v = Named (y = "hi")
+let v = Named(y = "hi")
 v.x
 -- type error: field 'x' is not on every constructor of 'Mixed': Named does
 --   not have it, so which constructor a value holds decides whether 'x' is
@@ -4227,7 +4242,7 @@ v.x
 Match on the constructor to read a field only some of them have.
 
 A pattern that names one constructor of several can fail. A binding that
-uses one says so. Over `Circle | Square`, `let area (Circle (radius = r)) = r`
+uses one says so. Over `Circle | Square`, `let area (Circle(radius = r)) = r`
 has the type `Shape -> Int ! {Raise}`, and the name wants a `!`. What decides
 this is whether the value could be another constructor. Whether the fields
 have names does not matter. A type with one constructor has nothing to
@@ -7763,7 +7778,7 @@ domain readers and the error that names the field.
 type Opts (port : Port, timeout : Duration, config : Path)
 
 Args.parse Opts.decoder (Proc.args ())
--- Ok (Opts (port = :8080, timeout = 30s, config = ./app.toml))
+-- Ok (Opts(port = :8080, timeout = 30s, config = ./app.toml))
 -- Error .port: expected Port, got "http"
 ```
 

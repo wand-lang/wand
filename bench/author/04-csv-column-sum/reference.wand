@@ -33,7 +33,7 @@ let sum text column = (
       String.split "," header |> List.indexed |> List.find (fn (_, name) -> name == column);
     match found with
     | None -> fail 2 "no column: %{column}"
-    | Some(index, _) -> (
+    | Some (index, _) -> (
       let total =
         List.fold_left
           (fn acc row -> Result.and_then

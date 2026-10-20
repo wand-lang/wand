@@ -764,9 +764,9 @@ import IO
 import Path
 let () = with FS.lock (Path.of_string "%s") as taken ->
   match taken with
-  | Ok(_) -> IO.println "took it"
-  | Error(FS.Held) -> IO.println "held"
-  | Error(FS.Denied(why)) -> IO.println "denied: %%{why}"|} lock)
+  | Ok _ -> IO.println "took it"
+  | Error FS.Held -> IO.println "held"
+  | Error (FS.Denied why) -> IO.println "denied: %%{why}"|} lock)
 
 (* A holder that takes the lock, says so, and holds it for `hold` -- long
    enough to be killed, or short enough for a waiter to outlast. *)
@@ -895,9 +895,9 @@ import IO
 import Path
 let () = with FS.lock_wait 20s (Path.of_string "%s") as taken ->
   match taken with
-  | Ok(_) -> IO.println "waited and got it"
-  | Error(FS.Held) -> IO.println "gave up"
-  | Error(FS.Denied(why)) -> IO.println "denied: %%{why}"|} lock)
+  | Ok _ -> IO.println "waited and got it"
+  | Error FS.Held -> IO.println "gave up"
+  | Error (FS.Denied why) -> IO.println "denied: %%{why}"|} lock)
     in
     let pid = spawn h in
     Fun.protect
@@ -926,8 +926,8 @@ import IO
 import Path
 let () = with FS.lock_wait 30s (Path.of_string "%s") as taken ->
   match taken with
-  | Ok(_) -> IO.println "took it"
-  | Error(_) -> IO.println "held"|} lock
+  | Ok _ -> IO.println "took it"
+  | Error _ -> IO.println "held"|} lock
     in
     let pid = spawn h in
     Fun.protect
@@ -961,8 +961,8 @@ import IO
 import Path
 let () = with FS.lock (Path.of_string "%s") as taken ->
   match taken with
-  | Ok(_) -> IO.println "took it"
-  | Error(_) -> IO.println "not taken"|} lock)
+  | Ok _ -> IO.println "took it"
+  | Error _ -> IO.println "not taken"|} lock)
     in
     if not (contains out "took it") then
       Alcotest.failf "a rehearsal did not take the lock:\n%s" out;

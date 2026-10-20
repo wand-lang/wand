@@ -19,7 +19,7 @@ let request line = (
     |> Option.and_then (fn m -> Map.get name m)
     |> Option.and_then (fn j -> Result.to_option (read j));
   match (get "endpoint" JSON.get_string, get "ms" JSON.get_int) with
-  | (Some endpoint, Some ms) if ms >= 0 -> Some(endpoint, ms)
+  | (Some endpoint, Some ms) if ms >= 0 -> Some (endpoint, ms)
   | _ -> None
 )
 

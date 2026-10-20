@@ -26,7 +26,7 @@ let sized paths =
   paths
   |> List.filter_map (fn p ->
     match FS.size p with
-    | Ok size -> Some(p, size)
+    | Ok size -> Some (p, size)
     | Error _ -> None)
 
 let over limit dir =

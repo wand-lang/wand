@@ -84,11 +84,11 @@ let _object_of_spec spec args =
     else (Map.set k (JSON.of_string v) fields, repeats)
   in let go acc positional args =
     match args with
-    | [] -> Ok(acc, positional)
+    | [] -> Ok (acc, positional)
     -- `--` ends the flags. What follows is positional whatever it looks
     -- like, which is the only way to pass an argument that begins with two
     -- dashes.
-    | ["--" :: rest] -> Ok(acc, List.concat positional rest)
+    | ["--" :: rest] -> Ok (acc, List.concat positional rest)
     | [arg :: rest] if !(_flag? arg) -> go acc (List.concat positional [arg]) rest
     -- Only flags get past the guard above, so `=` here means `--key=value`.
     | [arg :: rest] if _inline? arg -> (

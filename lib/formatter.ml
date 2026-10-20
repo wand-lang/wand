@@ -99,22 +99,6 @@ let comments_between lo hi =
 
 let loc_of = function Located (l, _) -> Some l | _ -> None
 
-(* Whether the constructor `name` and the empty brackets after it had space
-   between them: `Ok ()` rather than `Ok()`. A pattern's span runs to the
-   `)`; a construction's runs to the `(`, so a bracket wrapped across lines
-   does not count as a space. *)
-let unit_spaced ?(to_close = true) (l : Token.loc) name =
-  l.Token.end_offset - l.Token.offset
-  > String.length name + (if to_close then 2 else 1)
-
-(* The constructor of an `Ok ()` written with its space, under any
-   `Located` wrappers (#116). *)
-let rec spaced_unit = function
-  | Located (l, ConstrBare (name, [])) when unit_spaced ~to_close:false l name ->
-    Some name
-  | Located (_, e) -> spaced_unit e
-  | _ -> None
-
 (* Run `f` against a different column budget and put the old one back. Only
    the tests narrow it: formatting the corpus at a margin nothing fits under
    is how the "emitted source that will not parse" bugs are found, and every
@@ -418,7 +402,7 @@ let rec emit_pat (p : pat) : string = match p with
      names its fields, and a tuple payload where it does not. Both are
      printed alike, so the space cannot look like the thing that decides. *)
   | PConstr (c, [PTuple (_ :: _ :: _ as ps)]) ->
-    c ^ "(" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
+    c ^ " (" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
   | PConstr (c, ps) -> c ^ " " ^ String.concat " " (List.map emit_pat_atom ps)
   | PConstrNamed (c, kvs) ->
     (* Punned whenever the field already names its variable, the same rule a
@@ -440,9 +424,6 @@ let rec emit_pat (p : pat) : string = match p with
     c ^ "(" ^ String.concat ", " entries ^ ")"
   | PConstrBare (c, ids) -> c ^ "(" ^ String.concat ", " ids ^ ")"
   | PQualified (m, p) -> m ^ "." ^ emit_pat p
-  (* `Ok ()` and `Ok()` read alike; the span says which was written, so
-     the one written is the one given back (#116). *)
-  | PLocated (l, PConstrBare (c, [])) when unit_spaced l c -> c ^ " ()"
   | PLocated (_, p) | PCtor (_, p, _) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
@@ -928,15 +909,6 @@ let bracket = Doc.bracket
 (* Which atoms take a following bracket as their own. `constr_body_` reads
    one straight after a constructor name, qualified or not, and nothing else
    on an application spine does it. *)
-(* Whether a payload is what the parser reads as a list of punned names
-   when it stands in a constructor's bracket: one identifier, or a tuple of
-   them. *)
-let bare_names e =
-  let name e = match strip_located e with Var _ -> true | _ -> false in
-  match strip_located e with
-  | Tuple es -> List.for_all name es
-  | e -> name e
-
 let rec absorbs_a_bracket e =
   match strip_located e with
   | Constr _ -> true
@@ -980,10 +952,9 @@ let bracket_holds_all s =
            else (match tl with [] | [(Token.EOF, _)] -> true | _ -> false)
          | _ -> go depth tl)
     in
-    (* `()` is the empty field list rather than unit in brackets, so the
-       brackets have to hold something. *)
+    (* `()` after a space is the unit, as `(())` is (#207). *)
     (match rest with
-     | (Token.RParen, _) :: _ -> false
+     | (Token.RParen, _) :: _ -> true
      | _ -> go 0 rest)
   | _ -> false
 
@@ -1146,11 +1117,7 @@ let rec emit_expr ?col ?(stmt = false) indent e =
   match Layouts.find_opt layouts key with
   | Some text -> text
   | None ->
-    let text =
-      match spaced_unit e with
-      | Some name -> Doc.text (name ^ " ()")
-      | None -> emit_expr_inner ?col ~stmt indent (strip_located e)
-    in
+    let text = emit_expr_inner ?col ~stmt indent (strip_located e) in
     Layouts.replace layouts key text;
     text
 
@@ -1250,11 +1217,6 @@ and dangles e =
   | _ -> false
 
 and emit_atom ?(followed = false) indent e =
-  match spaced_unit e with
-  (* `Ok ()` written with its space is two words, so it takes brackets
-     where an atom goes (#116). *)
-  | Some name -> Doc.text ("(" ^ name ^ " ())")
-  | None ->
   let e' = strip_located e in
   let s = emit_expr_inner indent e' in
   (* A chain of bindings brings its own brackets here -- this is not a
@@ -1319,18 +1281,6 @@ and guard_constructors args rendered following =
    `l.A (S) (B m)`, which reads `S` as the payload of `l.A`. *)
 and guard_spine head head_s args rendered following =
   let guarded = guard_constructors args rendered following in
-  (* A tuple of bare names in the bracket a constructor takes reads back as
-     the names a construction puns: `T (a, b)` is `T(a = a, b = b)` where
-     `T` has fields. A second bracket keeps it the one tuple it was,
-     `T ((a, b))`. Found by test/fuzz. *)
-  let guarded =
-    match args, guarded with
-    | a :: _, g :: rest
-      when absorbs_a_bracket head
-           && (match strip_located a with Tuple _ -> bare_names a | _ -> false) ->
-      bracket g :: rest
-    | _ -> guarded
-  in
   let next = match guarded with x :: _ -> x | [] -> following in
   let head_s =
     (* A qualified head needs its brackets whatever follows. A bare one needs
@@ -1359,14 +1309,11 @@ and emit_arg ?(followed = false) indent e =
      are never added here; see `Ast.is_constr_payload`. The payload keeps
      its own, which are what make it the constructor's.
 
-     Not when the payload is bare names. `T (m)` and `T (a, b)` read back as
-     the names a construction puns, which a record's constructor takes as
-     its fields -- `f T(m;)` applies `T` to `m`, and its rendering `f T (m)`
-     builds `T(m = m)`. Those take the whole bracket, `f (T m)`. Found by
-     test/fuzz. *)
-  | App (f, arg) when Ast.is_constr_payload e && not (bare_names arg) ->
+     Bare names after a space are a payload too: only a bracket against
+     the name is a field list (#207). *)
+  | App (f, arg) when Ast.is_constr_payload e ->
     let payload = match strip_located arg with
-      | Tuple _ -> emit_expr indent arg
+      | Tuple _ | Unit -> emit_expr indent arg
       | _ -> Doc.text "(" ^^ emit_expr indent arg ^^ Doc.text ")"
     in
     emit_expr indent f ^^ Doc.text " " ^^ payload
@@ -1474,30 +1421,26 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
       ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
   | Qualified (m, e) ->
     (* A constructor reached through its module takes the bracket written
-       after it. That bracket puts the payload inside the module. `d.M(N)`
+       after it. That bracket puts the payload inside the module. `d.M (N)`
        reads `N` in `d`. `d.M N` applies `d.M` to an `N` read outside `d`.
        The payload's scope is the difference.
 
        The bracket was dropped, so each form was written as the other.
-       `n d.M(N) (s [])` became `n d.M N (s [])`. The loose `N` then took
+       `n d.M (N) (s [])` became `n d.M N (s [])`. The loose `N` then took
        the bracket after it, and the formatter did not settle. Found by
        test/fuzz. *)
     (match strip_located e with
      | App (f, arg) when (match strip_located f with Constr _ -> true | _ -> false) ->
+       (* After a space: a bracket against the name is a field list, and
+          this constructor's payload is not one (#207). *)
        let payload = match strip_located arg with
-         (* Bare names in the bracket read back as the names a
-            construction puns, so they take a bracket of their own:
-            `d.M((a, b))` and `d.M((n))`, not `d.M(a, b)` and `d.M(n)`.
-            Found by test/fuzz. *)
-         | Tuple _ when bare_names arg -> emit_expr indent arg
-         | _ when bare_names arg -> Doc.text "(" ^^ emit_expr indent arg ^^ Doc.text ")"
          (* The tuple's own brackets serve as the constructor's, as in
-            `M(a, b)`. *)
+            `M (a, b)`. *)
          | Tuple es -> Doc.concat (Doc.text ", ") (List.map (emit_expr indent) es)
          | _ -> emit_expr indent arg
        in
        Doc.text (m ^ ".") ^^ emit_expr indent f
-       ^^ Doc.text "(" ^^ payload ^^ Doc.text ")"
+       ^^ Doc.text " (" ^^ payload ^^ Doc.text ")"
      (* What follows the module starts after its name and the dot, and it
         is measured from there. Measured from the indent, a construction
         `core.Pod(...)` after `template = ` took a line of its own width
@@ -1565,8 +1508,6 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
       ^^ Doc.text "\n" ^^ ind ^^ Doc.text ")"
   | Field (e, l) -> emit_field indent e l
   | Seq _ as e -> emit_block ~col indent e
-  | Located (_, _) when spaced_unit e <> None ->
-    Doc.text (Option.get (spaced_unit e) ^ " ()")
   | Located (_, e) -> emit_expr_inner indent e
   | Contract (reqs, ens, body) ->
     (* Each clause sits on its own line at the body's indent; the first is

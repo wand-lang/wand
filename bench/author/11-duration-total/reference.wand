@@ -40,7 +40,7 @@ let entry (n, line) =
   | [] -> Ok None
   | [name, d] -> (
     match seconds d with
-    | Some s -> Ok Some(name, s)
+    | Some s -> Ok Some (name, s)
     | None -> Error "line %{n}: expected NAME DURATION, got %{line}"
   )
   | _ -> Error "line %{n}: expected NAME DURATION, got %{line}"

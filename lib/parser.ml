@@ -27,6 +27,21 @@ let take_fix loc msg =
   | Some (l, m, fix), Some l' when l = l' && m = msg -> Some fix
   | _ -> None
 
+(* A field list after a space: `Pod (name = "a")`. A bracket against a
+   constructor's name is its field list, and one after a space is an
+   ordinary argument (#207), so the space is the one thing wrong, and the
+   fix takes it out. *)
+let refuse_spaced_fields (ctor : Token.loc) (paren : Token.loc) name =
+  let at = { ctor with Token.end_line = paren.Token.end_line;
+                       end_col = paren.Token.end_col;
+                       end_offset = paren.Token.end_offset } in
+  let msg = Printf.sprintf
+    "a field list goes against the constructor's name, with no space: \
+     write `%s(`. A bracket after a space is an argument" name in
+  match Lexer.source_text ctor.Token.file at.Token.offset at.Token.end_offset with
+  | Some from_ -> fail_with_fix at msg (Diag.ReplaceAt { at; from_; to_ = name ^ "(" })
+  | None -> fail_at at msg
+
 (* The name a bare import binds: a standard library module's own, or the
    last segment of a path or URL, without `.wand` and with each `-` made a
    `_`. None when that is still not a name. *)
@@ -1239,7 +1254,14 @@ and type_qualified_pat_ s base =
   end else pconstr_body_ s base
 
 and pconstr_body_ s name =
-  if peek_named_pat_args s || peek_keyword_pun s then begin
+  (* A bracket against the name is a field list; one after a space is an
+     ordinary argument (#207). *)
+  let ctor_loc = last_loc s in
+  let touching =
+    peek s = Token.LParen && (peek_loc s).Token.offset = ctor_loc.Token.end_offset in
+  let fields_ahead = peek_named_pat_args s || peek_keyword_pun s in
+  if fields_ahead && not touching then refuse_spaced_fields ctor_loc (peek_loc s) name
+  else if fields_ahead then begin
     ignore (advance s); (* consume LParen *)
     let fields = ref [] in
     if peek s <> Token.RParen then begin
@@ -1257,28 +1279,16 @@ and pconstr_body_ s name =
     end;
     expect s Token.RParen;
     PConstrNamed (name, !fields)
-  end else if peek_bare_args s then begin
-    let spaced = (peek_loc s).Token.offset > (last_loc s).Token.end_offset in
+  end else if touching && peek_bare_args s then begin
     ignore (advance s); (* consume LParen *)
     let ids = ref [expect_ident s] in
     while peek s = Token.Comma do
       ignore (advance s); ids := !ids @ [expect_ident s]
     done;
     expect s Token.RParen;
-    (* `E (x, y) b`: a tuple, then more arguments, as below (#204). *)
-    if spaced && is_pat_atom_start (peek s) then begin
-      let first = match !ids with
-        | [i] -> (PVar i : pat)
-        | is -> PTuple (List.map (fun i -> (PVar i : pat)) is)
-      in
-      let args = ref [first] in
-      while is_pat_atom_start (peek s) do
-        args := !args @ [pat_atom_ s]
-      done;
-      PConstr (name, !args)
-    end else PConstrBare (name, !ids)
+    PConstrBare (name, !ids)
   end else if peek s = Token.LParen then begin
-    let spaced = (peek_loc s).Token.offset > (last_loc s).Token.end_offset in
+    let spaced = not touching in
     ignore (advance s); (* consume LParen *)
     (* A bracket with a space before it and more arguments after it is the
        first of several: `Rect (Circle r) h`. Read as the whole payload, it
@@ -1300,8 +1310,7 @@ and pconstr_body_ s name =
        that carries nothing where it does not. *)
     if peek s = Token.RParen then begin
       ignore (advance s);
-      if spaced && is_pat_atom_start (peek s) then more_args Unit
-      else PConstrBare (name, [])
+      if spaced then more_args Unit else PConstrBare (name, [])
     end else begin
       (* A payload carries a type the same way anything else does:
          `Ok (v: Pod)`. This branch used to read `(` as the start of an
@@ -1813,7 +1822,15 @@ and constr_body_ s name =
      All three shapes below need it, and all three want the same `(`, so the
      question is asked once. *)
   let takes_a_bracket = peek s = Token.LParen && not (newline_breaks_expr s) in
-  if takes_a_bracket && (peek_named_args s || peek_keyword_pun s || peek_puns_then_named s) then begin
+  (* A bracket against the name is a field list; one after a space is an
+     ordinary argument (#207). *)
+  let touching =
+    takes_a_bracket && (peek_loc s).Token.offset = ctor_loc.Token.end_offset in
+  let fields_ahead =
+    takes_a_bracket
+    && (peek_named_args s || peek_keyword_pun s || peek_puns_then_named s) in
+  if fields_ahead && not touching then refuse_spaced_fields ctor_loc (peek_loc s) name
+  else if fields_ahead then begin
     ignore (advance s); (* consume LParen *)
     let fields = ref [] in
     if peek s <> Token.RParen then begin
@@ -1832,26 +1849,25 @@ and constr_body_ s name =
     end;
     expect s Token.RParen;
     ConstrApp (name, !fields, s.net_allow)
-  end else if takes_a_bracket && peek_bare_args s then begin
+  end else if touching && peek_bare_args s then begin
     ignore (advance s); (* consume LParen *)
     let ids = ref [expect_ident s] in
     while peek s = Token.Comma do
       ignore (advance s); ids := !ids @ [expect_ident s]
     done;
     expect s Token.RParen;
-    ConstrBare (name, !ids)
+    (* Placed from the name to the bracket, which is the extent a
+       correction replaces (#207). *)
+    Located (span_to_here s ctor_loc, ConstrBare (name, !ids))
   end else if takes_a_bracket then begin
     let bracket_loc = peek_loc s in
     ignore (advance s); (* consume LParen *)
-    (* `M()` is a construction naming no fields where `M` has fields, all of
-       which must then have defaults, and a constructor applied to unit
-       where it does not. The declaration decides, as it does for a list of
-       bare names. *)
-    (* Placed, so that `wand f` can tell `Ok ()` from `Stats()` and give
-       back the one that was written: both read the same. *)
+    (* `Ok ()` after a space is `Ok` given the unit; `Stats()` against the
+       name is a field list naming no fields (#207). *)
     if peek s = Token.RParen then begin
       ignore (advance s);
-      Located (Token.span_to ctor_loc bracket_loc, ConstrBare (name, []))
+      if touching then Located (span_to_here s ctor_loc, ConstrBare (name, []))
+      else App (constr, Unit)
     end
     else if peek s = Token.Let then begin
       (* `Ctor (let x = 1; f x)` -- a block, as it is after any other `(`.
@@ -1878,6 +1894,8 @@ and constr_body_ s name =
         expect s Token.RParen;
         App (constr, e)
       end
+      else if peek_field_after_comma s && not touching then
+        refuse_spaced_fields ctor_loc bracket_loc name
       else if peek_field_after_comma s then begin
         (* `T(r, b = 3)`: everything not named comes from `r`. *)
         let fields = ref [] in

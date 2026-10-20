@@ -28,11 +28,11 @@ let first_some xs =
 
 let nested p =
   match p with
-  | (a, Some(b, Ok c)) -> a + b + c
-  | (a, Some(b, Error _)) -> a + b
+  | (a, Some (b, Ok c)) -> a + b + c
+  | (a, Some (b, Error _)) -> a + b
   | (a, None) -> a
 
-let sum_pair (Pair(a, b)) = a - b
+let sum_pair (Pair (a, b)) = a - b
 
 let net (Sale(amount, id)) = amount - id
 

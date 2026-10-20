@@ -300,7 +300,7 @@ test "read, filter and write is two calls" (fn t ->
 
 test "the sink gives back a Result" (fn t ->
   with FS.temp_dir "st_" as d ->
-  t.eq ((Ok) ()) (FS.write_lines (Path.join d ./out) (Stream.of_list ["a"])))
+  t.eq (Ok ()) (FS.write_lines (Path.join d ./out) (Stream.of_list ["a"])))
 
 -- `tally` is the whole counting loop, so it must answer exactly what the
 -- fold it replaces answers -- including the order, which is first-seen and

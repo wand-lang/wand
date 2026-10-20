@@ -26,7 +26,7 @@ import Result
 let column name header =
   match List.find (fn (_, label) -> label == name) (List.indexed header) with
   | None -> Error "no column called %{name}"
-  | Some(i, _) -> Ok i
+  | Some (i, _) -> Ok i
 
 let values i rows = List.filter_map (fn row -> List.get i row) rows
 

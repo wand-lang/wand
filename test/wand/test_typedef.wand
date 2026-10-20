@@ -157,7 +157,7 @@ test "a payload carries its type" (fn t ->
 test "and so does one inside a tuple payload" (fn t ->
   let read =
     fn r -> match r with
-      | Ok((b: Boxed), extra) -> b.n + extra
+      | Ok ((b: Boxed), extra) -> b.n + extra
       | Error _ -> 0
   in
   t.eq 9 (read (Ok (Boxed(n = 7), 2))))
@@ -218,15 +218,15 @@ test "a pun nests under another constructor" (fn t ->
     | Error _ -> ""
     ))
 
--- The same spelling on a constructor that does not name its fields is the
--- tuple payload it has always been.
+-- A constructor that does not name its fields takes its tuple payload after
+-- a space: a bracket against the name is a field list (#207).
 type Span = Span (Int, Int)
 
-test "bare names still read a tuple payload" (fn t ->
+test "bare names after a space read a tuple payload" (fn t ->
   t.eq
     3
     (match Span (1, 2) with
-    | Span(a, b) -> a + b
+    | Span (a, b) -> a + b
     ))
 
 -- One name alone puns too (#115): `Pod(name)` is the field `name`, in a
@@ -262,16 +262,17 @@ type Box = Box String | Empty
 
 let open_box b =
   match b with
-  | Box(s) -> s
+  | Box s -> s
   | Empty -> ""
 
-test "one name on a payload is the payload" (fn t -> t.eq "hi" (open_box (Box "hi")))
+test "one name after a payload's constructor is the payload" (fn t ->
+  t.eq "hi" (open_box (Box "hi")))
 
 test "one name on Some is the value" (fn t ->
   t.eq
     4
     (match Some 4 with
-    | Some(x) -> x
+    | Some x -> x
     | None -> 0
     ))
 
@@ -311,12 +312,12 @@ let one = 1
 
 let two = 2
 
-test "a construction of a tuple payload is unchanged" (fn t ->
-  let s = Span(one, two);
+test "a construction of a tuple payload takes it after a space" (fn t ->
+  let s = Span (one, two);
   t.eq
     3
     (match s with
-    | Span(a, b) -> a + b
+    | Span (a, b) -> a + b
     ))
 
 -- ── Field defaults ─────────────────────────────────────────────────────

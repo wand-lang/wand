@@ -30,7 +30,7 @@ let served! scripts =
     )
     | Net!write (conn, text) k -> (
       Shared.update out (Map.update "%{conn}" [] (fn o -> List.concat o [text]));
-      k Ok()
+      k Ok ()
     );
     Shared.get out
   )

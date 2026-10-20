@@ -153,7 +153,7 @@ let stale_rows! () =
     String.starts_with? "| `" l && List.contains? (index_module l) modules)
   |> List.filter_map (fn row ->
     let want = index_row! (index_module row);
-    if row == want then None else Some(row, want))
+    if row == want then None else Some (row, want))
 
 let report_stale rows = (
   IO.println_err "these rows of the index in CLAUDE.md disagree with wand d:";

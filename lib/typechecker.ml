@@ -4145,6 +4145,226 @@ let check_alternatives (alts : (string * Token.loc option * env) list) =
               n (string_of_typ t0) first_text (string_of_typ t) text))
         | _ -> ()) (names bs)) rest
 
+(* ── A bracket against a constructor (#207) ─────────────────────────────
+
+   A bracket against a constructor's name is its field list, and only a
+   constructor with named fields has one. A bracket after a space is an
+   ordinary argument. The parser reads the space; the declaration, which is
+   here, says which kind of constructor it is. *)
+
+type ctor_shape = Named | Positional of int | Unknown_shape
+
+let ctor_shape tenv name =
+  let name = ctor_name_for tenv name in
+  match find_ctor_in_tenv tenv name with
+  | Some (_, ctor) when List.exists (fun (f, _) -> f <> None) ctor.fields -> Named
+  | _ ->
+    (match (match builtin_result_scheme name with
+            | Some _ as s -> s
+            | None -> List.assoc_opt name (tenv_to_ctor_env tenv)) with
+     | Some sc -> Positional (List.length (fst (unwrap_ctor_type (instantiate sc))))
+     | None -> Unknown_shape)
+
+(* The text of the main file at `l`, when that is the file the fix can be
+   applied to. *)
+let main_text (l : Token.loc) =
+  if l.Token.file <> "" then None
+  else Lexer.source_text "" l.Token.offset l.Token.end_offset
+
+(* `Wrap(v)`, `Pair(a, b)`, `Ok()`, `None()`: bare names against a
+   constructor with no named fields. `l` is the extent from the name to the
+   closing bracket. *)
+let refuse_bare_bracket tenv (l : Token.loc option) written ids =
+  match ctor_shape tenv written with
+  | Named | Unknown_shape -> ()
+  | Positional arity ->
+    let want =
+      match arity, ids with
+      | 0, [] -> Some written
+      | 1, [] -> Some (written ^ " ()")
+      | 1, [i] -> Some (written ^ " " ^ i)
+      | 1, is -> Some (written ^ " (" ^ String.concat ", " is ^ ")")
+      | n, is when List.length is = n -> Some (written ^ " " ^ String.concat " " is)
+      | _ -> None
+    in
+    (* Only where the extent is the constructor and its bracket: a
+       qualified one is placed from its module's name. *)
+    (match l, want with
+     | Some l, Some w ->
+       (match main_text l with
+        | Some from_ when String.starts_with ~prefix:(written ^ "(") from_ ->
+          replace_fix l from_ w
+        | _ -> ())
+     | _ -> ());
+    let what =
+      if arity = 0 then Printf.sprintf "'%s' takes no arguments" written
+      else Printf.sprintf "'%s' has no named fields" written
+    in
+    raise (TypeError (match want with
+      | Some w ->
+        Printf.sprintf
+          "%s, so a bracket against its name is not a field list: write `%s`"
+          what w
+      | None ->
+        Printf.sprintf
+          "%s, so a bracket against its name is not a field list: give its \
+           %d argument%s after a space"
+          what arity (if arity = 1 then "" else "s")))
+
+(* The bracket that starts right at `stop`, the end of a constructor's name,
+   as an extent one character wide. *)
+let bracket_against (stop : Token.loc) =
+  match Lexer.source_text stop.Token.file stop.Token.end_offset (stop.Token.end_offset + 1) with
+  | Some "(" ->
+    Some { stop with Token.line = stop.Token.end_line; col = stop.Token.end_col;
+                     offset = stop.Token.end_offset;
+                     end_col = stop.Token.end_col + 1;
+                     end_offset = stop.Token.end_offset + 1 }
+  | _ -> None
+
+(* `Wrap(1)`, `Some(x)`: a payload against a positional constructor. The
+   fix puts the space in. *)
+let refuse_payload_against tenv (ctor : Token.loc) written =
+  match ctor_shape tenv written with
+  | Positional n when n >= 1 ->
+    (match bracket_against ctor with
+     | Some paren ->
+       let at = { ctor with Token.end_line = paren.Token.end_line;
+                            end_col = paren.Token.end_col;
+                            end_offset = paren.Token.end_offset } in
+       (match main_text at with
+        | Some from_ -> replace_fix at from_ (written ^ " (")
+        | None -> ());
+       raise (TypeErrorAt (ctor, Printf.sprintf
+         "'%s' has no named fields, so a bracket against its name is not a \
+          field list: put a space before the bracket, `%s (`"
+         written written))
+     | None -> ())
+  | _ -> ()
+
+(* Whether a bracket follows the constructor at `ctor` after a space. *)
+let spaced_bracket_after (ctor : Token.loc) =
+  match Hashtbl.find_opt Lexer.sources ctor.Token.file with
+  | None -> false
+  | Some src ->
+    let n = String.length src in
+    let i = ref ctor.Token.end_offset in
+    while !i < n && (src.[!i] = ' ' || src.[!i] = '\t') do incr i done;
+    !i > ctor.Token.end_offset && !i < n && src.[!i] = '('
+
+(* `Pod (name)`: a bracket after a space, given to a constructor with named
+   fields. Where the bracket holds only names, they are the fields' puns,
+   and the fix takes the space out. *)
+let spaced_fields_fix (ctor : Token.loc) =
+  if ctor.Token.file <> "" then ()
+  else
+    match Hashtbl.find_opt Lexer.sources "" with
+    | None -> ()
+    | Some src ->
+      let n = String.length src in
+      let i = ref ctor.Token.end_offset in
+      while !i < n && (src.[!i] = ' ' || src.[!i] = '\t') do incr i done;
+      if !i > ctor.Token.end_offset && !i < n && src.[!i] = '(' then begin
+        let close = try Some (String.index_from src !i ')') with Not_found -> None in
+        let names_only =
+          match close with
+          | Some c ->
+            let inner = String.sub src (!i + 1) (c - !i - 1) in
+            inner <> ""
+            && String.for_all (fun ch ->
+                 ch = ',' || ch = ' ' || ch = '_' || ch = '\''
+                 || (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+                 || (ch >= '0' && ch <= '9')) inner
+          | None -> false
+        in
+        if names_only then begin
+          let line_of off =
+            let l = ref ctor.Token.end_line and c = ref ctor.Token.end_col in
+            for k = ctor.Token.end_offset to off - 1 do
+              if src.[k] = '\n' then (incr l; c := 1) else incr c
+            done;
+            (!l, !c)
+          in
+          let (el, ec) = line_of (!i + 1) in
+          let at = { ctor with Token.end_line = el; end_col = ec;
+                               end_offset = !i + 1 } in
+          let from_ = String.sub src ctor.Token.offset (!i + 1 - ctor.Token.offset) in
+          let name = String.sub src ctor.Token.offset
+              (ctor.Token.end_offset - ctor.Token.offset) in
+          replace_fix at from_ (name ^ "(")
+        end
+      end
+
+(* `Rect (1, 2)` and `Rect(1, 2)` for a constructor of two fields: the fix
+   writes the elements one after the other, `Rect 1 2`, each in brackets
+   unless it is one token or bracketed already. *)
+let tuple_args_fix (ctor : Token.loc) =
+  if ctor.Token.file <> "" then ()
+  else
+    let toks = tokens_of_file "" in
+    let n = Array.length toks in
+    let i = ref 0 in
+    while !i < n && (snd toks.(!i)).Token.offset < ctor.Token.end_offset do incr i done;
+    if !i < n && fst toks.(!i) = Token.LParen then begin
+      let open_i = !i in
+      let depth = ref 0 and close_i = ref (-1) and commas = ref [] in
+      let k = ref open_i in
+      while !close_i < 0 && !k < n do
+        (match fst toks.(!k) with
+         | Token.LParen | Token.LBracket | Token.LBrace -> incr depth
+         | Token.RParen | Token.RBracket | Token.RBrace ->
+           decr depth; if !depth = 0 then close_i := !k
+         | Token.Comma when !depth = 1 -> commas := !k :: !commas
+         | _ -> ());
+        incr k
+      done;
+      if !close_i > open_i then begin
+        let bounds = (open_i :: List.rev !commas) @ [!close_i] in
+        let rec pieces = function
+          | a :: (b :: _ as rest) -> (a + 1, b - 1) :: pieces rest
+          | _ -> []
+        in
+        let text_of a b =
+          Lexer.source_text "" (snd toks.(a)).Token.offset (snd toks.(b)).Token.end_offset
+        in
+        let element (a, b) =
+          match text_of a b with
+          | None -> None
+          | Some t when a = b -> Some t
+          | Some t ->
+            let bracketed =
+              (match fst toks.(a) with
+               | Token.LParen | Token.LBracket | Token.LBrace -> true
+               | _ -> false)
+              && (let d = ref 0 and closes_at_end = ref false in
+                  for j = a to b do
+                    (match fst toks.(j) with
+                     | Token.LParen | Token.LBracket | Token.LBrace -> incr d
+                     | Token.RParen | Token.RBracket | Token.RBrace ->
+                       decr d; if !d = 0 then closes_at_end := (j = b)
+                     | _ -> ())
+                  done;
+                  !closes_at_end)
+            in
+            Some (if bracketed then t else "(" ^ t ^ ")")
+        in
+        let els = List.map element (pieces bounds) in
+        if List.for_all Option.is_some els then begin
+          let o = snd toks.(open_i) and c = snd toks.(!close_i) in
+          let at = { o with Token.end_line = c.Token.end_line;
+                            end_col = c.Token.end_col;
+                            end_offset = c.Token.end_offset } in
+          let touching = o.Token.offset = ctor.Token.end_offset in
+          match text_of open_i !close_i with
+          | Some from_ ->
+            replace_fix at from_
+              ((if touching then " " else "")
+               ^ String.concat " " (List.filter_map Fun.id els))
+          | None -> ()
+        end
+      end
+    end
+
 let rec infer_pat tenv (p : pat) t (env : env) : env =
   match p with
   (* Each alternative against the same type and from the same scope; the
@@ -4231,8 +4451,32 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     unify_expected ~expected:t ~got:(TList elem_t);
     let env' = infer_pat tenv hp elem_t env in
     infer_pat tenv tp (TList elem_t) env'
-  | PConstr (name, pats) ->
-    let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
+  | PConstr (written, pats) ->
+    (* The constructor's own extent, where the pattern starts with it. *)
+    let ctor =
+      match !cur_loc with
+      | Some l ->
+        let stop = l.Token.offset + String.length written in
+        (match Lexer.source_text l.Token.file l.Token.offset stop with
+         | Some w when w = written ->
+           Some { l with Token.end_line = l.Token.line;
+                         end_col = l.Token.col + String.length written;
+                         end_offset = stop }
+         | _ -> None)
+      | None -> None
+    in
+    (match ctor, pats with
+     | Some c, _ :: _ ->
+       refuse_payload_against tenv c written;
+       if ctor_shape tenv written = Named && spaced_bracket_after c then begin
+         spaced_fields_fix c;
+         raise (TypeErrorAt (c, Printf.sprintf
+           "'%s' has named fields, so they go in a bracket against its name: \
+            %s(field, ...). A bracket after a space is an argument"
+           written written))
+       end
+     | _ -> ());
+    let name = pat_ctor_name tenv (ctor_name_for tenv written) t in
     let ctor_env = tenv_to_ctor_env tenv in
     (match (match builtin_result_scheme name with
             | Some _ as s -> s
@@ -4264,14 +4508,16 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     else
     with_visible (List.map fst own) (fun () -> infer_pat tenv' inner t env)
   | PConstrBare (name, ids) ->
+    refuse_bare_bracket tenv !cur_loc name ids;
     let name = pat_ctor_name tenv (ctor_name_for tenv name) t in
     let fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
       | Some (_, ctor) -> List.map fst ctor.fields
       | None -> []
     in
-    (* How many values the constructor carries, so that `Ok ()` reads as
-       `Ok` applied to the unit and `Red()` as `Red` (#116). *)
+    (* How many values the constructor carries. A constructor with no named
+       fields has been refused above (#207), so this matters only to one
+       the environment does not know. *)
     let arity =
       let name = ctor_name_for tenv name in
       match (match builtin_result_scheme name with
@@ -4983,8 +5229,10 @@ let rec infer tenv (env : env) (e : expr) : typ =
            | Some n when not (List.mem_assoc n ctor.defaults) -> Some n
            | _ -> None) ctor.fields
        in
+       (match !cur_loc with Some l -> spaced_fields_fix l | None -> ());
        raise (TypeError (Printf.sprintf
-         "constructor '%s' has named fields; construct it as %s(%s)"
+         "constructor '%s' has named fields; construct it as %s(%s), with \
+          the bracket against the name"
          name name
          (String.concat ", " (List.map (fun n -> n ^ " = ...") names))))
      | _ -> ());
@@ -5376,6 +5624,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
       t
     end
   | ConstrBare (name, ids) ->
+    refuse_bare_bracket tenv !cur_loc name ids;
     let name = expr_ctor_name tenv name in
     let fields =
       match find_ctor_in_tenv tenv (ctor_name_for tenv name) with
@@ -6329,6 +6578,10 @@ and check_app_shape ?(more = false) tenv (env : env) f x =
         | Some (_, ctor)
           when List.length ctor.fields = List.length es
             && List.for_all (fun (n, _) -> n = None) ctor.fields ->
+          (match f with
+           | Located (lc, Constr _) | Qualified (_, Located (lc, Constr _)) ->
+             tuple_args_fix lc
+           | _ -> ());
           raise (TypeError (Printf.sprintf
             "'%s' takes %d arguments, so write `%s %s` rather than `%s (%s)`"
             name (List.length ctor.fields) name
@@ -6346,6 +6599,11 @@ and check_app_shape ?(more = false) tenv (env : env) f x =
      | Var name, Glob g when not (List.mem_assoc name env) ->
        raise (TypeError (Printf.sprintf
          "'%s%s' should be written as './%s%s'" name g name g))
+     | _ -> ());
+    (* `Wrap(1)`: a payload against a positional constructor (#207). *)
+    (match f with
+     | Located (lc, Constr name) | Qualified (_, Located (lc, Constr name)) ->
+       refuse_payload_against tenv lc name
      | _ -> ())
 
 (* An application with a lambda written before another argument.

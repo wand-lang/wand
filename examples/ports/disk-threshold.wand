@@ -26,7 +26,7 @@ let usage row =
   match String.words row with
   | [_, _, _, _, capacity, mount] -> (
     match Int.of_string (String.replace "%" "" capacity) with
-    | Ok percent -> Some(mount, percent)
+    | Ok percent -> Some (mount, percent)
     | Error _ -> None
   )
   | _ -> None

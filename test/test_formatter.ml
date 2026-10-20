@@ -691,7 +691,9 @@ let test_a_unit_payload_is_kept () =
       "let v =\n  match r with\n  | Ok () -> 1\n  | Error () -> 2";
       "let v =\n  match r with\n  | Some (Ok ()) -> 1\n  | _ -> 2";
       "let v =\n  match r with\n  | Red() -> 1\n  | Green -> 2" ];
-  fmt_eq "an argument takes brackets" "let k = f Ok () x" "let k = f (Ok ()) x"
+  (* After a space, `()` is the unit, and a constructor's payload is kept
+     as written, as `f None (x)` is (#207). *)
+  fmt_eq "an argument is kept as written" "let k = f Ok () x" "let k = f Ok () x"
 
 (* The lines under a backtick are the string's own content. A value given a
    line of its own moves them one line down the page, and the backtick left
@@ -1656,28 +1658,29 @@ let test_a_separator_goes_ahead_of_a_comment () =
     "let{}=import s;--\n- --\nmatch()with|[]->(())"
 
 (* A constructor takes the bracket written after it. `p.M N` is
-   `App (Qualified (p, M), N)`. `p.M(N)` is `Qualified (p, App (M, N))`.
+   `App (Qualified (p, M), N)`. `p.M (N)` is `Qualified (p, App (M, N))`.
    These are two programs. The bracket puts the payload inside the module,
    so a payload written inside it is read there. Each form comes back as
    itself. Found by test/fuzz twice. The first fix wrote every bracket form
-   as the loose form, which settled the instability and changed the scope. *)
+   as the loose form, which settled the instability and changed the scope.
+   The bracket takes a space, as every positional payload does: one against
+   the name is a field list (#207). *)
 let test_a_qualified_head_does_not_hide_a_constructor () =
-  assert_idempotent "a qualified constructor before a bracket" "p.M(N)(9[])";
+  assert_idempotent "a qualified constructor before a bracket" "p.M (N)(9[])";
   assert_idempotent "and spelled the other way" "p.M N (9 [])";
   fmt_eq "the bracket holds the payload's scope and stays"
-    {|let a = d.M(N)|}
-    {|let a = d.M(N)|};
+    {|let a = d.M (N)|}
+    {|let a = d.M (N)|};
   fmt_eq "the loose form is a different program and is kept"
     {|let a = d.M N|}
     {|let a = d.M N|};
   fmt_eq "a bracket form before a second bracket keeps both apart"
-    {|let a = n d.M(N)(s [])|}
-    {|let a = n d.M(N) (s [])|};
-  (* A qualified constructor absorbs the bracket after it with or without
-     the space, so the space goes and the text says what it already meant. *)
-  fmt_eq "a spaced bracket after a qualified name loses the space"
+    {|let a = n d.M (N)(s [])|}
+    {|let a = n d.M (N) (s [])|};
+  (* A qualified constructor absorbs the bracket after it with the space. *)
+  fmt_eq "a spaced bracket after a qualified name keeps the space"
     {|let a = l.A (S) a|}
-    {|let a = l.A(S) a|}
+    {|let a = l.A (S) a|}
 
 (* A literal whose lexeme runs into a following `.` keeps its brackets. A
    version was asked that by its last character, and a prerelease is

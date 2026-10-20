@@ -95,7 +95,7 @@ let _shown name =
 -- 200 : Int
 let request! (req: Request) =
   match List.find (fn p -> !(_sendable? p)) (Map.to_list req.headers) with
-  | Some(k, _) -> if _token? k then fail_exn "http: the value of header %{k} holds a CR, LF or NUL byte"
+  | Some (k, _) -> if _token? k then fail_exn "http: the value of header %{k} holds a CR, LF or NUL byte"
     else fail_exn `http: the header name "%{_shown k}" is not an RFC 7230 token`
   | None -> net_http req
 
@@ -375,7 +375,7 @@ let _send (r: Response) conn =
 let _answer (limits: Server) handler conn =
   match Par.timeout limits.head_timeout (fn () -> _read_request limits conn) with
   | Error _ -> _send (reply 408 "") conn
-  | Ok (Error(status, why)) -> _send (reply status why) conn
+  | Ok (Error (status, why)) -> _send (reply status why) conn
   | Ok (Ok req) -> (
     match Par.timeout limits.deadline (fn () -> handler req) with
     | Ok response -> _send response conn

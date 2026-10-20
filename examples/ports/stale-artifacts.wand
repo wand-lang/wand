@@ -31,7 +31,7 @@ let cutoff (age: Duration) = Clock.now () - age
 let older_than before file =
   match FS.mtime file with
   | Error _ -> None
-  | Ok touched -> if touched < before then Some(file, touched) else None
+  | Ok touched -> if touched < before then Some (file, touched) else None
 
 let stale age pattern dir =
   let before = cutoff age;

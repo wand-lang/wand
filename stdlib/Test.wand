@@ -114,12 +114,12 @@ let with_shell mocks thunk =
   handle thunk () with
   | Shell!run cmd k -> (
     match List.find (fn (pat, _) -> String.contains? pat cmd) mocks with
-    | Some(_, out) -> k out
+    | Some (_, out) -> k out
     | None -> k ""
   )
   | Shell!capture cmd k -> (
     match List.find (fn (pat, _) -> String.contains? pat cmd) mocks with
-    | Some(_, out) -> k ShellResult(stdout = out, stderr = "", code = 0)
+    | Some (_, out) -> k ShellResult(stdout = out, stderr = "", code = 0)
     | None -> k ShellResult(stdout = "", stderr = "", code = 0)
   )
 
@@ -142,7 +142,7 @@ let with_shell_results mocks thunk =
   handle thunk () with
   | Shell!capture cmd k -> (
     match List.find (fn (pat, _) -> String.contains? pat cmd) mocks with
-    | Some(_, r) -> k r
+    | Some (_, r) -> k r
     | None -> k ShellResult(stdout = "", stderr = "", code = 0)
   )
 
@@ -298,7 +298,7 @@ let with_lock thunk =
 --
 -- >> Test.with_lock_held (fn () ->
 -- ..   with FS.lock /var/run/x.lock as taken ->
--- ..     match taken with | Ok(_) -> "took it" | Error(_) -> "stood down")
+-- ..     match taken with | Ok _ -> "took it" | Error _ -> "stood down")
 -- "stood down" : String
 let with_lock_held thunk =
   handle thunk () with
@@ -338,7 +338,7 @@ let with_http mocks thunk =
   | Net!download _ k -> k ()
   | Net!http req k -> (
     match List.find (fn (pat, _) -> String.contains? pat "%{req.url}") mocks with
-    | Some(_, response) -> k response
+    | Some (_, response) -> k response
     | None -> k HTTPResponse(status = 200, headers = {}, body = "")
   )
 

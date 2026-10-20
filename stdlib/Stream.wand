@@ -174,7 +174,7 @@ let min s = _reduce (fn a b -> if b < a then b else a) s
 -- here, because this and a `Result` in the accumulator cover it.
 --
 -- >> Stream.of_list [1, 2, 3, 4]
--- ..   |> Stream.filter_map (fn x -> if x % 2 == 0 then Some(x * 10) else None)
+-- ..   |> Stream.filter_map (fn x -> if x % 2 == 0 then Some (x * 10) else None)
 -- ..   |> Stream.to_list
 -- [20, 40] : List Int
 let filter_map f s = stream_filter_map f s

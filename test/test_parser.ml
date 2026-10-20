@@ -444,10 +444,10 @@ let test_list () =
 
 let test_constr_app () =
   e "named construction"
-    {|Point (x = 1, y = 2)|}
+    {|Point(x = 1, y = 2)|}
     (ConstrApp ("Point", [Some "x", Int 1; Some "y", Int 2], None));
   e "single named field"
-    "Circle (radius = 5)"
+    "Circle(radius = 5)"
     (ConstrApp ("Circle", [Some "radius", Int 5], None))
 
 
@@ -472,12 +472,14 @@ let test_constr_positional () =
   e "a single parenthesised argument is just that argument"
     "Some (1)"
     (App (Constr "Some", Int 1));
-  (* Empty parentheses are undecided like a list of bare names: a
-     construction naming no fields where the constructor has them, and the
-     constructor applied to unit where it does not. *)
-  e "no arguments"
+  (* After a space, empty parentheses are the unit. Against the name they
+     are a field list naming no fields (#207). *)
+  e "the unit after a space"
     "Some ()"
-    (ConstrBare ("Some", []));
+    (App (Constr "Some", Unit));
+  e "no fields against the name"
+    "Stats()"
+    (ConstrBare ("Stats", []));
   (* As in a pattern, bare names are left for the declaration to read. *)
   e "bare identifiers stay undecided"
     "Point(x, y)"
@@ -970,34 +972,41 @@ let test_constr_pats () =
 
 let test_constr_named_pats () =
   e "named pattern"
-    "match p with\n| Point (x = a, y = b) -> a"
+    "match p with\n| Point(x = a, y = b) -> a"
     (Match (Var "p", [
       (PConstrNamed ("Point", [("x", PVar "a"); ("y", PVar "b")]), None, Var "a")
     ]));
   e "single named field pattern"
-    "match c with\n| Circle (radius = r) -> r"
+    "match c with\n| Circle(radius = r) -> r"
     (Match (Var "c", [
       (PConstrNamed ("Circle", [("radius", PVar "r")]), None, Var "r")
     ]));
-  (* Bare identifiers are kept as written: which reading they carry is the
-     declaration's to decide, and the declaration may be in another file. *)
+  (* Bare identifiers against the name are the field list's puns; whether
+     the constructor has that list is the declaration's to say, and the
+     declaration may be in another file. *)
   e "bare identifiers stay undecided"
     "match p with\n| Point(x, y) -> x"
     (Match (Var "p", [
       (PConstrBare ("Point", ["x"; "y"]), None, Var "x")
     ]));
-  e "a space does not decide it"
+  (* After a space, the bracket is an argument: a tuple (#207). *)
+  e "a space makes it a tuple"
     "match p with\n| Point (x, y) -> x"
     (Match (Var "p", [
-      (PConstrBare ("Point", ["x"; "y"]), None, Var "x")
+      (PConstr ("Point", [PTuple [PVar "x"; PVar "y"]]), None, Var "x")
     ]));
   (* One identifier is left to the declaration too (#115): `Circle(r)` is
      the field `r` where `Circle` has one, and the payload where it has
      not. *)
-  e "one identifier stays undecided"
-    "match c with\n| Circle (r) -> r"
+  e "one identifier against the name stays undecided"
+    "match c with\n| Circle(r) -> r"
     (Match (Var "c", [
       (PConstrBare ("Circle", ["r"]), None, Var "r")
+    ]));
+  e "one identifier after a space is the payload"
+    "match c with\n| Circle (r) -> r"
+    (Match (Var "c", [
+      (PConstr ("Circle", [PVar "r"]), None, Var "r")
     ]));
   e "a pun beside a named field"
     "match p with\n| Point(x, y = b) -> x"

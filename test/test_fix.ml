@@ -929,6 +929,40 @@ let test_raw_splice_quoted () =
     fixed;
   Alcotest.(check (list string)) "via V-SHELL4" ["V-SHELL4"] (codes applied)
 
+(* A bracket against a constructor is its field list, and only named fields
+   have one (#207). Each wrong spelling carries the one form the
+   declaration gives, and `--fix` writes it. *)
+let test_constructor_brackets () =
+  let decls =
+    "type Pod(name: String, tries: Int = 3)\ntype W = Wrap Int\n\
+     type P = Pair (Int, Int)\ntype R = Rect Int Int\ntype C = Red | Green\n\
+     let v = 3\nlet name = \"x\"\n"
+  in
+  List.iter (fun (label, wrong, right) ->
+    let (fixed, _) = fix (decls ^ wrong ^ "\n") in
+    Alcotest.(check string) label (decls ^ right ^ "\n") fixed)
+    [ ("a payload", "let a = Wrap(1)", "let a = Wrap (1)");
+      ("a name", "let a = Wrap(v)", "let a = Wrap v");
+      ("Some", "let a = Some(v)", "let a = Some v");
+      ("a tuple payload", "let a = Pair(1, 2)", "let a = Pair (1, 2)");
+      ("two fields", "let a = Rect(1, v + 1)", "let a = Rect 1 (v + 1)");
+      ("two fields, spaced", "let a = Rect (2, 3)", "let a = Rect 2 3");
+      ("the unit", "let a = Ok()", "let a = Ok ()");
+      ("nothing", "let a = Red()", "let a = Red");
+      ("named fields after a space", "let a = Pod (name = \"a\")", "let a = Pod(name = \"a\")");
+      ("a pun after a space", "let a = Pod (name)", "let a = Pod(name)");
+      ("a pattern", "let f x = match x with | Wrap(n) -> n", "let f x = match x with | Wrap n -> n");
+      ("a tuple pattern", "let f x = match x with | Pair(p, q) -> p + q",
+       "let f x = match x with | Pair (p, q) -> p + q");
+      ("a pattern of two fields", "let f x = match x with | Rect(p, q) -> p + q",
+       "let f x = match x with | Rect p q -> p + q");
+      ("a nested pattern", "let f x = match x with | Some(Wrap(z)) -> z | _ -> 0",
+       "let f x = match x with | Some (Wrap z) -> z | _ -> 0");
+      ("a named pattern after a space", "let f x = match x with | Pod (name = n) -> n",
+       "let f x = match x with | Pod(name = n) -> n");
+      ("a pun pattern after a space", "let f x = match x with | Pod (name) -> name",
+       "let f x = match x with | Pod(name) -> name") ]
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -1036,5 +1070,8 @@ let () =
     "the words of what a file calls", [
       Alcotest.test_case "count toward its manifest" `Quick test_called_words_count;
       Alcotest.test_case "and its fixes" `Quick test_called_words_fix;
+    ];
+    "a bracket against a constructor (#207)", [
+      Alcotest.test_case "takes the declaration's form" `Quick test_constructor_brackets;
     ];
   ]

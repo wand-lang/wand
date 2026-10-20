@@ -73,7 +73,7 @@ let failures checked =
     match Result.flatten outcome with
     | Ok true -> None
     | Ok false -> Some (file, "digest does not match")
-    | Error why -> Some(file, why))
+    | Error why -> Some (file, why))
 
 -- No `.sha256` file at all is a failure: a check of nothing used to report
 -- "0 checked, 0 failed" and exit 0.

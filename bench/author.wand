@@ -548,9 +548,10 @@ let main! () = (
     List.each (fn why -> IO.println_err "a run did not finish: %{why}") errors;
     let rs = List.filter_map Result.to_option results;
     let name =
-      (match Env.get "LABEL" with
-       | Some label -> "author-%{date}-%{model}-%{label}"
-       | None -> "author-%{date}-%{model}");
+      match Env.get "LABEL" with
+      | Some label -> "author-%{date}-%{model}-%{label}"
+      | None -> "author-%{date}-%{model}"
+    in
     FS.mkdir! ./bench/results;
     FS.write_file! (Path.of_string "bench/results/%{name}.md") (report date version rs);
     FS.write_lines!
