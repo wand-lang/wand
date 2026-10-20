@@ -4330,10 +4330,21 @@ let describe (p: Pod) = p.name
 let f = fn (p: Pod) -> p.status.restarts
 ```
 
-This is what lets a definition read a field off a parameter. Dot access
-needs a named type. wand generalizes a definition before it sees any call,
-so the type has to come from the definition, and there was nowhere to write
-it:
+Dot access needs a named type. When the definition does not give it, a
+use further down the file does, as it does for a tuple element (see
+[Tuples](#tuples)): the read waits, and the first use settles it. Until then
+the definition has one type in the file, so a use with another type is a
+type error.
+
+```ocaml
+type Info(name: String, group: String)
+type Module(name: String, size: Int)
+
+let names ms = List.map (fn m -> m.name) ms
+names [Module(name = "FS", size = 1)]      -- ["FS"]
+```
+
+A read that no use settles needs its type written:
 
 ```ocaml
 let describe p = p.name

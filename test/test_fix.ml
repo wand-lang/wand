@@ -416,32 +416,31 @@ let test_foreign_constructor_renamed () =
   Alcotest.(check bool) "Left has two answers, and no fix" true (d.Diag.fix = None)
 
 (* A parameter read only through a field gets its type written where it
-   is bound, when one type has the field (#139). *)
+   is bound, when one type has the field and nothing in the file gives the
+   type (#139). A use further down that gives it settles the read with no
+   annotation at all (#193), so these have none. *)
 let test_parameter_annotated () =
   let (fixed, applied) =
-    fix_clean "import IO\nlet succeed r = IO.print r.stdout\nlet () = succeed $?(echo hi)\n" in
+    fix_clean "import IO\nlet succeed r = IO.print r.stdout\n" in
   Alcotest.(check string) "on a function's parameter"
-    "uses {IO, Shell(echo)}\n\nimport IO\nlet succeed (r: ShellResult) = IO.print r.stdout\nlet () = succeed $?(echo hi)\n"
+    "uses {IO}\n\nimport IO\nlet succeed (r: ShellResult) = IO.print r.stdout\n"
     fixed;
   Alcotest.(check (list string)) "then the manifest"
     ["E-TYPE"; "V-USES2"] (codes applied);
   let pod = "type Pod(name: String, restarts: Int)\n" in
-  let (fixed, _) =
-    fix_clean (pod ^ "let show =\n  fn p ->\n    p.restarts\nlet n = show (Pod(name = \"a\", restarts = 1))\n") in
+  let (fixed, _) = fix_clean (pod ^ "let show =\n  fn p ->\n    p.restarts\n") in
   Alcotest.(check string) "on a lambda's, for a type the file declares"
-    (pod ^ "let show =\n  fn (p: Pod) ->\n    p.restarts\nlet n = show (Pod(name = \"a\", restarts = 1))\n")
+    (pod ^ "let show =\n  fn (p: Pod) ->\n    p.restarts\n")
     fixed;
-  let (fixed, _) =
-    fix_clean (pod ^ "let total a p b = p.restarts + a + b\nlet n = total 1 (Pod(name = \"a\", restarts = 1)) 2\n") in
+  let (fixed, _) = fix_clean (pod ^ "let total a p b = p.restarts + a + b\n") in
   Alcotest.(check string) "among other parameters"
-    (pod ^ "let total a (p: Pod) b = p.restarts + a + b\nlet n = total 1 (Pod(name = \"a\", restarts = 1)) 2\n")
+    (pod ^ "let total a (p: Pod) b = p.restarts + a + b\n")
     fixed
 
 (* Two types with the field, or a subject that is not a parameter's name,
    is not certain. *)
 let test_parameter_not_certain () =
-  let d =
-    refuse "type A(n: Int)\ntype B(n: Int)\nlet get x = x.n\nlet v = get (A(n = 1))\n" in
+  let d = refuse "type A(n: Int)\ntype B(n: Int)\nlet get x = x.n\n" in
   Alcotest.(check bool) "two types have the field" true (d.Diag.fix = None);
   let d = refuse "let get (x, y) = x.stdout\n" in
   Alcotest.(check bool) "a parameter that is a pattern" true (d.Diag.fix = None);

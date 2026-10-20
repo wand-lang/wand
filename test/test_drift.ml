@@ -100,6 +100,32 @@ let test_a_semicolon_on_an_arm_line () =
     "let f r =\n  let x =\n    match r with\n    | Ok n -> n\n    | Error _ -> 0\n  ;\n  x + 1\nf (Ok 1)"
     "2"
 
+(* ── A field read waits for a use to give its type (#193) ──────────────── *)
+
+(* Two types with a field `name`, and a parameter read through it: a use
+   further down the file says which, as it does for a tuple element. The
+   read was an error that asked which type, with no fix. *)
+let shared = "import List\ntype Info(name: String, group: String)\ntype Module(name: String, size: Int)\n"
+
+let test_a_field_read_waits () =
+  value "a lambda's parameter, typed by the list it maps"
+    (shared ^ "let names ms = List.map (fn m -> m.name) ms\nnames [Module(name = \"FS\", size = 1)]")
+    "[\"FS\"]";
+  value "a name bound by a pattern"
+    (shared ^ "let label b =\n  match b with\n  | Some m -> m.name\n  | None -> \"\"\nlabel (Some (Info(name = \"x\", group = \"g\")))")
+    "x";
+  expect_error "a read nothing settles"
+    (shared ^ "let get x = x.name\n")
+    "'x' needs its type before '.name' can be read";
+  expect_error "a use that gives a type without the field"
+    (shared ^ "let size_of m = m.size\nsize_of (Info(name = \"x\", group = \"g\"))")
+    "type 'Info' has no field 'size' (the type comes from the use on line 5)";
+  (* Until a use settles it, the definition has one type in the file, as a
+     tuple read does. *)
+  expect_error "two uses with two types"
+    (shared ^ "let names ms = List.map (fn m -> m.name) ms\nlet a = names [Module(name = \"FS\", size = 1)]\nnames [Info(name = \"x\", group = \"g\")]")
+    "expected Module, got Info"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -446,6 +472,7 @@ let () =
     "issues", [
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
       Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
+      Alcotest.test_case "a field read waits (#193)" `Quick test_a_field_read_waits;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [

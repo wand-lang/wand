@@ -1499,6 +1499,11 @@ type pending_element = {
   pe_subject : string option;   (* the name read from, when it is a name *)
   pe_at : Token.loc option;     (* where the read is *)
   pe_item : int;                (* the top-level item the read is in *)
+  (* The element once the value read from has a type: `None` while it is
+     still a variable. A tuple's index or a record's field. *)
+  pe_settle : unit -> typ option;
+  (* The error for a read still waiting at the end of the file. *)
+  pe_unknown : unit -> string;
 }
 
 let pending_elements : pending_element list ref = ref []
@@ -1572,7 +1577,7 @@ let solve_pending_elements () =
         progress := false;
         (* Oldest first, so the first read written is the first settled. *)
         List.iter (fun pe ->
-          match tuple_element ~label:pe.pe_label pe.pe_index pe.pe_tuple with
+          match pe.pe_settle () with
           | None -> ()
           | Some ti ->
             pending_elements := List.filter (fun x -> x != pe) !pending_elements;
@@ -1593,8 +1598,7 @@ let fail_pending_elements () =
   | [] -> ()
   | pe :: _ ->
     pending_elements := [];
-    raise_element_at pe (element_type_unknown_message
-      ~subject:pe.pe_subject ~label:pe.pe_label ~index:pe.pe_index)
+    raise_element_at pe (pe.pe_unknown ())
 
 (* Unify, and settle any read the new knowledge gives a type. *)
 let unify t1 t2 =
@@ -5560,7 +5564,11 @@ let rec infer tenv (env : env) (e : expr) : typ =
        pending_elements :=
          { pe_tuple = t; pe_index = i; pe_elem = elem; pe_label = label;
            pe_subject = subject; pe_at = !cur_loc;
-           pe_item = !current_item } :: !pending_elements;
+           pe_item = !current_item;
+           pe_settle = (fun () -> tuple_element ~label i t);
+           pe_unknown = (fun () ->
+             element_type_unknown_message ~subject ~label ~index:i) }
+         :: !pending_elements;
        elem)
   | Field (e, label) ->
     (* Namespace access: Ns.member — check before falling into regular field inference *)
@@ -5857,10 +5865,12 @@ let rec infer tenv (env : env) (e : expr) : typ =
                 written as a plain name: the annotation the message asks
                 for is the fix, and it goes where the parameter is bound
                 (#139). *)
-             (match owners, strip_located e with
-              | [one], Var n -> param_annotation_fix n t one
-              | _ -> ());
-             let msg =
+             let fix () =
+               match owners, strip_located e with
+               | [one], Var n -> param_annotation_fix n t one
+               | _ -> ()
+             in
+             let message () =
                match owners with
                | [one] ->
                  Printf.sprintf
@@ -5884,7 +5894,30 @@ let rec infer tenv (env : env) (e : expr) : typ =
                     a field of %s"
                    subject label choose label (String.concat ", " many)
              in
-             raise (TypeError msg)
+             (match owners, strip_located e with
+              (* A name read before anything has said its type waits, as a
+                 tuple element does: a use further down the file gives the
+                 type, and the read is settled then. `names ms =
+                 List.map (fn m -> m.name) ms` and `names [Module(...)]`
+                 below it is a definition and the use that types it. Two
+                 types with a field `name` was the error with no fix, since
+                 the message could only ask which (#193). A read that no use
+                 settles is the same error, at the end of the file. *)
+              | _ :: _, Var _ ->
+                let result = fresh () in
+                pending_elements :=
+                  { pe_tuple = t; pe_index = -1; pe_elem = result;
+                    pe_label = label;
+                    pe_subject = (match strip_located e with Var n -> Some n | _ -> None);
+                    pe_at = !cur_loc; pe_item = !current_item;
+                    pe_settle = (fun () ->
+                      match repr t with
+                      | TVar _ -> None
+                      | _ -> Some (infer tenv env (Field (e, label))));
+                    pe_unknown = (fun () -> fix (); message ()) }
+                  :: !pending_elements;
+                result
+              | _ -> fix (); raise (TypeError (message ())))
            | _ ->
              raise (TypeError (Printf.sprintf
                "field access requires a named type, got %s"
