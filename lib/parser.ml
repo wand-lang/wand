@@ -2870,6 +2870,37 @@ let parse_type_def s =
     let loc = peek_loc s in
     match advance s with
     | Token.Upper n -> n
+    (* A name in lower case, or one that starts with `_`. The message was
+       "expected type name, got Ident(split)": the lexer's own token, which
+       says nothing about what a type name is (#196). A leading `_` is how a
+       value is kept to its file, and a type has no such form, so that case
+       says so. *)
+    | Token.Ident n ->
+      let rec drop_underscores n =
+        if String.length n > 0 && n.[0] = '_'
+        then drop_underscores (String.sub n 1 (String.length n - 1)) else n
+      in
+      let bare = drop_underscores n in
+      (* `pod_status` is `PodStatus`, as type names are written. *)
+      let camel =
+        String.split_on_char '_' bare
+        |> List.filter (fun w -> w <> "")
+        |> List.map String.capitalize_ascii
+        |> String.concat ""
+      in
+      let suggestion = if camel = "" then "" else Printf.sprintf ": write '%s'" camel in
+      let private_note =
+        if bare <> n then
+          ". A type has no private form: a leading '_' keeps a value to its \
+           file, and every type a file declares can be named by a file that \
+           imports it"
+        else ""
+      in
+      fail_at loc (Printf.sprintf "a type name starts with a capital letter%s%s"
+        suggestion private_note)
+    | t when Token.is_keyword t ->
+      fail_at loc (Format.asprintf
+        "a type name starts with a capital letter, and '%a' is a reserved word" Token.pp t)
     | t -> fail_at loc (Format.asprintf "expected type name, got %a" Token.pp t)
   in
   let params = ref [] in

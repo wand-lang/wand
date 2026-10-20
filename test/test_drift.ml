@@ -157,6 +157,18 @@ let test_a_constructor_pattern_inside_another () =
     "import HTTP\n(fn HTTP.Server(port) -> port) (HTTP.Server(port = :80))"
     ":80"
 
+(* ── A type name in lower case says what to write (#196) ───────────────── *)
+
+(* The message was "expected type name, got Ident(split)", the lexer's own
+   token. *)
+let test_a_type_name_in_lower_case () =
+  expect_error "a lower-case name" "type split(n: Int)\n"
+    "1:6: a type name starts with a capital letter: write 'Split'";
+  expect_error "a snake-case name" "type pod_status = Up | Down\n"
+    "write 'PodStatus'";
+  expect_error "a leading underscore" "type _Split(n: Int)\n"
+    "write 'Split'. A type has no private form"
+
 (* ── A unit payload matches () (#116) ────────────────────────────────────── *)
 
 let test_unit_payload () =
@@ -507,6 +519,7 @@ let () =
       Alcotest.test_case "puns before a named field (#194)" `Quick test_puns_before_a_named_field;
       Alcotest.test_case "a constructor pattern inside another (#195)" `Quick
         test_a_constructor_pattern_inside_another;
+      Alcotest.test_case "a type name in lower case (#196)" `Quick test_a_type_name_in_lower_case;
       Alcotest.test_case "a unit payload (#116)" `Quick test_unit_payload;
     ];
     "wand's own past", [
