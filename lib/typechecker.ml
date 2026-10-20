@@ -2555,6 +2555,16 @@ let builtin_type_names =
 
 let builtin_type_name n = List.mem n builtin_type_names
 
+(* The error for a declaration over a built-in's name. It says what to do
+   and which names are taken, since the only other way to learn that a name
+   is taken was to declare it: `Port`, `Path` and `Size` are words a domain
+   uses for its own things (#200). *)
+let builtin_type_declared tname =
+  Printf.sprintf
+    "'%s' is a built-in type, so a file cannot declare a type of that name: \
+     give this one a name of its own. The built-in types are %s"
+    tname (String.concat ", " builtin_type_names)
+
 (* How many type arguments a builtin takes. A name that takes none is not a
    type constructor at all, so `Int Int` is the same mistake as `Map String
    String` and gets the same answer. `Num`, `Add`, `Ord` and `Concat` are
@@ -8422,8 +8432,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
        declaration takes. *)
     | TLType (Alias (tname, _, _), tdef_loc) ->
       if builtin_type_name tname then
-        fail_at_opt tdef_loc (Printf.sprintf
-          "'%s' is a built-in type, so it cannot be declared" tname);
+        fail_at_opt tdef_loc (builtin_type_declared tname);
       if Hashtbl.mem seen_types tname then
         fail_at_opt tdef_loc (Printf.sprintf "'%s' is declared twice" tname);
       Hashtbl.add seen_types tname ()
@@ -8434,8 +8443,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
          nonsense, because the name resolved to the builtin while the
          constructor came from here. *)
       if builtin_type_name tname then
-        fail_at_opt tdef_loc (Printf.sprintf
-          "'%s' is a built-in type, so it cannot be declared" tname);
+        fail_at_opt tdef_loc (builtin_type_declared tname);
       (* The location is the second declaration's, which is the one a repeat
          is about: pointing at the first sends a reader -- and anything that
          edits by location -- to the declaration that was already fine. *)

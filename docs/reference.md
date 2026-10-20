@@ -3730,6 +3730,18 @@ type Pod = Pod (metadata : Meta, status : Statsu)
 --   (did you mean 'Status'?)
 ```
 
+These names are the built-in types, and a file cannot declare a type of any
+of them, whichever form the declaration takes:
+
+`Int`, `Float`, `String`, `Bool`, `Unit`, `Path`, `Glob`, `DateTime`,
+`Duration`, `URL`, `IPv4`, `CIDR`, `Port`, `Version`, `Size`, `JSON`, `TOML`,
+`YAML`, `Command`, `Connection`, `Process`, `List`, `Map`, `Result`, `Option`,
+`Decoder`, `Shared`
+
+A name declares one thing, so a type of a file's own takes a name of its
+own: an example ported from bash is a `Ported`, not a `Port`. The error
+lists these names too.
+
 A type belongs to the module that declares it. Reach it through that module,
 or name it in the import:
 

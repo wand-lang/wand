@@ -1381,10 +1381,10 @@ let test_type_aliases () =
      takes. An alias used to slip through: `type Int = String` was taken,
      and every `Int` after it meant `String`. *)
   err_contains "an alias over a builtin" "type Int = String\nlet f (x: Int) = x\nf 1"
-    "'Int' is a built-in type, so it cannot be declared";
+    "'Int' is a built-in type, so a file cannot declare a type of that name";
   err_contains "an alias over a builtin record"
     "type Command = CommandLine\nlet f (x: Command) = x\nf 1"
-    "'Command' is a built-in type, so it cannot be declared";
+    "'Command' is a built-in type, so a file cannot declare a type of that name";
   err_contains "an alias declared twice" "type A = Int\ntype A = String\nlet x : A = 1\nx"
     "'A' is declared twice"
 
