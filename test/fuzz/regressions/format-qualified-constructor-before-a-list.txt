@@ -1,0 +1,7 @@
+found:     test/fuzz (scheduled), seed 39426232867, iteration 103974, 2026-10-20 (#206)
+verdict:   wand f wrote source that does not parse: expected ->, got Ident(request)
+fixed in:  lib/parser.ml, pconstr_body_
+
+`E e.A request []`: `E` with the constructor `e.A`, then `request` and
+`[]`. `wand f` wrote `E (e.A) request []`. The same fix as
+format-qualified-constructor-argument.

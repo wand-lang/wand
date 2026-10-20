@@ -124,6 +124,23 @@ let test_an_in_at_the_end_of_a_line () =
     "let y = 1\nlet f x = ((let y = x in y + 1); y)\nf 5"
     "1"
 
+(* ── A bracketed first argument, then more (#204) ─────────────────────── *)
+
+(* A bracket with a space before it was read as a constructor's whole
+   payload, so `Rect (Circle c) h` left `h` over and did not parse. *)
+let test_a_bracketed_first_argument () =
+  let t = "type Shape = Circle Int | Sq\ntype R = Rect Shape Int\n" in
+  value "a constructor in brackets, then a name"
+    (t ^ "let f r =\n  match r with\n  | Rect (Circle c) h -> c + h\n  | Rect Sq h -> h\nf (Rect (Circle 1) 2)")
+    "3";
+  value "a tuple in brackets, then a name"
+    "type Pair = (Int, Int)\ntype P = P Pair Int\nlet f p =\n  match p with\n  | P (a, b) c -> a + b + c\nlet x = (1, 2)\nf (P x 3)"
+    "6";
+  (* With nothing after it, the bracket is still the payload. *)
+  value "a bracket alone is the payload"
+    "let f o =\n  match o with\n  | Some (x) -> x\n  | None -> 0\nf (Some 4)"
+    "4"
+
 (* ── A field read waits for a use to give its type (#193) ──────────────── *)
 
 (* Two types with a field `name`, and a parameter read through it: a use
@@ -560,6 +577,7 @@ let () =
       Alcotest.test_case "one name puns (#115)" `Quick test_one_name_puns;
       Alcotest.test_case "a ; on an arm's line (#190)" `Quick test_a_semicolon_on_an_arm_line;
       Alcotest.test_case "an in binds over the rest (#203)" `Quick test_an_in_at_the_end_of_a_line;
+      Alcotest.test_case "a bracketed first argument (#204)" `Quick test_a_bracketed_first_argument;
       Alcotest.test_case "a field read waits (#193)" `Quick test_a_field_read_waits;
       Alcotest.test_case "puns before a named field (#194)" `Quick test_puns_before_a_named_field;
       Alcotest.test_case "a constructor pattern inside another (#195)" `Quick

@@ -1,0 +1,8 @@
+found:     test/fuzz (scheduled), seed 39426232866, iteration 120051, 2026-10-20 (#205)
+verdict:   wand f wrote source that does not parse: expected ), got Ident(why)
+fixed in:  lib/parser.ml, pconstr_body_
+
+`E(F S.D why)`: inside the payload of `E`, `F` has two arguments, the
+constructor `S.D` and `why`. `wand f` wrote `F (S.D) why`, and the
+spaced bracket was read as the whole payload of `F`. The same fix as
+format-qualified-constructor-argument.

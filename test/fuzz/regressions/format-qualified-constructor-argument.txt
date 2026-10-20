@@ -1,0 +1,11 @@
+found:     test/fuzz (scheduled), seed 39426232865, iteration 579512, 2026-10-20 (#204)
+verdict:   wand f wrote source that does not parse: expected ->, got Ident(one)
+fixed in:  lib/parser.ml, pconstr_body_
+
+`E s.A one` is the constructor `E` with two arguments: the constructor
+`s.A`, which #195 let a pattern's argument read, and `one`. `wand f`
+writes a constructor in an argument in brackets, `E (s.A) one`, and the
+parser read a bracket with a space before it as the whole payload of `E`,
+so `one` was left over. The same held for any first argument that needs
+brackets: `Rect (Circle r) h` did not parse. Now a spaced bracket with
+more arguments after it is the first of them.

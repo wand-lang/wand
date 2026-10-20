@@ -3863,6 +3863,10 @@ Parentheses group a tuple. Write several arguments one after the other:
 `Rect 3 4`, not `Rect (3, 4)`. So `Some (1, 2)` is `Some` applied to one pair,
 in every file.
 
+A pattern reads its arguments the same way. An argument that needs brackets
+can come first, with more after it: for `type R = Rect Shape Int`, the
+pattern `| Rect (Circle r) h` has two arguments.
+
 ```ocaml
 type Wrap = Wrap (List Int)     -- one field, type List Int
 type Pair = Pair (Int, Int)     -- one field, tuple type (Int, Int)

@@ -1258,20 +1258,51 @@ and pconstr_body_ s name =
     expect s Token.RParen;
     PConstrNamed (name, !fields)
   end else if peek_bare_args s then begin
+    let spaced = (peek_loc s).Token.offset > (last_loc s).Token.end_offset in
     ignore (advance s); (* consume LParen *)
     let ids = ref [expect_ident s] in
     while peek s = Token.Comma do
       ignore (advance s); ids := !ids @ [expect_ident s]
     done;
     expect s Token.RParen;
-    PConstrBare (name, !ids)
+    (* `E (x, y) b`: a tuple, then more arguments, as below (#204). *)
+    if spaced && is_pat_atom_start (peek s) then begin
+      let first = match !ids with
+        | [i] -> (PVar i : pat)
+        | is -> PTuple (List.map (fun i -> (PVar i : pat)) is)
+      in
+      let args = ref [first] in
+      while is_pat_atom_start (peek s) do
+        args := !args @ [pat_atom_ s]
+      done;
+      PConstr (name, !args)
+    end else PConstrBare (name, !ids)
   end else if peek s = Token.LParen then begin
+    let spaced = (peek_loc s).Token.offset > (last_loc s).Token.end_offset in
     ignore (advance s); (* consume LParen *)
+    (* A bracket with a space before it and more arguments after it is the
+       first of several: `Rect (Circle r) h`. Read as the whole payload, it
+       left `h` over, and "expected ->" was all the pattern got, so a
+       constructor whose first argument needed brackets could not be
+       matched. `wand f` writes such an argument in brackets, so the same
+       file came back unparsable. Found by test/fuzz (#204). *)
+    let more_args first =
+      if spaced && is_pat_atom_start (peek s) then begin
+        let args = ref [first] in
+        while is_pat_atom_start (peek s) do
+          args := !args @ [pat_atom_ s]
+        done;
+        PConstr (name, !args)
+      end else PConstr (name, [first])
+    in
     (* Empty parentheses read the way they do in a construction: a pattern
        naming no fields where the constructor has them, the constructor
        that carries nothing where it does not. *)
-    if peek s = Token.RParen then (ignore (advance s); PConstrBare (name, []))
-    else begin
+    if peek s = Token.RParen then begin
+      ignore (advance s);
+      if spaced && is_pat_atom_start (peek s) then more_args Unit
+      else PConstrBare (name, [])
+    end else begin
       (* A payload carries a type the same way anything else does:
          `Ok (v: Pod)`. This branch used to read `(` as the start of an
          argument list and nothing else, so the one place a pattern could
@@ -1300,8 +1331,9 @@ and pconstr_body_ s name =
       (* Parentheses group a tuple; several arguments are written by
          juxtaposition. Mirrors the expression side. *)
       match !pats with
-      | (_ :: _ :: _ as ps) -> PConstr (name, [PTuple ps])
-      | pats -> PConstr (name, pats)
+      | (_ :: _ :: _ as ps) -> more_args (PTuple ps)
+      | [p] -> more_args p
+      | [] -> PConstr (name, [])
     end
   end else begin
     let args = ref [] in
