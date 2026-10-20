@@ -1,16 +1,31 @@
-## 0.107.6 - 2026-10-19
+## 0.108.0 - 2026-10-20
 
-This release fixes five bugs and one broken link in the reference.
+This release adds two Regex functions and changes how an arm reads a `;`. One change can make an existing file behave differently: read Upgrading.
+
+### Upgrading
+
+- A `;` on the line of a match or handle arm that starts its own line now keeps the statement after it in the arm. Before, it ended the definition, and that statement ran at the top level. To keep the old reading, end the line after the arm's body and put the statement on the next line (#190).
+
+### Added
+
+- `Regex.replace_with` and `Regex.replace_all_with` replace a match with what a function makes of its captures (#198).
+- `"\u{2192}"` writes a character by its code point (#197).
+
+### Changed
+
+- On a match or handle arm that starts its own line, a `;` keeps the next statement in the arm, so `| Error why -> log why; 0` has the value `0` (#190).
+- A field read, such as `r.name`, waits for a later use to give the record's type, as a tuple read does (#193).
+- `Fn(name, short, line = 1)` reads two or more bare names before a named field as puns (#194).
+- A pattern's argument can be a constructor reached through a module, such as `Some M.Section(body)` (#195).
+- `wand f` writes a bidirectional control or a zero-width character in a string as `\u{...}` (#197).
 
 ### Fixed
 
-- `TOML.get_table`, `TOML.decode` and `TOML.stringify` keep a table's keys in the order the document wrote them, as JSON and YAML do. Before, they sorted them (#192).
-- A quoted TOML key, such as `"a.b"`, is read without its quotes, and `TOML.stringify` writes an empty table. Before, the key kept its quotes and the empty table was left out (#192).
-- `TOML.parse` reads a dotted key, such as `site.host = "x"`, as a key of the table its prefix names, at the top, in a section and in an inline table. Before, it was an error (#201).
-- `fn Entry(name) -> name` puns the field `name`, as a `let` and a `match` pattern do. Before, it was read as two parameters, `Entry` and `(name)` (#191).
-- `wand f` writes a body of statements one per line as one flat block. Before, three statements came back as `((a; b); c)` (#187).
-- `wand f` breaks a chain of `+`, `-` or `++` that does not fit, one operator per line. Before, it joined the chain onto one line past the margin (#188).
+- A type declaration with a lower-case name says that a type name starts with a capital letter, and gives the name to write (#196).
+- An unknown escape in a string lists the escapes there are (#197).
+- The error for `%{` in a backtick string names `%{"\%{"}` as the way to write it (#199).
+- A declaration over a built-in type's name lists the built-in type names (#200).
 
 ### Documentation
 
-- The link to "A command as a value" in the reference's `Shell` section goes to that heading (#189).
+- The reference lists the built-in type names (#200).
