@@ -1997,13 +1997,17 @@ and emit_sequence ?col indent opening closing items =
    reader looks to see what happens next, and what makes the stages line up
    under each other. A chain of `&&` or `||` reads as a list of conditions,
    and breaks the same way. Before, it stayed on one line however wide it
-   was. All three operators group to the left, which is the shape `stages`
-   takes apart. *)
+   was. So does a sum or a join, `+`, `-` and `++`, and those three are one
+   chain, since they share a precedence: `a + b - c` is the stages `a`,
+   `+ b` and `- c`. A chain of `++` was joined onto one line past the margin
+   (#188). Every one of these operators groups to the left, which is the
+   shape `stages` takes apart. *)
 and emit_chain op indent a b =
+  let joins op' = op' = op || (bin_prec op = 50 && bin_prec op' = 50) in
   let rec stages e =
     match strip_located e with
-    | BinOp (op', l, r) when op' = op -> stages l @ [r]
-    | other -> [other]
+    | BinOp (op', l, r) when joins op' -> stages l @ [(op', r)]
+    | other -> [(op, other)]
   in
   let all = stages (BinOp (op, a, b)) in
   (* Every stage starts at the pipeline's own column: the first where the
@@ -2032,11 +2036,12 @@ and emit_chain op indent a b =
   in
   match all with
   | [] -> Doc.empty
-  | first :: rest ->
+  | (_, first) :: rest ->
     let inner = Doc.spaces indent in
     piece `Left first
     ^^ Doc.concat Doc.empty
-        (List.map (fun e -> Doc.text "\n" ^^ inner ^^ Doc.text (op ^ " ") ^^ piece `Right e) rest)
+        (List.map (fun (op', e) ->
+           Doc.text "\n" ^^ inner ^^ Doc.text (op' ^ " ") ^^ piece `Right e) rest)
 
 and emit_binop ?col indent op a b =
   let col = match col with Some c -> c | None -> indent in
@@ -2066,7 +2071,11 @@ and emit_binop ?col indent op a b =
   in
   let oneline =
     side_str `Left a ^^ Doc.text (" " ^ op ^ " ") ^^ side_str `Right b in
-  if (op = "|>" || op = "&&" || op = "||") && not (fits col oneline)
+  (* A sum breaks only when it is one line and that line is too wide. An
+     operand that wraps of its own accord leaves the operator where it was:
+     `(with a as d -> (...)) - 1` keeps `- 1` on the bracket's line. *)
+  let sum_too_wide = bin_prec op = 50 && not (Doc.has_newline oneline) in
+  if (op = "|>" || op = "&&" || op = "||" || sum_too_wide) && not (fits col oneline)
   then emit_chain op indent a b
   else oneline
 

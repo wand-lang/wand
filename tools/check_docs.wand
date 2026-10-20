@@ -167,7 +167,8 @@ let report_stale rows = (
 let main! () = (
   if List.empty? modules then (
     IO.println_err
-      ("no modules in stdlib/; run this from the repository's root -- " ++ "this gate is checking nothing");
+      ("no modules in stdlib/; run this from the repository's root -- "
+      ++ "this gate is checking nothing");
     Proc.exit 1
   );
   let missing = modules |> List.map undocumented_in! |> List.flatten;

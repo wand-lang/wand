@@ -70,7 +70,8 @@ let report changed = (
 let main! () =
   if List.empty? sources then (
     IO.println_err
-      ("no .wand files under %{String.join ", " checked_dirs}; run this from " ++ "the repository's root -- this gate is checking nothing");
+      ("no .wand files under %{String.join ", " checked_dirs}; run this from "
+      ++ "the repository's root -- this gate is checking nothing");
     Proc.exit 1
   )
   else with FS.temp_dir "wand_fmt_check_" as dir -> (
