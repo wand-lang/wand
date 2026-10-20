@@ -1,0 +1,26 @@
+name: Site
+
+# Rebuilds the site in wand-lang/www when a release is published, so the
+# reference and the library pages show the new release at once and not at
+# the site's next scheduled run.
+#
+# It fires on publication, not on the draft: the site's workflow installs
+# the newest release with setup-wand, and a draft is not one.
+#
+# GITHUB_TOKEN cannot start a workflow in another repository, so this uses
+# WWW_DISPATCH_TOKEN: a fine-grained token for wand-lang/www alone, with
+# Actions read and write and nothing else.
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the site's Pages workflow
+        env:
+          GH_TOKEN: ${{ secrets.WWW_DISPATCH_TOKEN }}
+        run: gh workflow run pages.yml --repo wand-lang/www --ref main
