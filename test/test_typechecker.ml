@@ -637,7 +637,7 @@ let test_underivable_types_say_why () =
     "type T = T(t: (Int, Int))\nlet d = T.decoder"
     "field 't' cannot be read";
   ok "a Map field is read by Decode.dict"
-    {|type M (m: Map Int)
+    {|type M(m: Map Int)
 match M.decoder with
 | _ -> "ok"|}
     "ok";
@@ -847,7 +847,7 @@ let test_two_fields_cannot_share_a_key () =
 
 let test_derived_decoder_has_the_type () =
   ok "a derived decoder is a Decoder of its type"
-    {|type Pod (name: String, restarts: Int)
+    {|type Pod(name: String, restarts: Int)
 let d = Pod.decoder
 match Pod.decoder with
 | _ -> "ok"|}
@@ -1152,8 +1152,8 @@ let test_program_level_inference__match_on_constructors () =
   prog_is "payload case" "type Wrap = Wrap Int\nlet unwrap w = match w with\n| Wrap n -> n\nunwrap (Wrap 42)" "Int"
 
 let test_program_level_inference__named_field_typedef () =
-  prog_is "field access" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int";
-  prog_is "second field" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.y" "Int"
+  prog_is "field access" "type Point(x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int";
+  prog_is "second field" "type Point(x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.y" "Int"
 
 let test_program_level_inference__constructor_errors () =
   rejects "unknown ctor" "Bogus";
@@ -1177,7 +1177,7 @@ let test_type_annotation_syntax () =
 let test_constructor_field_grouping () =
   prog_is "single field grouped application" "type Wrap = Wrap (List Int); let w = Wrap [1, 2, 3]; w" "Wrap";
   prog_is "single field grouped tuple" "type Pair = Pair (Int, Int); let p = Pair (1, 2); p" "Pair";
-  prog_is "named field with colon" "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int"
+  prog_is "named field with colon" "type Point(x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.x" "Int"
 
 
 (* ── Rejections gathered from the wand-level suites ──────────────────────── *)
@@ -1451,7 +1451,7 @@ let test_constructor_and_pattern_errors () =
   rejects "unknown constructor" "Bogus";
   rejects_program "wrong constructor arity" "type Wrap = Wrap Int; Wrap 1 2";
   rejects_program "unknown field in a pattern"
-    "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\n\
+    "type Point(x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\n\
      let sum = match p with | Point(x = a, z = b) -> a + b\nsum";
   rejects_program "and-bound member must be a function"
     "let f n = n\nand g = 5\nf 1";
@@ -1514,7 +1514,7 @@ let test_did_you_mean_suggestions () =
   in
   suggests "let name = 1; naem" "name";
   suggests "type Color = Red | Green; Gren" "Green";
-  suggests "type Point (x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.xy" "x";
+  suggests "type Point(x : Int, y : Int)\nlet p = Point(x = 1, y = 2)\np.xy" "x";
   (* Including a mistyped keyword, which fails in the parser rather than
      the checker. *)
   suggests "lte x = 1; x" "let"
@@ -1618,8 +1618,8 @@ let test_applied_types_round_trip () =
    `let unwrap (Wrap n) = n` claim a risk that a single-constructor type
    cannot carry. *)
 let test_a_failable_pattern_raises () =
-  let shapes = "type Shape = Circle (radius : Int) | Square (side : Int)\n" in
-  let one = "type Wrap = Wrap Int\ntype Boxed (item : Int)\n" in
+  let shapes = "type Shape = Circle(radius : Int) | Square(side : Int)\n" in
+  let one = "type Wrap = Wrap Int\ntype Boxed(item : Int)\n" in
   Alcotest.(check string) "a named pattern over two constructors"
     "Shape -> Int ! {Raise}"
     (type_of "named, several constructors"
@@ -1637,7 +1637,7 @@ let test_a_failable_pattern_raises () =
      a way for the binding to fail. *)
   Alcotest.(check string) "a failable pattern inside a named field"
     "Holder -> Int ! {Raise}"
-    (type_of "nested" ("type Holder (items : List Int)\n"
+    (type_of "nested" ("type Holder(items : List Int)\n"
                        ^ "let f (Holder(items = [a])) = a in f"));
   (* A binding is not different from a parameter: both fail where they
      stand. *)
@@ -1692,14 +1692,14 @@ let test_written_type_vars_are_checked () =
    site is seen, so the type has to come from the definition. There was
    nowhere to write it. *)
 let test_a_parameter_can_carry_a_type () =
-  let pod = "type Pod (name : String, phase : String)\n" in
+  let pod = "type Pod(name : String, phase : String)\n" in
   Alcotest.(check string) "a field is readable now" "Pod -> String"
     (type_of "annotated parameter"
        (pod ^ "let describe (p: Pod) = p.name in describe"));
   Alcotest.(check string) "and so is a field of a field"
     "Outer -> Int"
     (type_of "two deep"
-       ("type Inner (n : Int)\ntype Outer (i : Inner)\n"
+       ("type Inner(n : Int)\ntype Outer(i : Inner)\n"
         ^ "let f (o: Outer) = o.i.n in f"));
   Alcotest.(check string) "the return annotation composes" "Pod -> String"
     (type_of "both annotations"
@@ -1720,10 +1720,10 @@ let test_a_parameter_type_is_checked () =
         Alcotest.failf "%s: expected %S in: %s" label needle msg
   in
   fails "the body contradicts the annotation"
-    "type Pod (name : String)\nlet f (p: Pod) = p ++ \"x\"\nf"
+    "type Pod(name : String)\nlet f (p: Pod) = p ++ \"x\"\nf"
     "and this is Pod";
   fails "the call contradicts the annotation"
-    "type Pod (name : String)\nlet f (p: Pod) = p.name\nf 3"
+    "type Pod(name : String)\nlet f (p: Pod) = p.name\nf 3"
     "expected Pod, got Int";
   (* Each annotation resolves its own names, so a variable in one would not
      be the variable in the next. Refused rather than quietly weaker. *)
@@ -2359,21 +2359,21 @@ let test_arity_hint () =
    them, and gives back a decoder for the applied type. *)
 let test_generic_derivation () =
   prog_is "one parameter"
-    "type Box 'a (v: 'a)\nBox.decoder"
+    "type Box 'a(v: 'a)\nBox.decoder"
     "Decoder 'a -> Decoder (Box 'a)";
   prog_is "two, in order"
-    "type Pair 'a 'b (left: 'a, right: 'b)\nPair.decoder"
+    "type Pair 'a 'b(left: 'a, right: 'b)\nPair.decoder"
     "Decoder 'a -> Decoder 'b -> Decoder (Pair 'a 'b)";
   prog_is "and the encoder takes encoders"
-    "type Box 'a (v: 'a)\nBox.encoder"
+    "type Box 'a(v: 'a)\nBox.encoder"
     "('a -> JSON) -> Box 'a -> JSON";
   (* Constructing one keeps its arguments, which is what makes the pair fit
      together: `Box(v = 3)` is a `Box Int`, exactly as `Box 3` is. *)
   prog_is "named construction applies the parameters"
-    "type Box 'a (v: 'a)\nBox(v = 3)"
+    "type Box 'a(v: 'a)\nBox(v = 3)"
     "Box Int";
   prog_is "and a field of an applied type is the argument"
-    "type Box 'a (v: 'a)\nlet b = Box(v = 3)\nb.v"
+    "type Box 'a(v: 'a)\nlet b = Box(v = 3)\nb.v"
     "Int"
 
 

@@ -786,13 +786,13 @@ let test_single_ctor_shorthand () =
     "type Box 'a = Box(item: 'a)\n1";
   (* A positional payload prints without its parentheses, so every type the
      bracketed form reads has to read there too. A module bound to a
-     lowercase name did not: `type T(l.S)` came back as `type T = T l.S`,
+     lowercase name did not: `type T (l.S)` came back as `type T = T l.S`,
      which parsed as a nullary constructor and a statement below it. Found
      by test/fuzz. *)
   assert_idempotent "a positional payload through a lowercase module"
-    "type T(l.S)\n1";
+    "type T (l.S)\n1";
   assert_idempotent "and a run of them"
-    "type T(l.S Int m.U)\n1";
+    "type T (l.S Int m.U)\n1";
   assert_idempotent "shorthand too wide for one line"
     "type Wide = Wide(alpha: String, beta: String, gamma: String, delta: String, epsilon: String, zeta: String)\n1";
   ok_after_format "construction and matching still run through the shorthand"

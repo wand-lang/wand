@@ -3284,7 +3284,7 @@ A type with one constructor and named fields already says what its decoder
 does. So it has one:
 
 ```ocaml
-type Pod (name : String, restarts : Int, timeout : Duration)
+type Pod(name : String, restarts : Int, timeout : Duration)
 
 JSON.decode Pod.decoder (JSON.parse! out)   -- Result String Pod
 ```
@@ -3297,7 +3297,7 @@ A field whose type is an `Option` can be absent. Every other field must be
 there. The type already says this:
 
 ```ocaml
-type Job (name : String, owner : Option String)
+type Job(name : String, owner : Option String)
 
 {"name": "build"}                  -- Ok (Job(name = "build", owner = None))
 {"name": "build", "owner": 3}      -- Error .owner: expected String, got Int
@@ -3306,7 +3306,7 @@ type Job (name : String, owner : Option String)
 Fields may hold lists, other derivable types, and the type being defined:
 
 ```ocaml
-type Node (label : String, children : List Node)
+type Node(label : String, children : List Node)
 ```
 
 A type reached through its module carries its derived members with it:
@@ -3328,7 +3328,7 @@ A type with parameters takes one decoder for each parameter, in the order
 that the type declares them:
 
 ```ocaml
-type Paged 'a (items : List 'a, total : Int)
+type Paged 'a(items : List 'a, total : Int)
 
 Paged.decoder : Decoder 'a -> Decoder (Paged 'a)
 Paged.encoder : ('a -> JSON) -> Paged 'a -> JSON
@@ -3718,15 +3718,15 @@ a field can name a type from further down, and two types can name each
 other:
 
 ```ocaml
-type Pod  = Pod (metadata : Meta, status : Status)
-type Meta = Meta (name : String, namespace : String)
+type Pod  = Pod(metadata : Meta, status : Status)
+type Meta = Meta(name : String, namespace : String)
 type Status = Running | Pending
 ```
 
 A name that nothing declares is an error. It is not a type of its own:
 
 ```ocaml
-type Pod = Pod (metadata : Meta, status : Statsu)
+type Pod = Pod(metadata : Meta, status : Statsu)
 -- type error: unknown type 'Statsu' in field 'status' of 'Pod'
 --   (did you mean 'Status'?)
 ```
@@ -3748,10 +3748,10 @@ or name it in the import:
 
 ```ocaml
 import Test
-type Run = Run (outcome : Test.TestOutcome)
+type Run = Run(outcome : Test.TestOutcome)
 
 let {TestOutcome} = import Test
-type Run = Run (outcome : TestOutcome)
+type Run = Run(outcome : TestOutcome)
 ```
 
 A constructor is reached the same way: `Test.Pass "x"`, or `Pass "x"` after
@@ -3792,7 +3792,7 @@ type This  = That            -- That declared elsewhere
 An alias is transparent — the two are one type, interchangeable in both
 directions — so it buys a name to read and write, not a distinct type.
 Nothing stops a `(width, height)` where a `Point` is meant. For a type the
-checker keeps apart, declare a record: `type Point (x : Int, y : Int)`.
+checker keeps apart, declare a record: `type Point(x : Int, y : Int)`.
 
 A type shows with the alias it was written as, so the name in the source is
 the name in the message:
@@ -3948,7 +3948,7 @@ every one. `wand t --fix` writes it.
 
 A field can have a name instead of a position. You then give it and read it
 by name. A type with one constructor has a shorthand:
-`type Point (x : Int, y : Int)` means `type Point = Point (x : Int, y : Int)`.
+`type Point(x : Int, y : Int)` means `type Point = Point(x : Int, y : Int)`.
 The shorthand is the canonical form. If the one constructor has the name of
 the type, `wand f` writes the long spelling back to the short one.
 
@@ -3966,7 +3966,7 @@ type applied to another, and nothing but the next field ends one.
 
 ```ocaml
 type Point  (x : Int, y : Int)
-type Circle (radius : Int)
+type Circle(radius : Int)
 
 let p = Point  (x = 3, y = 4)
 let c = Circle(radius = 5)
@@ -4098,7 +4098,7 @@ nothing else can stand in those places. So a word the language has taken
 reads as itself there:
 
 ```ocaml
-type Condition (type : String, status : String, when : String = "now")
+type Condition(type : String, status : String, when : String = "now")
 
 let c = Condition(type = "Ready", status = "True")
 
@@ -4207,15 +4207,19 @@ Pod (name = "a")        -- parse error: a field list goes against the
                         --   constructor's name, with no space: write `Pod(`
 ```
 
-The same holds in a pattern, a construction and an update. The value
-printer still shows a value as `Rect(1, 2)`; that is output, not source.
+The same holds in a pattern, a construction and an update, and in a
+declaration, where the bracket shows which it is: `type Pod(name: String)`
+against the name, and `type Wrap = Wrap (List Int)` after a space.
+`type Pod (name: String)` and `Wrap(List Int)` are parse errors that say
+what to write, and `wand t --fix` writes it. The value printer still shows
+a value as `Rect(1, 2)`; that is output, not source.
 
 #### Named fields in a type with several constructors
 
 Named fields are not limited to the single-constructor form:
 
 ```ocaml
-type Node = Leaf (value : Int) | Branch (left : Node, right : Node)
+type Node = Leaf(value : Int) | Branch(left : Node, right : Node)
 ```
 
 Construction and matching work as above. Dot access is narrower. A value of
@@ -4224,13 +4228,13 @@ you can read a field only when every constructor carries it, at the same
 type.
 
 ```ocaml
-type Sized = Small (x : Int, u : Int) | Large (x : Int, w : Int)
+type Sized = Small(x : Int, u : Int) | Large(x : Int, w : Int)
 
 (Large(x = 7, w = 9)).x     -- 7, every constructor has x
 ```
 
 ```ocaml
-type Mixed = Counted (x : Int) | Named (y : String)
+type Mixed = Counted(x : Int) | Named(y : String)
 
 let v = Named(y = "hi")
 v.x
@@ -6569,7 +6573,7 @@ JSON.stringify (JSON.of! [1, 2])              -- "[1,2]"
 JSON.stringify (JSON.of! {name = "web"})      -- {"name":"web"}
 
 -- A record is how a document with fields of different types is written.
-type Pod (name : String, port : Int)
+type Pod(name : String, port : Int)
 JSON.stringify (JSON.of! Pod(name = "web", port = 8080))
                                               -- {"name":"web","port":8080}
 
@@ -7775,7 +7779,7 @@ combinators here. Every combinator in `Decode` already applies, including the
 domain readers and the error that names the field.
 
 ```ocaml
-type Opts (port : Port, timeout : Duration, config : Path)
+type Opts(port : Port, timeout : Duration, config : Path)
 
 Args.parse Opts.decoder (Proc.args ())
 -- Ok (Opts(port = :8080, timeout = 30s, config = ./app.toml))

@@ -261,7 +261,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `{a = 1}` map; `{a, b = x}` puns, in a map and in a pattern | `{a: 1}`, `[a = 1]` |
 | `T(r, b = 3)` record update | `{r with b = 3}` |
 | `Pod(name, restarts)` fields, punned in a pattern or a construction; one name alone, `Pod(name)`, puns too | `Pod{name}`, positional fields |
-| a bracket against the name is a field list, for named fields only; a positional payload goes after a space: `Some x`, `Wrap (f x)`, `Span (a, b)`, `Rect 1 2`, `Ok ()` | `Some(x)`, `Rect(1, 2)`, `Ok()`, `Pod (name = "a")` |
+| a bracket against the name is a field list, for named fields only; a positional payload goes after a space: `Some x`, `Wrap (f x)`, `Span (a, b)`, `Rect 1 2`, `Ok ()`; in a declaration too, `type Pod(name: String)`, `type W = Wrap (List Int)` | `Some(x)`, `Rect(1, 2)`, `Ok()`, `Pod (name = "a")`, `type Pod (name: String)` |
 | `p.0`, `p.1` a tuple's elements, `p.0.1` in a nested one (the tuple's type must be known by the end of the file, as a record's must for `r.name`) | `fst p`, `p[1]`, `p._1` |
 | `Foo.Status`, `Foo.Live`; or `let {Status, Live} = import ./foo` | a bare imported type or constructor |
 | `type Pod(name: String, tries: Int = 3)` field default | a second constructor, an `Option` for "not given" |

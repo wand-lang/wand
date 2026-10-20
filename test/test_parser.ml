@@ -847,8 +847,8 @@ let test_named_field_arrow () =
      below. Both spellings of the payload read it now. *)
   Alcotest.(check int) "a type reached through a lowercase module"
     1 (List.length (fields "type T = T l.S"));
-  Alcotest.(check int) "bracketed, which always read it"
-    1 (List.length (fields "type T(l.S)"));
+  Alcotest.(check int) "bracketed after a space, which always read it"
+    1 (List.length (fields "type T (l.S)"));
   Alcotest.(check int) "and beside other atoms"
     3 (List.length (fields "type T = T l.S Int m.U"));
   (* A default still ends the type: `=` is not an arrow. *)

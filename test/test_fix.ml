@@ -963,6 +963,20 @@ let test_constructor_brackets () =
       ("a pun pattern after a space", "let f x = match x with | Pod (name) -> name",
        "let f x = match x with | Pod(name) -> name") ]
 
+(* A declaration says by its bracket which kind of field list it has, so
+   the parser refuses the wrong spacing, with the fix (#207). *)
+let test_declaration_brackets () =
+  List.iter (fun (label, wrong, right) ->
+    let (fixed, _) = fix (wrong ^ "\n") in
+    Alcotest.(check string) label (right ^ "\n") fixed)
+    [ ("named fields after a space", "type Pod (name: String)", "type Pod(name: String)");
+      ("after a parameter", "type Box 'a (item: 'a)", "type Box 'a(item: 'a)");
+      ("in a variant", "type N = Leaf (v: Int) | Branch (l: N, r: N)",
+       "type N = Leaf(v: Int) | Branch(l: N, r: N)");
+      ("a positional field against the name", "type W = Wrap(List Int)", "type W = Wrap (List Int)");
+      ("a tuple against the name", "type P = Pair(Int, Int)", "type P = Pair (Int, Int)");
+      ("the shorthand", "type S(Int, Int)", "type S (Int, Int)") ]
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -1073,5 +1087,6 @@ let () =
     ];
     "a bracket against a constructor (#207)", [
       Alcotest.test_case "takes the declaration's form" `Quick test_constructor_brackets;
+      Alcotest.test_case "and a declaration takes its own" `Quick test_declaration_brackets;
     ];
   ]

@@ -42,6 +42,24 @@ let refuse_spaced_fields (ctor : Token.loc) (paren : Token.loc) name =
   | Some from_ -> fail_with_fix at msg (Diag.ReplaceAt { at; from_; to_ = name ^ "(" })
   | None -> fail_at at msg
 
+(* `type W = Wrap(List Int)`: a positional field against the name. In a
+   declaration the bracket says itself which it is, so the parser refuses
+   it, and the fix puts the space in (#207). `before` is the token the
+   bracket is against: the constructor, or a type's last parameter. *)
+let refuse_touching_payload (before : Token.loc) (paren : Token.loc) =
+  let at = { before with Token.end_line = paren.Token.end_line;
+                         end_col = paren.Token.end_col;
+                         end_offset = paren.Token.end_offset } in
+  let word =
+    Option.value ~default:""
+      (Lexer.source_text before.Token.file before.Token.offset before.Token.end_offset) in
+  let msg = Printf.sprintf
+    "a positional field goes after a space: write `%s (`. A bracket against \
+     the name is a list of named fields, as in `%s(name: String)`" word word in
+  match Lexer.source_text before.Token.file at.Token.offset at.Token.end_offset with
+  | Some from_ -> fail_with_fix at msg (Diag.ReplaceAt { at; from_; to_ = word ^ " (" })
+  | None -> fail_at at msg
+
 (* The name a bare import binds: a standard library module's own, or the
    last segment of a path or URL, without `.wand` and with each `-` made a
    `_`. None when that is still not a name. *)
@@ -2977,6 +2995,11 @@ let parse_type_def s =
            'A(n: Int = 3)'";
       (!fields, [], [])
     | Token.LParen when not (newline_breaks_expr s) ->
+      (* The bracket against the name is a list of named fields, and one
+         after a space is a positional field (#207). `before` is the
+         constructor's name, or a type's last parameter. *)
+      let before = last_loc s and paren = peek_loc s in
+      let touching = paren.Token.offset = before.Token.end_offset in
       let saved = mark s in
       ignore (advance s);
       (match peek s with
@@ -2985,6 +3008,13 @@ let parse_type_def s =
                     || (match peek2 s with
                         | Token.String _ -> peek3 s = Token.Colon
                         | _ -> false)) ->
+         if not touching then begin
+           let word =
+             Option.value ~default:""
+               (Lexer.source_text before.Token.file before.Token.offset
+                  before.Token.end_offset) in
+           refuse_spaced_fields before paren word
+         end;
          let parse_named () =
            let fname = expect_field_name s in
            (* `port "Port": Int`: the key the field has in a document. *)
@@ -3024,6 +3054,7 @@ let parse_type_def s =
           List.filter_map (fun (_, _, k) -> k) named)
        | _ ->
          rewind s saved;
+         if touching then refuse_touching_payload before paren;
          (* A field in brackets can come first, with more after it:
             `Rect (List Int) Int`. Read as the whole payload, it left `Int`
             over, and the declaration ended there. The reference has always
