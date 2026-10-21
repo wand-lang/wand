@@ -573,6 +573,18 @@ import  in  interface  let  match  or  requires  return  then  try  type
 unless  when  with
 ```
 
+Six of them do something other than start a form of their own:
+
+| word | what it does |
+|---|---|
+| `fun` | an error: a function is written `fn`, and `wand t --fix` writes it |
+| `when` | an error: a guard is written `if`, and `wand t --fix` writes it |
+| `for`, `do` | an error that says wand has no loops, and names `List.each` and `List.map` |
+| `or` | an error that names `\|\|` |
+| `end` | an error that says expressions group with brackets, not `begin ... end` |
+
+`return` names the arm of a `handle` that the body's own value reaches.
+
 `true` and `false` are the two `Bool` values, and `_` is the wildcard. A
 reserved word where a name goes is a parse error that names the word:
 
@@ -1239,8 +1251,8 @@ arm's body, as in `| x -> if x > 0 then "up" else "down"`. A guard that is
 itself an `if` expression goes in brackets:
 `| x if (if strict then x > 0 else x >= 0) -> ...`.
 
-`when` is the earlier spelling of a guard. wand still accepts it with the same
-meaning, and `wand f` writes it as `if`.
+`when` is the earlier spelling of a guard. It is an error that names `if`,
+and `wand t --fix` writes `if`.
 
 A constructor whose payload is the unit matches `()`, as the unit does
 alone:

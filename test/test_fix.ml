@@ -977,6 +977,19 @@ let test_declaration_brackets () =
       ("a tuple against the name", "type P = Pair(Int, Int)", "type P = Pair (Int, Int)");
       ("the shorthand", "type S(Int, Int)", "type S (Int, Int)") ]
 
+(* `fun` and `when` were read silently; they are errors with the fix now,
+   one word each (#212). *)
+let test_earlier_spellings () =
+  List.iter (fun (label, wrong, right) ->
+    let (fixed, _) = fix (wrong ^ "\n") in
+    Alcotest.(check string) label (right ^ "\n") fixed)
+    [ ("fun", "let f = fun x -> x + 1", "let f = fn x -> x + 1");
+      ("fun in an argument", "let g xs = [1, 2] |> (fun x -> x)", "let g xs = [1, 2] |> (fn x -> x)");
+      ("when", "let f x = match x with | n when n > 0 -> 1 | _ -> 0",
+       "let f x = match x with | n if n > 0 -> 1 | _ -> 0");
+      ("both, and twice", "let f = fun x -> match x with | n when n > 0 -> fun y -> y | _ -> fun y -> y",
+       "let f = fn x -> match x with | n if n > 0 -> fn y -> y | _ -> fn y -> y") ]
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -1088,5 +1101,8 @@ let () =
     "a bracket against a constructor (#207)", [
       Alcotest.test_case "takes the declaration's form" `Quick test_constructor_brackets;
       Alcotest.test_case "and a declaration takes its own" `Quick test_declaration_brackets;
+    ];
+    "an earlier spelling of a keyword (#212)", [
+      Alcotest.test_case "fun and when" `Quick test_earlier_spellings;
     ];
   ]

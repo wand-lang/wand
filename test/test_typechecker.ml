@@ -1126,7 +1126,7 @@ let test_lists () =
 let test_match () =
   expr_is "bool scrutinee" "match true with\n| true -> 1\n| false -> 0" "Int";
   expr_is "wildcard case" "match 1 with\n| 1 -> true\n| _ -> false" "Bool";
-  expr_is "guard" "fn n -> match n with\n| x when x > 0 -> true\n| _ -> false" "Int -> Bool"
+  expr_is "guard" "fn n -> match n with\n| x if x > 0 -> true\n| _ -> false" "Int -> Bool"
 
 let test_pipeline () =
   expr_is "pipeline" "1 |> fn x -> x + 1" "Int";

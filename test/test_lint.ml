@@ -863,7 +863,7 @@ let test_if1 () =
   fires "a wildcard for false"
     "let f x = match x with\n  | true -> 1\n  | _ -> 2" "A-IF1";
   not_fired "a guard"
-    "let f x = match x with\n  | true when x -> 1\n  | _ -> 2" "A-IF1";
+    "let f x = match x with\n  | true if x -> 1\n  | _ -> 2" "A-IF1";
   not_fired "a group of equations"
     "let f true = 1\nlet f false = 2" "A-IF1";
   not_fired "a match over an Int"

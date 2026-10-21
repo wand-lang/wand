@@ -279,9 +279,17 @@ let test_ocaml_let_rec () =
     "let g () = let rec f n = n in f 1\ng ()"
     "a let is already recursive -- drop the 'rec'"
 
-let test_ocaml_fun_is_accepted () =
-  (* `fun` is close enough to be read as `fn` rather than refused. *)
-  ok "fun aliases fn" "let f = fun x -> x + 1\nf 1"
+let test_earlier_spellings_are_refused () =
+  (* `fun` was read as `fn` with no word to the author, who learned the
+     spelling only from `wand f`. It is an error with the fix now (#212). *)
+  expect_error "fun is written fn" "let f = fun x -> x + 1\nf 1"
+    "a function is written `fn` in wand, not `fun`";
+  expect_error "when is written if" "let f x = match x with | n when n > 0 -> 1 | _ -> 0"
+    "a guard is written `if` in wand, not `when`";
+  expect_error "for has no loop" "let f xs = for x in xs do x"
+    "wand has no loops: 'List.each f xs'";
+  expect_error "do has no loop" "let f xs = do x"
+    "wand has no loops"
 
 let test_ocaml_variant_of () =
   expect_error "Circle of Int"
@@ -556,7 +564,7 @@ let () =
       Alcotest.test_case "cons"        `Quick test_ocaml_cons;
       Alcotest.test_case "assignment"  `Quick test_ocaml_assignment;
       Alcotest.test_case "let rec"     `Quick test_ocaml_let_rec;
-      Alcotest.test_case "fun"         `Quick test_ocaml_fun_is_accepted;
+      Alcotest.test_case "fun, when, for, do" `Quick test_earlier_spellings_are_refused;
       Alcotest.test_case "variant of"  `Quick test_ocaml_variant_of;
       Alcotest.test_case "record update" `Quick test_ocaml_record_update;
       Alcotest.test_case "map literal pun" `Quick test_map_literal_pun;

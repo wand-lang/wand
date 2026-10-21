@@ -27,6 +27,18 @@ let take_fix loc msg =
   | Some (l, m, fix), Some l' when l = l' && m = msg -> Some fix
   | _ -> None
 
+(* An earlier spelling of a keyword that wand reads one way: `fun` for `fn`,
+   `when` for a guard's `if`. They were read silently, and only `wand f`
+   wrote the wand spelling, so an author who never formatted never learned
+   it (#212). The fix is the one word. A token that is not the earlier
+   spelling -- `fn` itself reaching here -- is left alone. *)
+let refuse_earlier_spelling (at : Token.loc) ~earlier ~current what =
+  match Lexer.source_text at.Token.file at.Token.offset at.Token.end_offset with
+  | Some text when text = earlier ->
+    let msg = Printf.sprintf "%s is written `%s` in wand, not `%s`" what current earlier in
+    fail_with_fix at msg (Diag.ReplaceAt { at; from_ = earlier; to_ = current })
+  | _ -> ()
+
 (* A field list after a space: `Pod (name = "a")`. A bracket against a
    constructor's name is its field list, and one after a space is an
    ordinary argument (#207), so the space is the one thing wrong, and the
@@ -682,6 +694,11 @@ let keyword_hint = function
     " -- the boolean operator is '&&'; 'and' only joins mutually \
      recursive let bindings"
   | Token.Or -> " -- the boolean operator is '||'"
+  (* Reserved for this hint and nothing else (#212): a loop is what a bash
+     or OCaml author reaches for first. *)
+  | Token.For | Token.Do ->
+    " -- wand has no loops: 'List.each f xs' runs f on each element, and \
+     'List.map f xs' gives a list of the results"
   | Token.End ->
     " -- expressions group with parentheses, not 'begin ... end'"
   (* `in` is a `let`'s own keyword and means nothing without one. Reached
@@ -1742,7 +1759,9 @@ and atom_base_ s =
   | Token.If       -> if_ s
   | Token.Unless   -> unless_ s
   | Token.Match    -> match_ s
-  | Token.Fn       -> fn_ s
+  | Token.Fn       ->
+    refuse_earlier_spelling loc ~earlier:"fun" ~current:"fn" "a function";
+    fn_ s
   | Token.Import   ->
     (match advance s with
      | Token.Upper n -> ImportExpr (Ast.StdlibModule n)
@@ -2401,10 +2420,17 @@ and match_ s =
     let p = PLocated (at, arm_pat_ s at) in
     (* A guard starts with `if` (#142). A pattern never holds `if`, so an
        `if` before the arrow can only start a guard. `when` is the earlier
-       spelling and has the same meaning; `wand f` writes it as `if`. A
+       spelling: an error that `wand t --fix` turns into `if` (#212). A
        guard that is itself an `if` expression goes in brackets. *)
     let guard =
-      if peek s = Token.When || peek s = Token.If then begin
+      if peek s = Token.When then begin
+        let at = peek_loc s in
+        let msg = "a guard is written `if` in wand, not `when`" in
+        match Lexer.source_text at.Token.file at.Token.offset at.Token.end_offset with
+        | Some from_ -> fail_with_fix at msg (Diag.ReplaceAt { at; from_; to_ = "if" })
+        | None -> fail_at at msg
+      end
+      else if peek s = Token.If then begin
         ignore (advance s);
         Some (locate s (fun () -> expr_ 0 s))
       end else None

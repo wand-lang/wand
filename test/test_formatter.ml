@@ -820,7 +820,7 @@ let test_behavior_preserved () =
     "6";
   ok_after_format "match with guard"
     {|let f x = match x with
-| n when n < 0 -> "neg"
+| n if n < 0 -> "neg"
 | 0 -> "zero"
 | _ -> "pos"
 f (-5)|}
@@ -2475,24 +2475,21 @@ let test_a_guard_is_written_with_if () =
     Alcotest.(check string) label want out;
     Alcotest.(check string) (label ^ ": and settles") out (fmt out)
   in
-  check "when becomes if"
-    "let f x =\n  match x with\n  | n when n > 0 -> 1\n  | _ -> 0\n"
-    "let f x =\n  match x with\n  | n if n > 0 -> 1\n  | _ -> 0\n";
   check "an if guard is kept"
     "let f x =\n  match x with\n  | Ok n if n >= 1 -> n\n  | _ -> 0\n"
     "let f x =\n  match x with\n  | Ok n if n >= 1 -> n\n  | _ -> 0\n";
   check "an if expression as a guard keeps its brackets"
     "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n"
     "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n";
-  check "an if expression after when gets brackets"
-    "let f a x =\n  match x with\n  | n when if a then n > 0 else n < 0 -> 1\n  | _ -> 0\n"
+  check "an if expression as a guard gets brackets"
+    "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n"
     "let f a x =\n  match x with\n  | n if (if a then n > 0 else n < 0) -> 1\n  | _ -> 0\n";
   check "an if after the arrow stays the body"
     "let f a x =\n  match x with\n  | n -> if a then n else 0\n"
     "let f a x =\n  match x with\n  | n -> if a then n else 0\n";
   ok_after_format "an if guard runs the same after a format"
     {|let f a x = match x with
-| n when n < 0 -> "neg"
+| n if n < 0 -> "neg"
 | n if (if a then n > 5 else n > 50) -> "big"
 | n -> if n == 0 then "zero" else "pos"
 [f true 7, f false 7, f true (-1), f true 0, f false 3]|}

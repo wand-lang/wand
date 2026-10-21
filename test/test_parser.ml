@@ -912,12 +912,13 @@ let test_match () =
       (Wild,  None, Bool true);
     ]));
   e "guard"
-    "match x with\n| n when n > 0 -> true\n| _ -> false"
+    "match x with\n| n if n > 0 -> true\n| _ -> false"
     (Match (Var "x", [
       (PVar "n", Some (BinOp (">", Var "n", Int 0)), Bool true);
       (Wild,     None,                               Bool false);
     ]));
-  (* `if` starts a guard (#142); `when` above is the earlier spelling. *)
+  (* `if` starts a guard (#142); `when`, the earlier spelling, is an
+     error with a fix since #212. *)
   e "an if guard"
     "match x with\n| n if n > 0 -> true\n| _ -> false"
     (Match (Var "x", [
