@@ -2583,6 +2583,10 @@ and emit_scrutinee indent scr =
      already ended by the time the next line starts -- the parser reaches the
      argument below expecting the keyword. *)
   | App _ -> bracket_if_wrapped_app_at ~anchor:indent scr (emit_expr indent scr)
+  (* A tuple, a list and a map hold their own brackets, which already end
+     the subject before the `with`. Bracketed again they came out as
+     `match ((a, b)) with` (wmd, after 0.113.0). *)
+  | Tuple _ | List _ | MapLit _ -> emit_expr indent scr
   (* Any other scrutinee that takes more than one line needs them too. An
      `if` whose `then` branch went below its line holds a body of
      statements there, and the `with` and the arms after it became part of

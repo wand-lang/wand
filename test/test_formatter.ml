@@ -638,6 +638,15 @@ let test_one_name_is_kept () =
   fmt_eq "a construction of one name before a field keeps its bracket"
     "let n = (B(x)).n" "let n = (B(x)).n"
 
+(* A match subject over several lines is bracketed (#211), and a tuple there
+   keeps the one pair of brackets it has. *)
+let test_a_tuple_subject_keeps_its_brackets () =
+  let src =
+    "let f s cmd =\n  match (\n    a_rather_long_function_name s cmd,\n    another_rather_long_function_name cmd |> Option.default []\n  ) with\n  | (x, _) -> x\n" in
+  let out = fmt src in
+  Alcotest.(check bool) "one pair" false (Lint.contains out "((");
+  Alcotest.(check string) "and it settles" out (fmt out)
+
 (* Statements one per line are one flat sequence, as the same statements
    with `;` in a bracket are. They were nested to the left, and each one
    past the second came back inside another pair of brackets:
@@ -2615,6 +2624,8 @@ let () =
         test_a_then_branch_keeps_the_else_from_an_inner_if;
       Alcotest.test_case "a pun reads back" `Quick
         test_a_pun_reads_back_as_the_field_it_came_from;
+      Alcotest.test_case "a tuple subject keeps its brackets" `Quick
+        test_a_tuple_subject_keeps_its_brackets;
       Alcotest.test_case "an arm before a semicolon" `Quick
         test_an_arm_before_a_semicolon_is_bracketed;
       Alcotest.test_case "a comment inside an item" `Quick test_a_comment_inside_an_item;
