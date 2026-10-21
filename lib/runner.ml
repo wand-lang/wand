@@ -4317,6 +4317,176 @@ let module_lines (sess : session) modname : string list option =
                (List.sort (fun (a, _) (b, _) -> String.compare a b) members)))
   | _ -> None
 
+(* What a type is, for `wand d` (#213): its declaration, as `wand f` writes
+   one, and the key its doc is filed under. A type answered "no doc" before,
+   so its fields and constructors could be found only in the reference --
+   and `ShellResult`, which the reference shows only in use, nowhere.
+
+   A name finds a type by its own name or by one of its constructors', in
+   the built-in types, every stdlib module (`Hash.Algorithm`, or bare
+   `Algorithm`), and the files `--load` named. A bare name that only a
+   module declares says which module, since that is how it is written. *)
+(* The docs of the built-in types, which are declared in no file. The four
+   with nothing to declare -- no fields, no constructors -- are said here
+   too, so that `wand d Command` says what makes one. *)
+let builtin_type_docs = [
+  ("ShellResult", "What `$?(...)` and `Shell.query` give, and `Shell.close`: the \
+                   command's output, its error output, and its exit code. `$?(...)` \
+                   does not raise when the code is not 0.");
+  ("HTTPMethod", "The method of an HTTP request, written with its module: `HTTP.GET`, \
+                  `HTTP.POST`.");
+  ("HTTPRequest", "An HTTP request in full, for `HTTP.request`. Every field but `url` \
+                   has a default.");
+  ("HTTPResponse", "What `HTTP.get`, `HTTP.post` and `HTTP.request` give, and what a \
+                    handler of `HTTP.serve!` answers with (`HTTP.reply`).");
+  ("Option", "A value that may be absent: `Some x` or `None`. `Map.get`, `List.get` \
+              and `Env.get` give one.");
+  ("CommandLine", "How to read a command line into a record: `T.parser` derives one \
+                   from T's fields, and `Args.read` takes it.");
+  ("Command", "A command that has not run. `$*(...)` makes one, and `Shell.run!`, \
+               `Shell.run`, `Shell.query` and `Shell.spawn` run it. Nothing turns a \
+               String into one.");
+  ("Process", "A command that is running: `Shell.spawn` starts one. `Shell.read_line`, \
+               `Shell.write` and the others talk to it, and `Shell.close` waits for \
+               it and gives a ShellResult.");
+  ("Connection", "A client of `Net.listen`. `Net.read_line`, `Net.read`, `Net.write` and \
+                  `Net.peer` use it.");
+  ("Decoder", "How to read a value of type 'a from JSON, TOML, YAML, CSV or a command \
+               line. The `Decode` module builds one, and a type derives one: \
+               `T.decoder`.");
+]
+
+let opaque_types = ["Command"; "Process"; "Connection"; "Decoder"]
+
+(* A type's doc: the one its file gives it, or, for an alias with none of
+   its own, its target's -- `HTTP.Request` is `HTTPRequest` under the name
+   a reader reaches for first, and says so. *)
+let type_doc (t : Ast.type_def) own =
+  match own, t with
+  | Some _, _ -> own
+  | None, Ast.Alias (_, _, te) ->
+    let rec head = function
+      | Ast.TEName n -> Some n
+      | Ast.TEApp (f, _) -> head f
+      | _ -> None
+    in
+    (match head te with
+     | Some n ->
+       Option.map (fun d -> Printf.sprintf "The same type as %s. %s" n d)
+         (List.assoc_opt n builtin_type_docs)
+     | None -> None)
+  (* The parser reads `type Request = HTTPRequest` as one constructor named
+     like the built-in type; the checker makes it an alias later. *)
+  | None, Ast.Variants (_, _, [c]) when List.mem_assoc c.Ast.name builtin_type_docs ->
+    Some (Printf.sprintf "The same type as %s. %s" c.Ast.name
+            (List.assoc c.Ast.name builtin_type_docs))
+  | None, _ -> None
+
+let type_lines ?(loaded = []) (_sess : session) name : (string list * string option) option =
+  (* Each declaration with its module, and the doc the file gives it. *)
+  let parse ~file src =
+    try
+      let prog = Parser.parse_program (Lexer.tokenize ~file src) in
+      List.filter_map (function
+        | Ast.TLType (t, _) ->
+          let n = (match t with Ast.Variants (n, _, _) | Ast.Alias (n, _, _) -> n) in
+          Some (t, List.assoc_opt n prog.Ast.docs)
+        | _ -> None) prog.Ast.items
+    with _ -> []
+  in
+  let builtin =
+    List.map (fun (n, t) -> (None, t, List.assoc_opt n builtin_type_docs))
+      Typechecker.builtin_tenv
+  in
+  let stdlib =
+    List.concat_map (fun (m, src) ->
+      List.map (fun (t, d) -> (Some m, t, d)) (parse ~file:("<stdlib>/" ^ m ^ ".wand") src))
+      Stdlib_embed.table
+  in
+  let files =
+    List.concat_map (fun path ->
+      match In_channel.with_open_text path In_channel.input_all with
+      | src -> List.map (fun (t, d) -> (None, t, d)) (parse ~file:path src)
+      | exception Sys_error _ -> []) loaded
+  in
+  let tname = function Ast.Variants (n, _, _) | Ast.Alias (n, _, _) -> n in
+  let ctors = function
+    | Ast.Variants (_, _, cs) -> List.map (fun (c : Ast.ctor_def) -> c.name) cs
+    | Ast.Alias _ -> []
+  in
+  let (modname, bare) =
+    match String.rindex_opt name '.' with
+    | Some i -> (Some (String.sub name 0 i), String.sub name (i + 1) (String.length name - i - 1))
+    | None -> (None, name)
+  in
+  let matches (m, t, _) =
+    match modname with
+    | None -> tname t = bare || List.mem bare (ctors t)
+    (* `Digest.Sha256` in its module, or `Option.Some` and
+       `PullPolicy.Always`, a constructor written with its type. *)
+    | Some want ->
+      (m = Some want && (tname t = bare || List.mem bare (ctors t)))
+      || (m = None && tname t = want && List.mem bare (ctors t))
+  in
+  let hits = List.filter matches (builtin @ files @ stdlib) in
+  (* A bare name that a built-in or a loaded file declares means that one,
+     as it would in a script. *)
+  let hits =
+    match List.filter (fun (m, _, _) -> m = None) hits with
+    | [] -> hits
+    | own -> own
+  in
+  match hits with
+  | [] when modname = None && List.mem bare opaque_types ->
+    let params = if bare = "Decoder" then " 'a" else "" in
+    Some ([Printf.sprintf "type %s%s, built in, with nothing inside to name" bare params]
+          @ (match List.assoc_opt bare builtin_type_docs with Some d -> [d] | None -> []),
+          None)
+  | [] -> None
+  | _ ->
+    let qualify m n = match m with Some m -> m ^ "." ^ n | None -> n in
+    let one (m, t, doc) =
+      let decl = String.split_on_char '\n' (Formatter.emit_type_def t) in
+      let whose =
+        if tname t = bare then []
+        else [Printf.sprintf "%s is a constructor of %s" (qualify m bare) (qualify m (tname t))]
+      in
+      let where =
+        match m, modname with
+        | Some m, None ->
+          [Printf.sprintf "declared in %s: write %s" m
+             (String.concat ", " (List.map (qualify (Some m)) (tname t :: ctors t)))]
+        | _ -> []
+      in
+      whose @ decl @ where @ (match type_doc t doc with Some d -> [d] | None -> [])
+    in
+    let lines = List.concat (List.mapi (fun i h -> (if i > 0 then [""] else []) @ one h) hits) in
+    Some (lines, None)
+
+(* The built-in and stdlib types that `wand d` would show with no doc. A
+   gate keeps it empty (#213), as `check_docs` keeps every function's
+   example. *)
+let undocumented_types () =
+  let builtin =
+    List.filter_map (fun (n, _) ->
+      if List.mem_assoc n builtin_type_docs then None else Some n) Typechecker.builtin_tenv
+    @ List.filter (fun n -> not (List.mem_assoc n builtin_type_docs)) opaque_types
+  in
+  let stdlib =
+    List.concat_map (fun (m, src) ->
+      match Parser.parse_program (Lexer.tokenize ~file:("<stdlib>/" ^ m ^ ".wand") src) with
+      | prog ->
+        List.filter_map (function
+          | Ast.TLType (t, _) ->
+            let n = (match t with Ast.Variants (n, _, _) | Ast.Alias (n, _, _) -> n) in
+            (match type_doc t (List.assoc_opt n prog.Ast.docs) with
+             | Some _ -> None
+             | None -> Some (m ^ "." ^ n))
+          | _ -> None) prog.Ast.items
+      | exception _ -> [m ^ " (does not parse)"]) Stdlib_embed.table
+  in
+  builtin @ stdlib
+
 (* `Int.max` -> the interfaces `Int` claims that declare `max`. A name with
    no module part answers with none: a binding of a script's own answers to
    nothing. *)

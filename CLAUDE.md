@@ -193,6 +193,7 @@ Write the script, then let the tools drive the edits:
 ```bash
 wand d List                 # a module's members; `wand d` alone lists the modules
 wand d List.sort_by         # one name: its type, its doc and its examples
+wand d ShellResult          # a type: its fields or its constructors, and its doc
 wand -e 'String.words "a b"'  # evaluate an expression, to try a call before using it
 wand t script.wand          # typecheck a file (wand t -e "..." for a snippet)
 wand t --fix script.wand    # apply the fixes findings carry (manifest lines, missing and dead imports)

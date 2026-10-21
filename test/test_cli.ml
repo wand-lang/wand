@@ -884,6 +884,34 @@ let test_wand_d_marks_interfaces () =
     Alcotest.(check bool) "null where there is none" true
       (contains_sub out "\"name\":\"Int.abs\",\"type\":\"Int -> Int\",\"implements\":null"))
 
+(* A type answered "no doc", so its fields and constructors were nowhere but
+   the reference (#213). *)
+let test_wand_d_shows_a_type () =
+  in_scratch (fun d ->
+    let has label args want =
+      let (code, out) = wand_out ~dir:d args in
+      Alcotest.(check int) (label ^ ": exit") 0 code;
+      Alcotest.(check bool) label true (contains_sub out want)
+    in
+    has "a built-in record" ["d"; "ShellResult"]
+      "type ShellResult(stdout: String, stderr: String, code: Int)";
+    has "with its doc" ["d"; "ShellResult"] "its exit code";
+    has "a stdlib type" ["d"; "Digest.Algorithm"] "type Algorithm = Sha256 | Sha512 | Sha1 | Md5";
+    has "a bare stdlib type says where it is" ["d"; "Algorithm"] "declared in Digest: write Digest.Algorithm, Digest.Sha256";
+    has "a constructor names its type" ["d"; "Digest.Sha256"] "Digest.Sha256 is a constructor of Digest.Algorithm";
+    has "a constructor written with its type" ["d"; "Option.Some"] "Some is a constructor of Option";
+    has "a type with nothing to declare" ["d"; "Command"] "`$*(...)` makes one";
+    has "an alias gives its target's doc" ["d"; "HTTP.Request"] "The same type as HTTPRequest.";
+    write_file (Filename.concat d "pod.wand")
+      "-- A pod, as kubectl reports it.\ntype Pod(name: String, tries: Int = 3)\n";
+    has "a loaded file's type" ["d"; "--load"; "pod.wand"; "Pod"] "type Pod(name: String, tries: Int = 3)";
+    has "and its doc" ["d"; "--load"; "pod.wand"; "Pod"] "A pod, as kubectl reports it.";
+    let (_, out) = wand_out ~dir:d ["d"; "Nope"] in
+    Alcotest.(check bool) "a name that is nothing still says so" true (contains_sub out "Nope: no doc"))
+
+let test_every_type_has_a_doc () =
+  Alcotest.(check (list string)) "types with no doc" [] (Wand.Runner.undocumented_types ())
+
 (* ── Interfaces across files ─────────────────────────────────────────────── *)
 
 (* An interface belongs to the module that declares it and is reached through
@@ -1405,6 +1433,8 @@ let () =
       Alcotest.test_case "interfaces at every arity" `Quick test_interfaces_at_every_arity;
       Alcotest.test_case "each parameter binds its own" `Quick test_each_parameter_binds_its_own_type;
       Alcotest.test_case "wand d marks interfaces" `Quick test_wand_d_marks_interfaces;
+      Alcotest.test_case "wand d shows a type" `Quick test_wand_d_shows_a_type;
+      Alcotest.test_case "every type has a doc" `Quick test_every_type_has_a_doc;
       Alcotest.test_case "a module passed as a value" `Quick test_a_module_is_passed_to_generic_code;
       Alcotest.test_case "no bare imported interface" `Quick test_an_imported_interface_has_no_bare_form;
       Alcotest.test_case "two modules, one name" `Quick test_two_modules_may_declare_one_name;

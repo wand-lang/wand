@@ -78,6 +78,7 @@ wand -e "1 + 2"              # evaluate an expression
 wand t script.wand           # typecheck a file without running it
 wand t .                     # typecheck every .wand file from here down
 wand d "List.map"            # show doc string
+wand d ShellResult           # a type: its fields or its constructors
 wand d                       # list the modules in scope
 wand d --index               # every module's members, with signatures
 wand f script.wand           # format a file in place
@@ -8466,6 +8467,25 @@ alone does not say what to intercept or what a test should mock. It is also
 where the naming rule stops holding: `JSON.read_file` performs
 `FS!read_file`, not `JSON!read_file`. A function that performs nothing has
 no such line.
+
+For a type, `wand d` prints its declaration, as `wand f` writes one, and
+then its doc. A record shows its fields with their types and defaults, and
+a type with constructors shows each one. A constructor shows the type it
+belongs to. A bare name that only a module declares says how to write it:
+
+```text
+$ wand d ShellResult
+type ShellResult(stdout: String, stderr: String, code: Int)
+What `$?(...)` and `Shell.query` give, and `Shell.close`: ...
+
+$ wand d Sha256
+Digest.Sha256 is a constructor of Digest.Algorithm
+type Algorithm = Sha256 | Sha512 | Sha1 | Md5
+declared in Digest: write Digest.Algorithm, Digest.Sha256, Digest.Sha512, Digest.Sha1, Digest.Md5
+```
+
+This works for the built-in types, the stdlib's, and the types of a file
+that `--load` names.
 
 `wand d --index` prints every module's members with their signatures, in one
 listing — the answer `wand d <Module>` gives, for each module in turn. It is

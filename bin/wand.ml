@@ -1136,6 +1136,16 @@ let main () =
                  the argument and nothing downstream has to branch on it. *)
               print_endline ("[" ^ Wand.Runner.doc_json sess name ^ "]")
             else begin
+              (* A type, or a constructor of one: its declaration, and then
+                 the doc filed under the type's own name (#213). *)
+              let as_type =
+                match Wand.Runner.lookup_type sess name with
+                | Some _ -> None
+                | None -> Wand.Runner.type_lines ~loaded:loads sess name
+              in
+              (match as_type with
+               | Some (lines, _) -> List.iter print_endline lines
+               | None -> ());
               (match Wand.Runner.lookup_type sess name with
                (* The interfaces go on the signature, where `--index` puts
                   them too, rather than in a slot of their own. *)
@@ -1151,6 +1161,7 @@ let main () =
                | []  -> ()
                | ops -> Printf.printf "performs %s\n" (String.concat ", " ops));
               (match List.assoc_opt name sess.Wand.Runner.s_docs with
+               | _ when as_type <> None -> ()
                | Some doc -> print_endline doc
                | None     -> Printf.printf "%s: no doc\n" name)
             end)
