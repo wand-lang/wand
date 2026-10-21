@@ -249,10 +249,10 @@ let round_trip! y = YAML.parse! (YAML.stringify y)
 group "writing YAML" (fn () -> [
   test "every tricky string reads back as itself, as a value" (fn t ->
     let y =
-      YAML.of! (Map.from_list (List.map (fn (i, s) -> ("k%{i}", s)) (List.indexed tricky)));
+      YAML.of! (Map.of_list (List.map (fn (i, s) -> ("k%{i}", s)) (List.indexed tricky)));
     t.eq y (round_trip! y)),
   test "and as a key" (fn t ->
-    let y = YAML.of! (Map.from_list (List.map (fn s -> (s, "v")) tricky));
+    let y = YAML.of! (Map.of_list (List.map (fn s -> (s, "v")) tricky));
     t.eq y (round_trip! y)),
   test "an Int stays an Int" (fn t ->
     let y = YAML.of! [0, -1, 4611686018427387903];

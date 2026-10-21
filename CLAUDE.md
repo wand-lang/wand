@@ -147,9 +147,9 @@ last release while behaving differently.
 `CHANGELOG.md` and `.github/release-notes.md` give one short line per
 change, with its issue number, under Added, Changed, Fixed and
 Documentation: `- wand f takes a directory (#57).` The explanation belongs
-in the commit message and the issue. The release notes add an Upgrading
-section only when a change can make an existing file fail, one line per
-change saying what to do.
+in the commit message and the issue. A change that can make an existing
+file fail stays under Changed, and its line says what to do: there is no
+Upgrading section.
 
 ```bash
 make release VERSION=0.6.0          # tags, pushes, builds the macOS x86_64
@@ -458,7 +458,7 @@ gives one name's type and examples.
 | `IO` | flush print print_err println println_err read_all(!) read_line(!) stdin_lines |
 | `String` | between? bytes clamp contains? empty? ends_with? join length lines lower max min repeat replace reverse slice split starts_with? trim trim_left trim_right truncate upper word(!) words |
 | `List` | all? any? concat contains? drop drop_while each empty empty? filter filter_map find flat_map flatten fold_left fold_right get(!) greatest_by head(!) indexed length map max min range reverse smallest_by sort sort_by sum tail(!) take take_while tally unique zip |
-| `Map` | delete empty empty? filter from_list get(!) has? keys map merge set size to_list update values |
+| `Map` | delete empty empty? filter get(!) has? keys map merge of_list set size to_list update values |
 | `FS` | append(!) append_lines(!) copy(!) copy_tree(!) create_file(!) cwd delete(!) delete_tree(!) dir? exists? file? glob glob_in list_dir(!) lock(!) lock_wait(!) mkdir(!) mtime(!) read_file(!) rename(!) size(!) stream_lines stream_lines_all temp_dir temp_file write_atomic(!) write_file(!) write_lines(!) write_lines_atomic(!) |
 | `Path` | absolute? basename between? clamp components extension join max min normalize of_string parent relative? relative_to(!) to_string with_extension |
 | `Regex` | capture compile(!) match? match_all replace replace_all replace_all_with replace_with split |

@@ -55,10 +55,10 @@ group "log-top-talkers" (fn () -> [
     t.eq (Some "10.0.0.9") (client `10.0.0.9 - - [x] "GET /" 200`)),
   test "a blank line has no client" (fn t -> t.ok (Option.none? (client ""))),
   test "the busiest come first" (fn t ->
-    t.eq [("a", 3), ("b", 2)] (busiest 2 (Map.from_list [("a", 3), ("b", 2), ("c", 1)]))),
+    t.eq [("a", 3), ("b", 2)] (busiest 2 (Map.of_list [("a", 3), ("b", 2), ("c", 1)]))),
   -- A tie is broken by name, so the report does not shuffle between runs.
   test "a tie is broken by name" (fn t ->
-    t.eq [("a", 2), ("b", 2)] (busiest 2 (Map.from_list [("b", 2), ("a", 2)])))
+    t.eq [("a", 2), ("b", 2)] (busiest 2 (Map.of_list [("b", 2), ("a", 2)])))
 ])
 
 group "disk-threshold" (fn () -> [

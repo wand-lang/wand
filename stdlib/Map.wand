@@ -115,9 +115,9 @@ let to_list m = map_to_list m
 -- the map's. Where a key appears twice, the last value wins and sits at the
 -- first appearance.
 --
--- >> Map.from_list [("b", 2), ("a", 1)]
+-- >> Map.of_list [("b", 2), ("a", 1)]
 -- {b = 2, a = 1} : Map Int
-let from_list xs = map_from_list xs
+let of_list xs = map_of_list xs
 
 -- Merge two maps. Keys in the second map take precedence. The first map's
 -- keys hold their positions, and keys only the second has go on the end.

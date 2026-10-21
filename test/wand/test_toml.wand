@@ -247,7 +247,7 @@ test "stringify writes the keys in their order" (fn t ->
 test "of keeps a map's order" (fn t ->
   t.eq
     "zebra = 1\napple = 2\n"
-    (TOML.stringify (TOML.of! (Map.from_list [("zebra", 1), ("apple", 2)]))))
+    (TOML.stringify (TOML.of! (Map.of_list [("zebra", 1), ("apple", 2)]))))
 
 test "decoding to a Map keeps the order" (fn t ->
   t.eq

@@ -1623,7 +1623,7 @@ Map.values m       -- [1, 2, 3]
 Map.size   m       -- 3
 Map.empty? m       -- false
 Map.to_list m      -- [("x", 1), ("y", 2), ("z", 3)]
-Map.from_list [("a", 1), ("b", 2)]   -- {a = 1, b = 2}
+Map.of_list [("a", 1), ("b", 2)]   -- {a = 1, b = 2}
 Map.map    (fn x -> x * 2) m         -- {x = 2, y = 4, z = 6}
 Map.filter (fn x -> x > 1) m        -- {y = 2, z = 3}
 Map.merge m1 m2                      -- keys in m2 take precedence
@@ -5501,7 +5501,7 @@ values    : Map 'a -> List 'a
 size      : Map 'a -> Int
 empty?    : Map 'a -> Bool
 to_list   : Map 'a -> List (String, 'a)
-from_list : List (String, 'a) -> Map 'a
+of_list   : List (String, 'a) -> Map 'a
 merge     : Map 'a -> Map 'a -> Map 'a
 map       : ('a -> 'b) -> Map 'a -> Map 'b
 filter    : ('a -> Bool) -> Map 'a -> Map 'a
@@ -6381,7 +6381,7 @@ let served! scripts =
     Shared.get out
   )
 
-served! (Map.from_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])
+served! (Map.of_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])
 -- {ann = ["hi!"], bo = ["yo!", "bye!"]} for a server that echoes with a "!"
 ```
 

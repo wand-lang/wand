@@ -113,13 +113,13 @@ group "a header that breaks the wire rule" (fn () ->
     test "a CR LF in a value is refused" (fn t ->
       t.eq
         "http: the value of header x-a holds a CR, LF or NUL byte"
-        (reason (Map.from_list [("x-a", "v\r\nInjected: yes")]))),
+        (reason (Map.of_list [("x-a", "v\r\nInjected: yes")]))),
     test "a NUL in a value is refused" (fn t ->
-      t.eq false (Result.ok? (send (Map.from_list [("x-a", "a\x00b")])))),
+      t.eq false (Result.ok? (send (Map.of_list [("x-a", "a\x00b")])))),
     test "a name that starts with @ is refused" (fn t ->
       t.eq
         `http: the header name "@hdr" is not an RFC 7230 token`
-        (reason (Map.from_list [("@hdr", "z")]))),
+        (reason (Map.of_list [("@hdr", "z")]))),
     test "a name with a separator or a line break is refused" (fn t ->
       t.eq
         [
@@ -127,14 +127,14 @@ group "a header that breaks the wire rule" (fn () ->
           `http: the header name "a\nb" is not an RFC 7230 token`,
           `http: the header name "" is not an RFC 7230 token`
         ]
-        (List.map (fn k -> reason (Map.from_list [(k, "v")])) ["x;", "a\nb", ""])),
+        (List.map (fn k -> reason (Map.of_list [(k, "v")])) ["x;", "a\nb", ""])),
     test "the raising form raises" (fn t ->
       t.raises (fn () ->
         Test.with_http [] (fn () ->
           HTTP.request! HTTP.Request(
             url = https://api.example.com/x,
-            headers = Map.from_list [("x", "a\nb")]
+            headers = Map.of_list [("x", "a\nb")]
           )))),
     test "a token name and a clean value are sent" (fn t ->
-      t.eq "sent" (reason (Map.from_list [("X-Custom_1.v~", `a: b; c="d"`)])))
+      t.eq "sent" (reason (Map.of_list [("X-Custom_1.v~", `a: b; c="d"`)])))
   ])

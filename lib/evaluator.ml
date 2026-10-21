@@ -8889,15 +8889,15 @@ let map_builtins : env = [
   ("map_to_list", VBuiltin (function
     | VMap m -> VList (List.map (fun (k, v) -> VTuple [VString k; v]) (vmap_list m))
     | _ -> raise (EvalError "map_to_list: expected Map")));
-  ("map_from_list", VBuiltin (function
+  ("map_of_list", VBuiltin (function
     | VList pairs ->
       charge (List.length pairs);
       let kvs = List.map (function
         | VTuple [VString k; v] -> (k, v)
-        | _ -> raise (EvalError "map_from_list: expected list of (String, value) tuples")) pairs
+        | _ -> raise (EvalError "map_of_list: expected list of (String, value) tuples")) pairs
       in
       VMap (vmap_of_list kvs)
-    | _ -> raise (EvalError "map_from_list: expected List")));
+    | _ -> raise (EvalError "map_of_list: expected List")));
   ("map_merge", VBuiltin (function
     | VMap a -> VBuiltin (function
       | VMap b ->

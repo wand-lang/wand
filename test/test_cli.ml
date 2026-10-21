@@ -981,7 +981,7 @@ let test_an_interface_travels_with_its_types () =
        let lib = import ./lib\n\n\
        let one : shp.B = impl\n\
        let count (l: lib.Lib) = Map.size l\n\n\
-       IO.println \"%{(one.create \"x\").g} %{count (Map.from_list [(\"a\", one)])}\"\n";
+       IO.println \"%{(one.create \"x\").g} %{count (Map.of_list [(\"a\", one)])}\"\n";
     let (code, out) = wand_out ~dir:d ["main.wand"] in
     Alcotest.(check (pair int string)) "it runs" (0, "3 1\n") (code, out))
 
@@ -1003,7 +1003,7 @@ let test_a_list_of_modules_is_a_list_of_their_interface () =
        let rev = import ./rev\n\n\
        let typed : List (ord.Ranked Int) = [ints, rev]\n\
        let bare = [ints, rev]\n\
-       let named : Map (ord.Ranked Int) = Map.from_list [(\"i\", ints), (\"r\", rev)]\n\n\
+       let named : Map (ord.Ranked Int) = Map.of_list [(\"i\", ints), (\"r\", rev)]\n\n\
        IO.println \"%{List.map (fn (m: ord.Ranked Int) -> m.top 3 7) typed} \
        %{List.length bare} %{Map.size named}\"\n";
     let (code, out) = wand_out ~dir:d ["main.wand"] in

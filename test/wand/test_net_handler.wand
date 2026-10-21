@@ -37,5 +37,5 @@ let served! scripts =
 
 test "each fake connection gets the replies to its own lines" (fn t ->
   t.eq
-    (Map.from_list [("ann", ["hi!"]), ("bo", ["yo!", "bye!"])])
-    (served! (Map.from_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])))
+    (Map.of_list [("ann", ["hi!"]), ("bo", ["yo!", "bye!"])])
+    (served! (Map.of_list [("ann", ["hi"]), ("bo", ["yo", "bye"])])))

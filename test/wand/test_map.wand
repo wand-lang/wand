@@ -22,8 +22,8 @@ test "and the count agrees with what can be reached" (fn t ->
     Map.get "a" {a = 1, a = 9}
   ))
 
-test "from_list resolves them the same way" (fn t ->
-  t.eq {a = 9, b = 2} (Map.from_list [("a", 1), ("b", 2), ("a", 9)]))
+test "of_list resolves them the same way" (fn t ->
+  t.eq {a = 9, b = 2} (Map.of_list [("a", 1), ("b", 2), ("a", 9)]))
 
 -- Where a key already is, is where it stays -- otherwise editing one field
 -- of a config rewrites the order of the whole file.

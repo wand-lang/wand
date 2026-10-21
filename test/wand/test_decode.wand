@@ -298,7 +298,7 @@ test "and what is not a port is not a port, written either way" (fn t ->
 test "an object with dynamic keys reads as a Map" (fn t ->
   let counts = JSON.parse! `{"web-01": 3, "db-01": 12}`;
   t.eq
-    (Ok (Map.from_list [("web-01", 3), ("db-01", 12)]))
+    (Ok (Map.of_list [("web-01", 3), ("db-01", 12)]))
     (JSON.decode (Decode.dict Decode.int) counts))
 
 test "and a bad value names the key it was under" (fn t ->

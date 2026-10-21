@@ -288,7 +288,7 @@ let _header_pairs lines =
       String.trim (String.join ":" rest)
     ))
 
-let _parse_headers lines = Map.from_list (_header_pairs lines)
+let _parse_headers lines = Map.of_list (_header_pairs lines)
 
 -- How the body's length is framed, or why the request cannot be read. A
 -- second `Content-Length` used to replace the first, and a
@@ -333,7 +333,7 @@ let _read_request (limits: Server) conn =
       | None -> Error (501, "")
       | Some method -> (
         let pairs = _header_pairs rest;
-        let headers = Map.from_list pairs;
+        let headers = Map.of_list pairs;
         match _body_length pairs with
         | Error refusal -> Error refusal
         | Ok length -> if length > Size.to_bytes limits.max_body then

@@ -41,7 +41,7 @@ test "the list gives a lambda its type" (fn t ->
   t.eq ["a", "c"] (pairs |> List.filter (fn p -> p.1 > 0) |> List.map (fn p -> p.0)))
 
 test "from Map.to_list" (fn t ->
-  let m = Map.from_list [("x", 1), ("y", 2)];
+  let m = Map.of_list [("x", 1), ("y", 2)];
   t.eq [1, 2] (Map.to_list m |> List.map (fn kv -> kv.1)))
 
 test "in an interpolation" (fn t -> t.eq "a=1" "%{pair.0}=%{pair.1}")

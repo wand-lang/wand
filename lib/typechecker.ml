@@ -1681,6 +1681,9 @@ let foreign_name_hint = function
    neighbour by spelling is 'filter', but its meaning is 'each'. *)
 let foreign_member_hint ns member =
   match ns, member with
+  (* wand's own earlier name: every other conversion into a type is
+     `of_X`, as `Stream.of_list` is (#210). *)
+  | "Map", "from_list" -> Some "use Map.of_list"
   | "List", "iter" -> Some "use List.each"
   | "List", "iteri" -> Some "use List.each, with List.indexed for positions"
   (* The spelling guess answered 'map', which takes one list: the call it
@@ -1775,6 +1778,7 @@ let foreign_member_hint ns member =
    functions, or a form to write, is a choice for the author. *)
 let foreign_member_fix ns member =
   match ns, member with
+  | "Map", "from_list" -> Some "Map.of_list"
   | "List", "iter" -> Some "List.each"
   | "List", "enumerate" -> Some "List.indexed"
   | "List", ("mem" | "elem" | "includes?" | "includes") ->
@@ -7847,7 +7851,7 @@ let stdlib_type_env : env = [
   ("map_values",   let a = fresh () in generalize [] ((TMap a @-> TList a)));
   ("map_size",     let a = fresh () in generalize [] ((TMap a @-> TInt)));
   ("map_to_list",  let a = fresh () in generalize [] ((TMap a @-> TList (TTuple [TString; a]))));
-  ("map_from_list",let a = fresh () in generalize [] ((TList (TTuple [TString; a]) @-> TMap a)));
+  ("map_of_list",let a = fresh () in generalize [] ((TList (TTuple [TString; a]) @-> TMap a)));
   ("map_update",   let a = fresh () in
                    generalize [] ((TString @-> (a @-> ((a @-> a) @-> (TMap a @-> TMap a))))));
   ("map_merge",    let a = fresh () in generalize [] ((TMap a @-> (TMap a @-> TMap a))));
