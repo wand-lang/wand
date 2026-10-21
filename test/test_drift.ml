@@ -173,7 +173,7 @@ let test_a_field_read_waits () =
     "'x' needs its type before '.name' can be read";
   expect_error "a use that gives a type without the field"
     (shared ^ "let size_of m = m.size\nsize_of (Info(name = \"x\", group = \"g\"))")
-    "type 'Info' has no field 'size' (the type comes from the use on line 5)";
+    "type 'Info' has no field 'size'; its fields are name and group (the type comes from the use on line 5)";
   (* Until a use settles it, the definition has one type in the file, as a
      tuple read does. *)
   expect_error "two uses with two types"
@@ -289,7 +289,15 @@ let test_earlier_spellings_are_refused () =
   expect_error "for has no loop" "let f xs = for x in xs do x"
     "wand has no loops: 'List.each f xs'";
   expect_error "do has no loop" "let f xs = do x"
-    "wand has no loops"
+    "wand has no loops";
+  (* #214: the field list, not the argument count, and every field when
+     no name is close. *)
+  expect_error "a _ in a field list" "type Pod(name: String, tries: Int)\nlet f p = (let Pod(name, _) = p in name)"
+    "so `_` is not needed there: write `Pod(name)`";
+  expect_error "a field no name is close to" "let f () = (let r = $?(echo hi) in r.zzz)"
+    "has no field 'zzz'; its fields are stdout, stderr and code";
+  expect_error "another language's name for a field" "let f () = (let ShellResult(out, code) = $?(echo hi) in code)"
+    "has no field 'out' (did you mean 'stdout'?)"
 
 let test_ocaml_variant_of () =
   expect_error "Circle of Int"

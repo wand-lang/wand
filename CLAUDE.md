@@ -261,7 +261,7 @@ The forms below are wand's; the parenthetical is the drift to avoid.
 | `let f n = ...` (already recursive) | `let rec` |
 | `{a = 1}` map; `{a, b = x}` puns, in a map and in a pattern | `{a: 1}`, `[a = 1]` |
 | `T(r, b = 3)` record update | `{r with b = 3}` |
-| `Pod(name, restarts)` fields, punned in a pattern or a construction; one name alone, `Pod(name)`, puns too | `Pod{name}`, positional fields |
+| `Pod(name, restarts)` fields, punned in a pattern or a construction; one name alone, `Pod(name)`, puns too; a pattern leaves out the fields it does not take | `Pod{name}`, positional fields, `Pod(name, _)` |
 | a bracket against the name is a field list, for named fields only; a positional payload goes after a space: `Some x`, `Wrap (f x)`, `Span (a, b)`, `Rect 1 2`, `Ok ()`; in a declaration too, `type Pod(name: String)`, `type W = Wrap (List Int)` | `Some(x)`, `Rect(1, 2)`, `Ok()`, `Pod (name = "a")`, `type Pod (name: String)` |
 | `let (a, b) = p`, `let Pod(name) = p`, `let [h :: t] = xs` destructure, at the top level too; `[a, b]` is exactly two, `[a, b :: _]` the first two; a parameter: `fn Pod(name) ->`, `fn (Some x) ->` | `let [a, b] = xs` for the first two of a longer list, `fn Some x ->` |
 | `p.0`, `p.1` a tuple's elements, `p.0.1` in a nested one (the tuple's type must be known by the end of the file, as a record's must for `r.name`) | `fst p`, `p[1]`, `p._1` |

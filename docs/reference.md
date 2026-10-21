@@ -4168,6 +4168,12 @@ Point(x, y)             -- Point(x = 1, y = 2)
 Point(x = 8, y)         -- Point(x = 8, y = 2)
 ```
 
+A pattern names only the fields it takes, and ignores the rest, so a field
+list takes no `_`. `ShellResult(stdout, _, code)` is an error that says to
+write `ShellResult(stdout, code)`, and `wand t --fix` writes it. A name that
+is not a field names the type's fields, or the one that was meant:
+`r.exit_code` says `did you mean 'code'?`, and `--fix` writes it.
+
 A pun does not reach one place. A bare name written *before* a named field
 is the base of an update. That spelling meant an update first. Write
 `Point(y = 9, x)` when you want both a change and a pun. A name that is not

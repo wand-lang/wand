@@ -990,6 +990,23 @@ let test_earlier_spellings () =
       ("both, and twice", "let f = fun x -> match x with | n when n > 0 -> fun y -> y | _ -> fun y -> y",
        "let f = fn x -> match x with | n if n > 0 -> fn y -> y | _ -> fn y -> y") ]
 
+(* A `_` in a field list made the bracket a tuple, and the error was about
+   how many arguments the constructor takes. A field from another
+   language's name for it has the wand name written (#214). *)
+let test_field_list_names () =
+  List.iter (fun (label, wrong, right) ->
+    let (fixed, _) = fix ("uses {Shell}\ntype Pod(name: String, tries: Int)\n" ^ wrong ^ "\n") in
+    Alcotest.(check string) label
+      ("uses {Shell}\ntype Pod(name: String, tries: Int)\n" ^ right ^ "\n") fixed)
+    [ ("a _ is left out", "let f p = (let Pod(name, _) = p in name)",
+       "let f p = (let Pod(name) = p in name)");
+      ("on a built-in record", "let g () = (let ShellResult(stdout, _, code) = $?(echo hi) in code)",
+       "let g () = (let ShellResult(stdout, code) = $?(echo hi) in code)");
+      ("exit_code is code", "let h () = (let r = $?(echo hi) in r.exit_code)",
+       "let h () = (let r = $?(echo hi) in r.code)");
+      ("inside a wider expression", "let h () = (let r = $?(echo hi) in r.exit_code + r.code)",
+       "let h () = (let r = $?(echo hi) in r.code + r.code)") ]
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -1104,5 +1121,8 @@ let () =
     ];
     "an earlier spelling of a keyword (#212)", [
       Alcotest.test_case "fun and when" `Quick test_earlier_spellings;
+    ];
+    "a field list names its fields (#214)", [
+      Alcotest.test_case "and the fix writes them" `Quick test_field_list_names;
     ];
   ]

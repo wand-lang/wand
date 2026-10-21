@@ -1058,6 +1058,39 @@ let ctor_extent (l : Token.loc) name =
 let replace_fix at from_ to_ =
   pending_fix := Some (Diag.ReplaceAt { at; from_; to_ })
 
+(* Names another language gives a field that wand calls by its own name:
+   a subprocess's `exit_code` is `ShellResult`'s `code`. Used only where the
+   wand name is one of the type's fields. *)
+let field_synonym label names =
+  let wand_name =
+    match label with
+    | "exit_code" | "exitcode" | "exit_status" | "status" | "returncode" | "rc" -> Some "code"
+    | "out" | "output" -> Some "stdout"
+    | "err" | "error" -> Some "stderr"
+    | _ -> None
+  in
+  match wand_name with
+  | Some n when List.mem n names -> Some n
+  | _ -> None
+
+(* What to say after "has no field 'x'": the name it is close to, the wand
+   name for what was meant, or else every field, so the next attempt is not
+   a guess (#214). *)
+let field_hint label names =
+  match field_synonym label names with
+  | Some n -> Printf.sprintf " (did you mean '%s'?)" n
+  | None ->
+    match Util.hint label names with
+    | "" when names <> [] ->
+      let rec say = function
+        | [] -> ""
+        | [a] -> a
+        | [a; b] -> a ^ " and " ^ b
+        | a :: rest -> a ^ ", " ^ say rest
+      in
+      Printf.sprintf "; its fields are %s" (say names)
+    | h -> h
+
 (* The expression `x` as it is written inside `l`: the tokens the formatter
    writes for `x`, where they stand inside `l` once only. Also the number
    of those tokens, and whether a bracket stands on each side of them. A
@@ -4480,6 +4513,52 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
            written written))
        end
      | _ -> ());
+    (* `Pod(name, _)`: a field list with a `_` in it. A field the list does
+       not name is ignored already, so the `_` says nothing -- but it made
+       the bracket a tuple, and the error was about how many arguments
+       `Pod` takes, which was never the question (#214). The fix leaves the
+       field out. *)
+    (match ctor, pats with
+     | Some c, [p] when ctor_shape tenv written = Named ->
+       let rec strip = function PLocated (_, p) -> strip p | p -> p in
+       (match strip p with
+        | PTuple ps
+          when List.for_all (fun p -> match strip p with PVar _ | Wild -> true | _ -> false) ps
+               && List.exists (fun p -> strip p = Wild) ps ->
+          let names = List.filter_map (fun p -> match strip p with PVar v -> Some v | _ -> None) ps in
+          let to_ = written ^ "(" ^ String.concat ", " names ^ ")" in
+          let src = Hashtbl.find_opt Lexer.sources c.Token.file in
+          let close =
+            match src with
+            | Some src ->
+              let n = String.length src in
+              let rec go i depth =
+                if i >= n then None
+                else match src.[i] with
+                  | '(' -> go (i + 1) (depth + 1)
+                  | ')' -> if depth = 1 then Some (i + 1) else go (i + 1) (depth - 1)
+                  | _ -> go (i + 1) depth
+              in
+              go c.Token.end_offset 0
+            | None -> None
+          in
+          (match src, close with
+           | Some src, Some stop ->
+             let from_ = String.sub src c.Token.offset (stop - c.Token.offset) in
+             (* `--fix` places a replacement by line and column; a pattern
+                over several lines is left to the author. *)
+             if not (String.contains from_ '\n') then
+               replace_fix
+                 { c with Token.end_offset = stop;
+                          end_line = c.Token.line;
+                          end_col = c.Token.col + (stop - c.Token.offset) }
+                 from_ to_
+           | _ -> ());
+          raise (TypeErrorAt (c, Printf.sprintf
+            "a field list names the fields it takes, and the ones it leaves \
+             out are ignored, so `_` is not needed there: write `%s`" to_))
+        | _ -> ())
+     | _ -> ());
     let name = pat_ctor_name tenv (ctor_name_for tenv written) t in
     let ctor_env = tenv_to_ctor_env tenv in
     (match (match builtin_result_scheme name with
@@ -4564,7 +4643,7 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
          match List.find_opt (fun (dn, _) -> dn = Some fname) ctor.fields with
          | None -> raise (TypeError (Printf.sprintf
              "constructor '%s' has no field '%s'%s"
-             name fname (Util.hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
+             name fname (field_hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
          | Some (_, te) ->
            let at = match field_type fname with Some t -> t | None -> type_of_te te in
            infer_pat tenv p at env
@@ -5682,7 +5761,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
            (match List.find_opt (fun (dn, _) -> dn = Some fname) ctor.fields with
             | None -> raise (TypeError (Printf.sprintf
                 "constructor '%s' has no field '%s'%s"
-                name fname (Util.hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
+                name fname (field_hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
             | Some (_, te) ->
               let expected =
                 match field_type fname with Some t -> t | None -> type_of_te te
@@ -5773,7 +5852,7 @@ let rec infer tenv (env : env) (e : expr) : typ =
          match List.find_opt (fun (dn, _) -> dn = Some fname) ctor.fields with
          | None -> raise (TypeError (Printf.sprintf
              "constructor '%s' has no field '%s'%s"
-             name fname (Util.hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
+             name fname (field_hint fname (List.filter_map Fun.id (List.map fst ctor.fields)))))
          | Some (_, te) ->
            let expected =
              match field_type fname with Some t -> t | None -> type_of_te te
@@ -6036,8 +6115,39 @@ let rec infer tenv (env : env) (e : expr) : typ =
               | [], _ ->
                 let names =
                   List.concat_map (fun c -> List.map fst (named c)) ctors in
+                (match field_synonym label names, !cur_loc with
+                 | Some n, Some l ->
+                   (match Lexer.source_text l.Token.file l.Token.offset l.Token.end_offset with
+                    | Some text ->
+                      (* The one `.exit_code` in the span: an access not
+                         followed by more of a name, found once only. *)
+                      let suffix = "." ^ label in
+                      let sl = String.length suffix and tl = String.length text in
+                      let ident c = c = '_' || c = '?' || c = '!' || c = '\''
+                                    || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                                    || (c >= '0' && c <= '9') in
+                      let at i = i + sl <= tl && String.sub text i sl = suffix
+                                 && (i + sl = tl || not (ident text.[i + sl])) in
+                      let found = List.filter at (List.init (max 0 (tl - sl + 1)) Fun.id) in
+                      (match found with
+                       | [i] ->
+                         (* Line and column of the name, after the dot. *)
+                         let line = ref l.Token.line and col = ref l.Token.col in
+                         for k = 0 to i do
+                           if text.[k] = '\n' then (incr line; col := 1) else incr col
+                         done;
+                         let ll = String.length label in
+                         replace_fix
+                           { l with Token.offset = l.Token.offset + i + 1;
+                                    line = !line; col = !col;
+                                    end_offset = l.Token.offset + i + 1 + ll;
+                                    end_line = !line; end_col = !col + ll }
+                           label n
+                       | _ -> ())
+                    | None -> ())
+                 | _ -> ());
                 raise (TypeError (Printf.sprintf "type '%s' has no field '%s'%s"
-                  (type_display tname) label (Util.hint label names)))
+                  (type_display tname) label (field_hint label names)))
               | _, (_ :: _) ->
                 raise (TypeError (Printf.sprintf
                   "field '%s' is not on every constructor of '%s': %s %s it, \
