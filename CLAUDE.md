@@ -416,7 +416,7 @@ today at midnight is `Clock.now () |> DateTime.day_start`.
 - Inside a command, `%{x}` splices a value quoted as one argument, and a `List` as one argument for each element (as `"$@"` does) — use it for data. A `Path` that starts with `-` goes in as `./-...` where it starts a word; a `String` does not, so put `--` before operands. `%!{x}` splices text to be read *as shell source* — only for a `String` that is deliberately shell (a flag string, a pipeline fragment). A `%!{x}` over a `Path` or any other type is `V-SHELL4`, and `wand t --fix` makes it `%{x}`.
 - `report |> $?(mail ops@example.com)` pipes the left value to the command's stdin.
 - `Shell.stream cmd` reads a command's output line by line — the answer for `tail -f` and friends, which `$()` cannot bound. Stopping the read kills the command; an early stop ignores its exit code.
-- Parse captures with `Decode.lines`, `Decode.run` — not by hand.
+- Parse captures with `Decode.lines`, `Decode.run` — not by hand. They read text and do not parse JSON: JSON text is `JSON.parse`, then `JSON.decode`.
 
 ### Names and errors
 

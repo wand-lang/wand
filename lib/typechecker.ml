@@ -1666,6 +1666,176 @@ type scheme =
 
 and env = (string * scheme) list
 
+(* ── A decoder given text it cannot read (#216) ─────────────────────────── *)
+
+(* `Decode.run` reads its text as one plain value and never parses JSON, so
+   a decoder that reads an object or a list fails on every input. Three
+   agents in a row gave it a JSON line, read `expected an object, got
+   "{...}"`, and spent turns finding `JSON.parse`. Where the decoder can be
+   seen to be one of these, the call is an error, and the fix writes the
+   parse in.
+
+   The names bound to a decoder, so that `Decode.run pod line` is read
+   through `let pod = Decode.map2 ...`. A local binding is kept only while
+   its body is checked. *)
+let decoder_defs : (string, expr * scheme) Hashtbl.t = Hashtbl.create 16
+
+(* Whether `d` reads an object or a list wherever it starts: it fails on a
+   text, which is neither. Read from the expression alone, so a decoder that
+   arrives as a parameter is not known, and the run-time message answers
+   for it. *)
+let rec reads_structure ?(depth = 0) (env : env) (d : expr) =
+  let go = reads_structure ~depth env in
+  let rec spine e acc =
+    match strip_located e with
+    | App (f, x) -> spine f (x :: acc)
+    | BinOp ("|>", x, f) -> spine f (acc @ [x])
+    | h -> (h, acc)
+  in
+  match strip_located d with
+  | Annot (_, e) -> go e
+  | Var n when depth < 8 ->
+    (* Only the binding the name still has here: a parameter of the same
+       name is something else. *)
+    (match Hashtbl.find_opt decoder_defs n, List.assoc_opt n env with
+     | Some (e, s), Some s' when s == s' -> reads_structure ~depth:(depth + 1) env e
+     | _ -> false)
+  (* `Pod.decoder`, `Apps.Deployment.decoder`: a type's own decoder reads
+     its fields by name. *)
+  | Field (inner, "decoder") ->
+    (match strip_located inner with Constr _ | Qualified _ -> true | _ -> false)
+  | d ->
+    let (head, args) = spine d [] in
+    (match head, module_member head with
+     | Field (inner, "decoder"), _ -> go (Field (inner, "decoder"))
+     | _, Some ("Decode", ("field" | "optional" | "list" | "dict")) -> true
+     | _, Some ("Decode", ("map" | "and_then")) ->
+       (match args with
+        | [_; inner] -> go inner
+        | _ -> false)
+     | _, Some ("Decode", ("map2" | "map3" | "and_map")) ->
+       List.exists go args
+     | _ -> false)
+
+let decode_text_message = function
+  | "lines" ->
+    "Decode.lines reads text, and a decoder of an object or a list cannot \
+     read it. Parse each line with JSON.parse. Read it with JSON.decode."
+  | _ ->
+    "Decode.run reads text, and a decoder of an object or a list cannot \
+     read it. Parse it with JSON.parse. Read it with JSON.decode."
+
+(* The source of the argument that starts at token `i`: a bracketed group,
+   or a name or literal with the `.field`s written against it. The index
+   after it, and its extent. *)
+let argument_extent (toks : (Token.t * Token.loc) array) i =
+  let n = Array.length toks in
+  if i >= n then None
+  else
+    let opens = function
+      | Token.LParen | Token.LBracket | Token.LBrace -> true | _ -> false in
+    let closes = function
+      | Token.RParen | Token.RBracket | Token.RBrace -> true | _ -> false in
+    let (t, l) = toks.(i) in
+    if opens t then
+      let rec close j depth =
+        if j >= n then None
+        else
+          let (t, lt) = toks.(j) in
+          if opens t then close (j + 1) (depth + 1)
+          else if closes t then
+            (if depth = 1 then Some (j + 1, join_locs l lt) else close (j + 1) (depth - 1))
+          else close (j + 1) depth
+      in
+      close (i + 1) 1
+    else
+      let atom = match t with
+        | Token.Ident _ | Token.Upper _ | Token.String _ | Token.InterpStr _
+        | Token.RawStr _ | Token.RawInterpStr _ | Token.Int _ | Token.Path _
+        | Token.RunCmdRaw _ -> true
+        | _ -> false
+      in
+      if not atom then None
+      else
+        let rec more j (last : Token.loc) =
+          if j + 1 < n then
+            match toks.(j), toks.(j + 1) with
+            | (Token.Dot, ld), ((Token.Ident _ | Token.Upper _ | Token.Int _), lf)
+              when ld.Token.offset = last.Token.end_offset
+                && lf.Token.offset = ld.Token.end_offset ->
+              more (j + 2) lf
+            | _ -> (j, last)
+          else (j, last)
+        in
+        let (j, last) = more (i + 1) l in
+        Some (j, join_locs l last)
+
+(* The one `Decode.run` inside `l`, with what follows it. *)
+let decode_run_at (l : Token.loc) =
+  let toks = tokens_of_file l.Token.file in
+  let n = Array.length toks in
+  let starts = ref [] in
+  for i = 0 to n - 3 do
+    match toks.(i), toks.(i + 1), toks.(i + 2) with
+    | (Token.Upper "Decode", la), (Token.Dot, _), (Token.Ident "run", lb)
+      when inside l la && inside l lb ->
+      starts := (i, join_locs la lb) :: !starts
+    | _ -> ()
+  done;
+  match !starts with
+  | [ (i, at) ] -> Some (toks, i + 3, at)
+  | _ -> None
+
+let text_between (a : Token.loc) (b : Token.loc) =
+  Lexer.source_text a.Token.file a.Token.offset b.Token.end_offset
+
+(* `Decode.run d text` becomes `Result.and_then (JSON.decode d) (JSON.parse
+   text)`, which is still one application, so it stands wherever the call
+   stood. *)
+let decode_text_fix_call () =
+  match !cur_loc with
+  | None -> ()
+  | Some l ->
+    match decode_run_at l with
+    | None -> ()
+    | Some (toks, i, run) ->
+      match argument_extent toks i with
+      | None -> ()
+      | Some (j, d) ->
+        match argument_extent toks j with
+        | None -> ()
+        | Some (_, s) ->
+          match text_between run s, text_between d d, text_between s s with
+          | Some from_, Some dt, Some st ->
+            replace_fix (join_locs run s) from_
+              (Printf.sprintf "Result.and_then (JSON.decode %s) (JSON.parse %s)" dt st)
+          | _ -> ()
+
+(* `text |> Decode.run d`: the pipe goes through `JSON.parse` first. *)
+let decode_text_fix_pipe () =
+  match !cur_loc with
+  | None -> ()
+  | Some l ->
+    match decode_run_at l with
+    | None -> ()
+    | Some (toks, i, run) ->
+      match argument_extent toks i with
+      | None -> ()
+      | Some (_, d) ->
+        match text_between run d, text_between d d with
+        | Some from_, Some dt ->
+          replace_fix (join_locs run d) from_
+            (Printf.sprintf "JSON.parse |> Result.and_then (JSON.decode %s)" dt)
+        | _ -> ()
+
+(* Whether `Decode` names the standard library's module here, rather than
+   a file's own module of that name. *)
+let stdlib_decode env =
+  match List.assoc_opt "Decode" env with
+  | Some (Namespace (ns, _)) ->
+    List.for_all (fun m -> List.mem_assoc m ns) ["run"; "lines"; "field"; "and_map"]
+  | _ -> false
+
 (* A module's claims ride in its own environment, under a name no file can
    write -- the space is what puts it out of reach -- so an import brings
    them along and a cached module keeps them, with no table to hold
@@ -5414,6 +5584,14 @@ let rec infer tenv (env : env) (e : expr) : typ =
      | Some (ctor, arg) -> infer tenv env (App (App (f, ctor), arg))
      | None -> assert false)
   | App (f, x) ->
+    (match strip_located f with
+     | App (h, d) when stdlib_decode env ->
+       (match module_member h with
+        | Some ("Decode", ("run" | "lines" as m)) when reads_structure env d ->
+          if m = "run" then decode_text_fix_call ();
+          raise (TypeError (decode_text_message m))
+        | _ -> ())
+     | _ -> ());
     (* An application that is the function of another has an argument
        after it, which `check_app_shape` needs to know: `P (1, 2) 3` is
        `P` given a pair and then `3`. *)
@@ -5523,7 +5701,17 @@ let rec infer tenv (env : env) (e : expr) : typ =
           with an Error but raise. *)
        if pat_is_refutable tenv p then performs (Effect_set.single Effect_set.Raise);
        let scheme = generalize env t1 in
-       infer tenv (infer_pat_let tenv p t1 scheme env) e2)
+       let env' = infer_pat_let tenv p t1 scheme env in
+       (match Ast.strip_pat p with
+        | PVar name ->
+          let before = Hashtbl.find_opt decoder_defs name in
+          Hashtbl.replace decoder_defs name (e1, scheme);
+          Fun.protect ~finally:(fun () ->
+            match before with
+            | Some b -> Hashtbl.replace decoder_defs name b
+            | None -> Hashtbl.remove decoder_defs name)
+            (fun () -> infer tenv env' e2)
+        | _ -> infer tenv env' e2))
   | LetRec (bindings, e2, _) ->
     let placeholders = List.map (fun (name, _, _) -> (name, fresh ())) bindings in
     let env_rec = List.map (fun (name, t) -> (name, Mono t)) placeholders @ env in
@@ -6996,6 +7184,14 @@ and infer_binop tenv (env : env) op a b : typ =
     unify (infer tenv env b) TBool;
     TBool
   | "|>" ->
+    (match strip_located b with
+     | App (h, d) when stdlib_decode env ->
+       (match module_member h with
+        | Some ("Decode", ("run" | "lines" as m)) when reads_structure env d ->
+          if m = "run" then decode_text_fix_pipe ();
+          raise (TypeError (decode_text_message m))
+        | _ -> ())
+     | _ -> ());
     (* `f a b |> g` pipes the whole call, not `b`. A reader who meant
        `f a (b |> g)` sees a type error with no pipe in it, so the error
        says how the line is read. Found by an LLM writing plimsoll. *)
@@ -9041,6 +9237,7 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
                   item_binders [[]]))
   in
   let saved_below = !defined_below and saved_bound = !bound_in_item in
+  Hashtbl.reset decoder_defs;
   let (env, last_t) =
   Fun.protect ~finally:(fun () ->
     defined_below := saved_below; bound_in_item := saved_bound) @@ fun () ->
@@ -9067,7 +9264,9 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
       performs eff;
       last_load_effects :=
         Effect_set.EffSet.union !last_load_effects (Effect_set.labels_of eff);
-      ((name, generalize env t) :: env, last_t)
+      let scheme = generalize env t in
+      Hashtbl.replace decoder_defs name (body, scheme);
+      ((name, scheme) :: env, last_t)
     | TLLet (name, params, body) ->
       let t = with_recursive_self env name (List.length params) (fun self ->
         with_current_fn name (fun () ->

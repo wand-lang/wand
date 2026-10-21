@@ -5486,6 +5486,18 @@ let json_read s : (Yojson.Safe.t, string) result =
    started it, and kept per domain, since `Par.map` decodes on several at
    once. A backend restores what it found, so a JSON document decoded inside
    a CSV row's `and_then` leaves the row as text. *)
+(* A text decoder that wanted an object or a list was given JSON, most
+   likely, and the message says what to do (#216). `wand t` refuses the call
+   where it can see the decoder; this is for the decoder it cannot. *)
+let text_is_not_json who msg =
+  if Diag.contains msg "expected an object, got \""
+     || Diag.contains msg "expected a list, got \""
+  then
+    msg ^ (match who with
+      | `Lines -> ". Parse each line with JSON.parse. Read it with JSON.decode."
+      | `Run -> ". Parse it with JSON.parse. Read it with JSON.decode.")
+  else msg
+
 let decoding_text : bool Domain.DLS.key = Domain.DLS.new_key (fun () -> true)
 
 let decoding_from ~text f =
@@ -9754,8 +9766,11 @@ let decode_builtins : env = [
            line per record and an empty capture has none -- not one empty
            line, which is the mistake every hand-written count makes. *)
         let lines = if String.trim s = "" then [] else String.split_on_char '\n' s in
-        decoding_from ~text:true (fun () ->
-          decode_each inner (List.map (fun l -> `String l) lines))
+        (match decoding_from ~text:true (fun () ->
+                 decode_each inner (List.map (fun l -> `String l) lines)) with
+         | VConstr (Ctor.Builtin "Error", [VString msg]) ->
+           VConstr (Ctor.Builtin "Error", [VString (text_is_not_json `Lines msg)])
+         | v -> v)
       | _ -> raise (EvalError "shell_lines: expected String"))));
   ("shell_decode", VBuiltin (fun d ->
     let inner = as_decoder "shell_decode" d in
@@ -9763,7 +9778,7 @@ let decode_builtins : env = [
       | VString s ->
         (match decoding_from ~text:true (fun () -> inner (`String (String.trim s)) []) with
          | Ok v      -> VConstr (Ctor.Builtin "Ok", [v])
-         | Error msg -> VConstr (Ctor.Builtin "Error", [VString msg]))
+         | Error msg -> VConstr (Ctor.Builtin "Error", [VString (text_is_not_json `Run msg)]))
       | _ -> raise (EvalError "shell_decode: expected String"))));
   (* A CSV's first row names the columns, so a row arrives as an object and
      is read by field name like anything else. A file without a header is

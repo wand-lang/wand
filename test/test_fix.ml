@@ -1027,6 +1027,40 @@ let test_digest_is_hash () =
   let (fixed, _) = fix own in
   Alcotest.(check string) "a type of the file's own" own fixed
 
+(* `Decode.run` reads text and never parses JSON (#216). A decoder that
+   reads an object or a list fails on every text, so where one can be seen
+   the call is an error, and the fix puts `JSON.parse` in front of it --
+   through a name, a type's own decoder and a pipe. *)
+let test_decode_run_on_json () =
+  let src =
+    "import Decode\n\n\
+     type Rec(endpoint: String, ms: Int)\n\n\
+     let ms = Decode.field \"ms\" Decode.int\n\
+     let pair = Decode.map2 (fn e m -> (e, m)) (Decode.field \"endpoint\" Decode.string) ms\n\
+     let one line = Decode.run pair line\n\
+     let two line = line |> Decode.run Rec.decoder\n\
+     let three line = Decode.run (Decode.list Decode.int) (String.trim line)\n" in
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check string) "every call, with its imports"
+    "import Decode\nimport JSON\nimport Result\nimport String\n\n\
+     type Rec(endpoint: String, ms: Int)\n\n\
+     let ms = Decode.field \"ms\" Decode.int\n\
+     let pair = Decode.map2 (fn e m -> (e, m)) (Decode.field \"endpoint\" Decode.string) ms\n\
+     let one line = Result.and_then (JSON.decode pair) (JSON.parse line)\n\
+     let two line = line |> JSON.parse |> Result.and_then (JSON.decode Rec.decoder)\n\
+     let three line = Result.and_then (JSON.decode (Decode.list Decode.int)) (JSON.parse (String.trim line))\n"
+    fixed;
+  (* A decoder that reads text is left alone, and so is one the check
+     cannot see. *)
+  let fine =
+    "import Decode\n\n\
+     let a = Decode.run (Decode.map (fn n -> n + 1) Decode.int) \"1\"\n\
+     let b d = Decode.run d \"1\"\n\
+     let pair = Decode.field \"ms\" Decode.int\n\
+     let c pair = Decode.run pair \"1\"\n" in
+  let (fixed, _) = fix fine in
+  Alcotest.(check string) "a text decoder" fine fixed
+
 let () =
   Alcotest.run "fix" [
     "a list in a command", [
@@ -1147,5 +1181,8 @@ let () =
     ];
     "a field list names its fields (#214)", [
       Alcotest.test_case "and the fix writes them" `Quick test_field_list_names;
+    ];
+    "a text decoder given JSON (#216)", [
+      Alcotest.test_case "the fix parses it first" `Quick test_decode_run_on_json;
     ];
   ]

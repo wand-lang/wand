@@ -3394,6 +3394,18 @@ as you read any record. Use `CSV.parse` for a file with no header row. For
 `Decode.lines`, `$()` removes the trailing newline. So a capture with nothing in
 it gives no lines, not one empty line.
 
+`Decode.run` and `Decode.lines` read text, and do not parse JSON. A text has
+no fields and no elements, so a decoder that reads an object or a list cannot
+read one. Parse JSON text first:
+
+```ocaml
+Result.and_then (JSON.decode pod) (JSON.parse line)   -- not Decode.run pod line
+```
+
+Where `wand t` can see that the decoder reads an object or a list, the call
+is a type error, and `wand t --fix` writes the parse in. A decoder that comes
+in as an argument fails when it runs, and the message says the same thing.
+
 A backend that reads one record per row, or per line, first says which
 record failed. Then it says what was wrong:
 

@@ -227,6 +227,23 @@ test "the whole capture as one value" (fn t -> t.eq (Ok 42) (Decode.run Decode.i
 test "and the line that could not be read is named" (fn t ->
   t.eq (Error `[2]: expected Int, got "x"`) (Decode.lines Decode.int "1\n2\nx"))
 
+-- Text is not parsed as JSON (#216). `wand t` refuses a call where it can
+-- see the decoder; a decoder that arrives as an argument is answered here.
+let read_text d text = Decode.run d text
+let read_lines d text = Decode.lines d text
+
+test "a text decoder given JSON says to parse it" (fn t ->
+  t.eq
+    (Error
+      `expected an object, got "{\"ms\": 3}". Parse it with JSON.parse. Read it with JSON.decode.`)
+    (read_text (Decode.field "ms" Decode.int) `{"ms": 3}`))
+
+test "and so does one that reads lines" (fn t ->
+  t.eq
+    (Error
+      `[0]: expected a list, got "[1]". Parse each line with JSON.parse. Read it with JSON.decode.`)
+    (read_lines (Decode.list Decode.int) "[1]"))
+
 -- A field that may not be there. The distinction that matters is between a
 -- field that is absent and a field that is there and wrong: the first is an
 -- answer, the second is the silent null this layer exists to replace.
