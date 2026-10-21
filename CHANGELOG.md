@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.113.1] - 2026-10-21
+
+### Fixed
+
+- `wand f` no longer adds a second pair of brackets to a tuple, list or map `match` subject that takes more than one line (#211).
+
 ## [0.113.0] - 2026-10-21
 
 ### Added
