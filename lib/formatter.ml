@@ -2582,7 +2582,14 @@ and emit_scrutinee indent scr =
   (* `with` has to follow the scrutinee, and an application that wrapped has
      already ended by the time the next line starts -- the parser reaches the
      argument below expecting the keyword. *)
-  | _ -> bracket_if_wrapped_app_at ~anchor:indent scr (emit_expr indent scr)
+  | App _ -> bracket_if_wrapped_app_at ~anchor:indent scr (emit_expr indent scr)
+  (* Any other scrutinee that takes more than one line needs them too. An
+     `if` whose `then` branch went below its line holds a body of
+     statements there, and the `with` and the arms after it became part of
+     that body: `match if c then\n Some r with` did not parse (#211). *)
+  | _ ->
+    let d = emit_expr indent scr in
+    if Doc.has_newline d then bracket d else d
 
 (* The head of an arm: its `|`, its alternatives and its guard, for an arm
    at [indent]. The first line starts at the `|`, since the caller has put

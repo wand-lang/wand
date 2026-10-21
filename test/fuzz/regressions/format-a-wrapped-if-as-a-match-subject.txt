@@ -1,0 +1,18 @@
+found:     test/fuzz, seed 39605796705, iteration 183572, 2026-10-21 (#211)
+reported:  format:unparses:unexpected token: |
+fixed in:  lib/formatter.ml, emit_scrutinee
+
+A `match` whose subject is an `if` with no `else`, too wide for one line.
+`wand f` broke the `if` after `then` and left it bare:
+
+  match if c then
+    Some r with
+  | N -> ...
+
+A `then` branch on a line of its own holds a body of statements, so the
+`with` and the arms below became part of that body, and the second pass
+stopped at the first `|`. The subject is bracketed now whenever it takes
+more than one line, as a nested `match` and a wrapped call already were.
+
+The fuzzer found it at width 24 from examples/log-summary.wand. This
+input has names long enough to break at the width the suite formats at.
