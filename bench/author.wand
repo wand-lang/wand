@@ -47,15 +47,20 @@ let {Lang, langs, lang_name, extension, wand_exe, run_cases!, read_cases!} = imp
 -- allowed: the agent runs what it writes, and that is the loop being
 -- measured.
 --
--- The agent writes only in its own directory. Its Bash commands, and what
--- they start, run in Claude Code's sandbox, which refuses a write anywhere
--- else and a write through a link that leads out. The sandbox must start,
--- or the run fails rather than run without it. Write and Edit, which the
--- sandbox does not cover, are allowed under `./` and refused elsewhere.
--- Before this, an agent ran its replace-in-files program over /tmp, went
--- through a link in an old scratchpad, and rewrote nine files in another
--- repository. Bash can still write in Claude Code's own temp directory,
--- /private/tmp/claude-<uid>, though not through a link out of it.
+-- The agent cannot write in a repository. Its Bash commands, and what
+-- they start, run in Claude Code's sandbox, which lets them write in the
+-- agent's directory and in the temp directories, and refuses a write
+-- anywhere else and a write through a link that leads out. The sandbox
+-- must start, or the run fails rather than run without it. Write and
+-- Edit, which the sandbox does not cover, are allowed under `./` and
+-- refused elsewhere. Before this, an agent ran its replace-in-files
+-- program over /tmp, went through a link in an old scratchpad, and
+-- rewrote nine files in another repository.
+--
+-- The temp directories are the per-user one, where macOS `mktemp` makes
+-- its directories, and Claude Code's own, /private/tmp/claude-<uid>. Both
+-- hold other runs' directories too, so an agent could write in another
+-- run; none of those is a repository.
 --
 -- Settings, from the environment:
 --
@@ -182,14 +187,16 @@ let wand_guide! () =
 -- The agent's sandbox, as Claude Code settings. It is beside the `wand`
 -- link rather than in the agent's directory, so the agent cannot change
 -- it. `failIfUnavailable` makes a run fail where the sandbox cannot start,
--- and `allowUnsandboxedCommands` refuses the retry outside it.
-let sandbox =
-  `{"sandbox": {"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": true}}`
+-- and `allowUnsandboxedCommands` refuses the retry outside it. `temp` is
+-- the per-user temp directory, which the sandbox otherwise refuses: Bash
+-- there sees TMPDIR as Claude Code's own, but `mktemp -d` on macOS makes
+-- its directory in this one.
+let sandbox temp =
+  `{"sandbox": {"enabled": true, "failIfUnavailable": true, "allowUnsandboxedCommands": false, "autoAllowBashIfSandboxed": true, "filesystem": {"allowWrite": [%{JSON.stringify (JSON.of_string temp)}]}}}`
 
 -- Put what the agent may see into `dir`, and `wand` on a PATH of its own.
 let stage! lang (task: Path) (dir: Path) = (
   FS.copy! (Path.join task ./spec.md) (Path.join dir ./spec.md);
-  FS.mkdir! (Path.join dir ./.tmp);
   let fixture = Path.join task ./fixture;
   if FS.dir? fixture then FS.copy_tree! fixture dir;
   match lang with
@@ -313,13 +320,11 @@ let steps_in (line: String) =
 --
 -- `cd -P`: the temporary directory is under /var, a link to /private/var,
 -- and an allow rule for Write and Edit holds only where the path and the
--- path it resolves to both match `./`. The temp directory is the run's
--- own, so a program's scratch files land inside it too.
+-- path it resolves to both match `./`.
 let agent! (dir: Path) (bin: Path) lang = (
   let path = "%{bin}:%{setting "PATH" "/usr/bin:/bin"}";
-  let tmp = Path.join dir ./.tmp;
   let settings = Path.join bin ./sandbox.json;
-  let r = $?(cd -P %{dir} && PATH=%{path} TMPDIR=%{tmp} CLAUDE_CODE_TMPDIR=%{tmp} \
+  let r = $?(cd -P %{dir} && PATH=%{path} \
     claude -p %{prompt lang} \
     --model %{model} \
     --output-format stream-json --verbose \
@@ -566,7 +571,8 @@ let main! () = (
     "%{List.length jobs} runs: %{List.length chosen_tasks} tasks, %{List.length chosen_langs} languages, %{runs} each, model %{model}";
   with FS.temp_dir "bench_bin_" as bin -> (
     let _ = $(ln -s %{wand_exe |> String.trim} %{Path.join bin ./wand});
-    FS.write_file! (Path.join bin ./sandbox.json) sandbox;
+    let temp = $(cd -P %{setting "TMPDIR" "/tmp"} && pwd);
+    FS.write_file! (Path.join bin ./sandbox.json) (sandbox temp);
     let results = Par.map workers (one_run! bin) jobs;
     let errors =
       List.filter_map
