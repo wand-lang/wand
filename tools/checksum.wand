@@ -1,12 +1,11 @@
 uses {FS.Read, IO, Proc}
 
-import Digest
 import Hash
 import IO
 import Path
 import Proc
 
-let {Sha256} = import Digest
+let {Sha256} = import Hash
 
 -- The checksum line that ships beside a release archive, written by wand
 -- rather than by `shasum`.
@@ -26,7 +25,7 @@ let {Sha256} = import Digest
 -- there is a wand to run.
 
 let line! path =
-  "%{Digest.hex (Hash.file! Sha256 path)}  %{Path.to_string (Path.basename path)}"
+  "%{Hash.hex (Hash.file! Sha256 path)}  %{Path.to_string (Path.basename path)}"
 
 let main! () =
   match Proc.args () with

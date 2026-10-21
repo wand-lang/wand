@@ -1,6 +1,5 @@
 uses {FS.Read, IO, Proc}
 
-import Digest
 import FS
 import Hash
 import IO
@@ -10,7 +9,7 @@ import Proc
 import Result
 import String
 
-let {Sha256} = import Digest
+let {Sha256} = import Hash
 
 -- Check a directory against the digests a manifest states.
 --
@@ -52,7 +51,7 @@ let verify dir parsed =
     let file = Path.join dir name;
     match Hash.file Sha256 file with
     | Error _ -> Error "cannot read %{Path.to_string file}"
-    | Ok taken -> if Digest.hex taken == stated then Ok name
+    | Ok taken -> if Hash.hex taken == stated then Ok name
       else Error "%{Path.to_string name}: digest does not match"
   ))
 

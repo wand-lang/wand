@@ -1,13 +1,12 @@
 uses {FS.Read, FS.Write}
 
 let {test, group} = import Test
-import Digest
 import FS
 import Hash
 import Path
 import String
 
-let {Sha256, Sha512, Sha1, Md5} = import Digest
+let {Sha256, Sha512, Sha1, Md5} = import Hash
 
 -- Every value here is a published vector rather than what this
 -- implementation happened to produce. NIST for the digests, RFC 2202 for
@@ -19,54 +18,54 @@ group "the empty string" (fn () -> [
   test "sha256" (fn t ->
     t.eq
       "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-      (Digest.hex (Hash.string Sha256 ""))),
+      (Hash.hex (Hash.string Sha256 ""))),
   test "sha1" (fn t ->
-    t.eq "da39a3ee5e6b4b0d3255bfef95601890afd80709" (Digest.hex (Hash.string Sha1 ""))),
+    t.eq "da39a3ee5e6b4b0d3255bfef95601890afd80709" (Hash.hex (Hash.string Sha1 ""))),
   test "md5" (fn t ->
-    t.eq "d41d8cd98f00b204e9800998ecf8427e" (Digest.hex (Hash.string Md5 "")))
+    t.eq "d41d8cd98f00b204e9800998ecf8427e" (Hash.hex (Hash.string Md5 "")))
 ])
 
 group "abc" (fn () -> [
   test "sha256" (fn t ->
     t.eq
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-      (Digest.hex (Hash.string Sha256 "abc"))),
+      (Hash.hex (Hash.string Sha256 "abc"))),
   test "sha512" (fn t ->
     t.eq
       "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
-      (Digest.hex (Hash.string Sha512 "abc"))),
+      (Hash.hex (Hash.string Sha512 "abc"))),
   test "sha1" (fn t ->
-    t.eq "a9993e364706816aba3e25717850c26c9cd0d89d" (Digest.hex (Hash.string Sha1 "abc"))),
+    t.eq "a9993e364706816aba3e25717850c26c9cd0d89d" (Hash.hex (Hash.string Sha1 "abc"))),
   test "md5" (fn t ->
-    t.eq "900150983cd24fb0d6963f7d28e17f72" (Digest.hex (Hash.string Md5 "abc")))
+    t.eq "900150983cd24fb0d6963f7d28e17f72" (Hash.hex (Hash.string Md5 "abc")))
 ])
 
 -- A String holds bytes, so a digest is over bytes and not over characters.
 test "hashes the bytes of a multi-byte character" (fn t -> t.eq (String.length "é") 2)
 test "café hashes as its five bytes" (fn t ->
   t.eq
-    (Digest.hex (Hash.string Sha256 "café"))
-    (Digest.hex (Hash.string Sha256 ("caf" ++ String.slice 3 5 "café"))))
+    (Hash.hex (Hash.string Sha256 "café"))
+    (Hash.hex (Hash.string Sha256 ("caf" ++ String.slice 3 5 "café"))))
 
 -- ── Hash.hmac ───────────────────────────────────────────────────────────
 
 test "hmac sha256, the classic vector" (fn t ->
   t.eq
     "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-    (Digest.hex (Hash.hmac Sha256 "key" "The quick brown fox jumps over the lazy dog")))
+    (Hash.hex (Hash.hmac Sha256 "key" "The quick brown fox jumps over the lazy dog")))
 test "hmac md5, RFC 2202 case 2" (fn t ->
   t.eq
     "750c783e6ab0b503eaa86e310a5db738"
-    (Digest.hex (Hash.hmac Md5 "Jefe" "what do ya want for nothing?")))
+    (Hash.hex (Hash.hmac Md5 "Jefe" "what do ya want for nothing?")))
 test "hmac sha1, RFC 2202 case 2" (fn t ->
   t.eq
     "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"
-    (Digest.hex (Hash.hmac Sha1 "Jefe" "what do ya want for nothing?")))
+    (Hash.hex (Hash.hmac Sha1 "Jefe" "what do ya want for nothing?")))
 
 -- The key is first so a partial application is the thing being built.
 test "a bound key signs several messages" (fn t ->
   let sign = Hash.hmac Sha256 "key";
-  t.eq (Digest.hex (sign "a")) (Digest.hex (Hash.hmac Sha256 "key" "a")))
+  t.eq (Hash.hex (sign "a")) (Hash.hex (Hash.hmac Sha256 "key" "a")))
 
 -- ── Hash.file ───────────────────────────────────────────────────────────
 
@@ -74,7 +73,7 @@ test "a file hashes as its contents" (fn t ->
   with FS.temp_dir "hash_" as d -> (
     let f = Path.join d ./x;
     FS.write_file! f "abc";
-    t.eq (Digest.hex (Hash.string Sha256 "abc")) (Digest.hex (Hash.file! Sha256 f))
+    t.eq (Hash.hex (Hash.string Sha256 "abc")) (Hash.hex (Hash.file! Sha256 f))
   ))
 
 -- Bigger than the 64KB read block, so the streaming path is the one under
@@ -84,14 +83,14 @@ test "a file larger than one block hashes as its contents" (fn t ->
     let f = Path.join d ./big;
     let content = String.repeat 5000 "0123456789abcdefghij";
     FS.write_file! f content;
-    t.eq (Digest.hex (Hash.string Sha256 content)) (Digest.hex (Hash.file! Sha256 f))
+    t.eq (Hash.hex (Hash.string Sha256 content)) (Hash.hex (Hash.file! Sha256 f))
   ))
 
 test "an empty file hashes as the empty string" (fn t ->
   with FS.temp_dir "hash_" as d -> (
     let f = Path.join d ./empty;
     FS.write_file! f "";
-    t.eq (Digest.hex (Hash.string Sha256 "")) (Digest.hex (Hash.file! Sha256 f))
+    t.eq (Hash.hex (Hash.string Sha256 "")) (Hash.hex (Hash.file! Sha256 f))
   ))
 
 test "a missing file is an Error, not a raise" (fn t ->
@@ -123,45 +122,45 @@ test "equal? agrees with == where == is safe" (fn t ->
   let b = Hash.string Sha256 "abc";
   t.eq (a == b) (Hash.equal? a b))
 
--- ── Digest ──────────────────────────────────────────────────────────────
+-- ── The Hash type ───────────────────────────────────────────────────────
 
 test "name" (fn t ->
   t.eq ["sha256", "sha512", "sha1", "md5"] [
-    Digest.name Sha256,
-    Digest.name Sha512,
-    Digest.name Sha1,
-    Digest.name Md5
+    Hash.name Sha256,
+    Hash.name Sha512,
+    Hash.name Sha1,
+    Hash.name Md5
   ])
 test "algorithm comes back" (fn t ->
-  t.eq Sha512 (Digest.algorithm (Hash.string Sha512 "abc")))
+  t.eq Sha512 (Hash.algorithm (Hash.string Sha512 "abc")))
 test "base64 of the sha256 of abc" (fn t ->
   t.eq
     "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
-    (Digest.base64 (Hash.string Sha256 "abc")))
+    (Hash.base64 (Hash.string Sha256 "abc")))
 
 test "of_hex round-trips a digest" (fn t ->
   let d = Hash.string Sha256 "abc";
-  t.eq (Ok d) (Digest.of_hex Sha256 (Digest.hex d)))
+  t.eq (Ok d) (Hash.of_hex Sha256 (Hash.hex d)))
 test "of_hex accepts uppercase" (fn t ->
   t.eq
     (Ok (Hash.string Md5 "abc"))
-    (Digest.of_hex Md5 (String.upper (Digest.hex (Hash.string Md5 "abc")))))
+    (Hash.of_hex Md5 (String.upper (Hash.hex (Hash.string Md5 "abc")))))
 test "of_hex refuses the wrong length" (fn t ->
   t.eq
-    (Error "a Sha256 digest is 64 hex digits, and this is 32")
-    (Digest.of_hex Sha256 "900150983cd24fb0d6963f7d28e17f72"))
+    (Error "a Sha256 hash is 64 hex digits, and this is 32")
+    (Hash.of_hex Sha256 "900150983cd24fb0d6963f7d28e17f72"))
 test "of_hex refuses a non-hex digit" (fn t ->
   t.eq
     true
-    (match Digest.of_hex Md5 "900150983cd24fb0d6963f7d28e17fzz" with
+    (match Hash.of_hex Md5 "900150983cd24fb0d6963f7d28e17fzz" with
     | Ok _ -> false
     | Error _ -> true
     ))
-test "of_hex! raises on bad text" (fn t -> t.raises (fn () -> Digest.of_hex! Sha256 "abc"))
+test "of_hex! raises on bad text" (fn t -> t.raises (fn () -> Hash.of_hex! Sha256 "abc"))
 
 -- The same hex read back under a different algorithm is a different value,
 -- which is the whole reason the algorithm is carried.
 test "of_hex tags with the algorithm it was given" (fn t ->
   t.eq
     false
-    (Digest.of_hex! Sha1 "a9993e364706816aba3e25717850c26c9cd0d89d" == Hash.string Sha1 "abd"))
+    (Hash.of_hex! Sha1 "a9993e364706816aba3e25717850c26c9cd0d89d" == Hash.string Sha1 "abd"))

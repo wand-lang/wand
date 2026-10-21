@@ -1,7 +1,6 @@
 uses {Clock, FS.Read, IO, Shared}
 
 import Clock
-import Digest
 import FS
 import Hash
 import IO
@@ -29,7 +28,7 @@ let hash_all! done files =
   Par.map
     8
     (fn f -> (
-      let digest = Hash.file! Digest.Sha256 f |> Digest.hex;
+      let digest = Hash.file! Hash.Sha256 f |> Hash.hex;
       Shared.update done (fn n -> n + 1);
       (f, digest)
     ))

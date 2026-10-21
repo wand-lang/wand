@@ -443,7 +443,7 @@ test `examples/ports/` without running any of them.
 
 Stdlib modules: List, String, Regex, Map, FS, Resource, Stream, Path, IO,
 Bool, Float, Int, Proc, Env, CSV, JSON, TOML, YAML, Duration, Size, Clock,
-DateTime, Par, Shell, Decode, Args, Test, Option, Result, Hash, Digest,
+DateTime, Par, Shell, Decode, Args, Test, Option, Result, Hash,
 Base64, HTTP, URL, Glob, IPv4, CIDR, Port, Version, Random, Shared, Net. Every function
 comes from a module: printing is
 `IO.println`, and a file that prints writes `import IO`.

@@ -158,7 +158,7 @@ let test_bare_constructor_needs_no_fix () =
    look there. *)
 let test_qualified_constructor_needs_no_fix () =
   let src =
-    "import Digest\nimport Hash\nlet r = Hash.string Digest.Sha256 (\"a\" ++ \"b\")\n" in
+    "import Hash\nlet r = Hash.string Hash.Sha256 (\"a\" ++ \"b\")\n" in
   let (fixed, applied) = fix src in
   Alcotest.(check string) "left exactly as written" src fixed;
   Alcotest.(check (list string)) "nothing reported" [] (codes applied)
@@ -724,64 +724,64 @@ let test_replace_at_is_checked () =
   Alcotest.(check (option string)) "a result that does not parse: declined"
     None (apply "x" "(")
 
-(* `Digest.Sha256` with no `import Digest` (#148). The error is the missing
+(* `Hash.Sha256` with no `import Hash` (#148). The error is the missing
    import, it carries the line, and nothing in it is the parser's form of
    the expression or the `|>` hint, which is about something else. *)
 let test_qualified_constructor_import () =
   let src =
-    "import Hash\nimport Path\nimport List\n\n\
-     let keyed d rels = List.map (fn r -> (Hash.file! Digest.Sha256 \
-     (Path.join d r) |> Digest.hex, Path.to_string r)) rels\n" in
+    "import Path\nimport List\n\n\
+     let keyed d rels = List.map (fn r -> (Hash.file! Hash.Sha256 \
+     (Path.join d r) |> Hash.hex, Path.to_string r)) rels\n" in
   let d = type_error src in
   let msg = Diag.legacy d in
   Alcotest.(check bool) "names the import" true
-    (Lint.contains msg "did you forget to import the standard library Digest?");
+    (Lint.contains msg "did you forget to import the standard library Hash?");
   Alcotest.(check bool) "no internal form" false (Lint.contains msg "(@");
   Alcotest.(check bool) "no pipe hint" false (Lint.contains msg "whole call");
   let (fixed, _) = fix_clean src in
   Alcotest.(check bool) "the import is written" true
-    (Lint.contains fixed "import Digest\n")
+    (Lint.contains fixed "import Hash\n")
 
 (* The same in a pattern. *)
 let test_qualified_pattern_import () =
   let (fixed, _) =
-    fix_clean "let name a =\n  match a with\n  | Digest.Sha256 -> \"sha256\"\n  | _ -> \"other\"\n\nname\n" in
+    fix_clean "let name a =\n  match a with\n  | Hash.Sha256 -> \"sha256\"\n  | _ -> \"other\"\n\nname\n" in
   Alcotest.(check bool) "the import is written" true
-    (Lint.contains fixed "import Digest\n")
+    (Lint.contains fixed "import Hash\n")
 
-(* `let {Sha256} = Digest` (#149): the module where its import belongs. The
+(* `let {Sha256} = Hash` (#149): the module where its import belongs. The
    error has a position and names the import, and the fix writes the
    import on the right side, which is the one correct change. *)
 let test_destructured_module_import () =
   let src =
-    "import Hash\nimport IO\nimport Digest\nlet {Sha256} = Digest\n\n\
-     let main () = IO.println (Hash.string Sha256 \"x\" |> Digest.hex)\n" in
+    "import IO\nimport Hash\nlet {Sha256} = Hash\n\n\
+     let main () = IO.println \"%{Sha256}\"\n" in
   let missing =
-    "import Hash\nimport IO\nlet {Sha256} = Digest\n\n\
-     let main () = IO.println (Hash.string Sha256 \"x\")\n" in
+    "import IO\nlet {Sha256} = Hash\n\n\
+     let main () = IO.println \"%{Sha256}\"\n" in
   let d = type_error missing in
   Alcotest.(check bool) "names the import" true
     (Lint.contains (Diag.legacy d)
-       "did you forget to import the standard library Digest?");
+       "did you forget to import the standard library Hash?");
   Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
   let (fixed, _) = fix_clean missing in
   Alcotest.(check bool) "the right side imports" true
-    (Lint.contains fixed "let {Sha256} = import Digest\n");
+    (Lint.contains fixed "let {Sha256} = import Hash\n");
   (* With the module imported too, the right side is still the import. *)
   let d = type_error src in
   Alcotest.(check bool) "says how names are taken" true
-    (Lint.contains (Diag.legacy d) "`let {Sha256} = import Digest`");
+    (Lint.contains (Diag.legacy d) "`let {Sha256} = import Hash`");
   let (fixed, _) = fix_clean src in
   Alcotest.(check bool) "the right side imports" true
-    (Lint.contains fixed "let {Sha256} = import Digest\n")
+    (Lint.contains fixed "let {Sha256} = import Hash\n")
 
 (* Inside a function an import cannot stand, so nothing is certain and no
    fix is carried; the error still names the cause, at a position. *)
 let test_destructured_module_local () =
-  let d = type_error "import IO\n\nlet main () =\n  let {Sha256} = Digest\n  IO.println \"x\"\n" in
+  let d = type_error "import IO\n\nlet main () =\n  let {Sha256} = Hash\n  IO.println \"x\"\n" in
   Alcotest.(check bool) "names the import" true
     (Lint.contains (Diag.legacy d)
-       "did you forget to import the standard library Digest?");
+       "did you forget to import the standard library Hash?");
   Alcotest.(check bool) "at a position" true (d.Diag.loc <> None);
   Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
 
@@ -792,23 +792,23 @@ let test_bare_stdlib_constructor () =
   let src = "import Hash\nimport Path\nlet f! p = Hash.file! Sha256 p\n" in
   let d = type_error src in
   Alcotest.(check bool) "names the module" true
-    (Lint.contains (Diag.legacy d) "'Sha256' is 'Digest.Sha256'");
+    (Lint.contains (Diag.legacy d) "'Sha256' is 'Hash.Sha256'");
   Alcotest.(check (option (pair int int))) "at the constructor" (Some (3, 23))
     (Option.map (fun (l : Token.loc) -> (l.Token.line, l.Token.col)) d.Diag.loc);
   let (fixed, applied) = fix_clean src in
   Alcotest.(check bool) "qualified" true
-    (Lint.contains fixed "Hash.file! Digest.Sha256 p\n");
-  Alcotest.(check bool) "and imported" true (Lint.contains fixed "import Digest\n");
+    (Lint.contains fixed "Hash.file! Hash.Sha256 p\n");
+  Alcotest.(check bool) "and imported" true (Lint.contains fixed "import Hash\n");
   Alcotest.(check bool) "the qualification is a fix of its own" true
-    (List.exists (fun a -> Lint.contains a.Fix.note "\"Digest.Sha256\"") applied)
+    (List.exists (fun a -> Lint.contains a.Fix.note "\"Hash.Sha256\"") applied)
 
 (* The same in a pattern, with the module imported already, and for a
    constructor with a payload. *)
 let test_bare_stdlib_constructor_pattern () =
   let (fixed, _) =
-    fix_clean "import Digest\nlet name a =\n  match a with\n  | Sha256 -> \"s\"\n  | _ -> \"o\"\n\nname\n" in
+    fix_clean "import Hash\nlet name a =\n  match a with\n  | Sha256 -> \"s\"\n  | _ -> \"o\"\n\nname\n" in
   Alcotest.(check bool) "the pattern is qualified" true
-    (Lint.contains fixed "  | Digest.Sha256 -> \"s\"\n");
+    (Lint.contains fixed "  | Hash.Sha256 -> \"s\"\n");
   let (fixed, _) = fix_clean "let x = Pass \"a\"\n" in
   Alcotest.(check bool) "with a payload" true
     (Lint.contains fixed "let x = Test.Pass \"a\"\n");
@@ -819,14 +819,14 @@ let test_bare_stdlib_constructor_pattern () =
 let test_bare_unknown_constructor () =
   let d = refuse "let x = Sha257\n" in
   Alcotest.(check bool) "no module named" false
-    (Lint.contains (Diag.legacy d) "Digest.");
+    (Lint.contains (Diag.legacy d) "Hash.");
   Alcotest.(check bool) "no fix" true (d.Diag.fix = None)
 
 (* ── Missing imports, known from the parse (#150) ───────────────────────── *)
 
 let issue_150 =
   "import FS\nimport Path\n\
-   let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n"
+   let f! p = Int.to_string (FS.size! p) ++ String.upper (Hash.hex (Hash.file! Hash.Sha256 p))\n"
 
 let import_fixes ds =
   List.filter_map (fun (d : Diag.t) ->
@@ -844,9 +844,9 @@ let position (d : Diag.t) =
 let test_missing_imports_reported () =
   let ds = Diag.all (type_error issue_150) in
   Alcotest.(check (list string)) "each import, once"
-    ["import Int"; "import Digest"; "import Hash"] (import_fixes ds);
+    ["import Int"; "import String"; "import Hash"] (import_fixes ds);
   Alcotest.(check (list string)) "at the first use of each"
-    ["3:12"; "3:42"; "3:54"]
+    ["3:12"; "3:42"; "3:56"]
     (List.filter_map (fun (d : Diag.t) ->
        match d.Diag.fix with
        | Some (Diag.InsertLine _) -> Some (position d)
@@ -868,8 +868,8 @@ let test_missing_imports_with_type_error () =
 let test_missing_imports_fixed_in_one_run () =
   let o = Fix.fix_outcome ~path:"wand_fix_test.wand" issue_150 in
   Alcotest.(check string) "every import, in order"
-    "import Digest\nimport FS\nimport Hash\nimport Int\nimport Path\n\
-     let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n"
+    "import FS\nimport Hash\nimport Int\nimport Path\nimport String\n\n\
+     let f! p = Int.to_string (FS.size! p) ++ String.upper (Hash.hex (Hash.file! Hash.Sha256 p))\n"
     o.Fix.text;
   Alcotest.(check int) "three fixes" 3 (List.length o.Fix.fixes);
   (match o.Fix.refused with
@@ -901,10 +901,10 @@ let test_missing_imports_not_reported () =
     (names "let x = Option.Some 1\nlet y = 1 + \"a\"\n");
   Alcotest.(check (list string)) "a field default" []
     (names "type App(env: Map String = Map.empty)\n");
-  Alcotest.(check (list string)) "a name taken from the module" ["import Digest"]
-    (names "let {hex} = import Digest\nlet f x = Digest.hex x\nlet y = 1 + \"a\"\n");
-  Alcotest.(check (list string)) "a type and a pattern" ["import Digest"]
-    (names "let f (x: Digest.Algorithm) =\n  match x with\n  | Digest.Sha256 -> 1\n  | _ -> 2\n")
+  Alcotest.(check (list string)) "a name taken from the module" ["import Hash"]
+    (names "let {hex} = import Hash\nlet f x = Hash.hex x\nlet y = 1 + \"a\"\n");
+  Alcotest.(check (list string)) "a type and a pattern" ["import Hash"]
+    (names "let f (x: Hash.Algorithm) =\n  match x with\n  | Hash.Sha256 -> 1\n  | _ -> 2\n")
 
 (* A list in `%!{...}` would read each element as shell source. The one
    form that gives the elements as arguments is `%{...}`, and the fix
@@ -1006,6 +1006,26 @@ let test_field_list_names () =
        "let h () = (let r = $?(echo hi) in r.code)");
       ("inside a wider expression", "let h () = (let r = $?(echo hi) in r.exit_code + r.code)",
        "let h () = (let r = $?(echo hi) in r.code + r.code)") ]
+
+(* `Digest` was folded into `Hash` (#215). Every place a file names it is
+   found at once, inside `%{...}` too, and one run rewrites them all; an
+   import that would bind `Hash` twice goes. *)
+let test_digest_is_hash () =
+  let src =
+    "uses {IO}\n\nimport Digest\nimport Hash\nimport IO\nlet {Sha256} = import Digest\n\n\
+     let h = Hash.string Digest.Sha256 \"abc\" |> Digest.hex\n\
+     let f (d: Digest.Digest) = d.hex\n\
+     let main () = IO.println \"%{Digest.base64 (Hash.string Sha256 h)} %{f (Hash.string Sha256 h)}\"\n" in
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check string) "every place, in one run"
+    "uses {IO}\n\nimport Hash\nimport IO\nlet {Sha256} = import Hash\n\n\
+     let h = Hash.string Hash.Sha256 \"abc\" |> Hash.hex\n\
+     let f (d: Hash.Hash) = d.hex\n\
+     let main () = IO.println \"%{Hash.base64 (Hash.string Sha256 h)} %{f (Hash.string Sha256 h)}\"\n" fixed;
+  (* A name of the file's own is left alone. *)
+  let own = "type Digest = A | B\nlet x = Digest.A\n" in
+  let (fixed, _) = fix own in
+  Alcotest.(check string) "a type of the file's own" own fixed
 
 let () =
   Alcotest.run "fix" [
@@ -1121,6 +1141,9 @@ let () =
     ];
     "an earlier spelling of a keyword (#212)", [
       Alcotest.test_case "fun and when" `Quick test_earlier_spellings;
+    ];
+    "a module folded into another (#215)", [
+      Alcotest.test_case "Digest is Hash" `Quick test_digest_is_hash;
     ];
     "a field list names its fields (#214)", [
       Alcotest.test_case "and the fix writes them" `Quick test_field_list_names;

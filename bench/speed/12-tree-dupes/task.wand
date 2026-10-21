@@ -1,6 +1,5 @@
 uses {FS.Read, IO, Proc}
 
-import Digest
 import FS
 import Hash
 import IO
@@ -16,7 +15,7 @@ match Proc.args () with
 | [dir :: _] -> (
   let groups =
     FS.glob_in ./**/* (Path.join (Path.of_string dir) ./tree)
-    |> List.map (fn file -> Digest.hex (Hash.file! Digest.Sha256 file))
+    |> List.map (fn file -> Hash.hex (Hash.file! Hash.Sha256 file))
     |> List.tally
     |> Map.values
     |> List.filter (fn n -> n > 1);

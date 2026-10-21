@@ -325,8 +325,33 @@ type outcome = {
   refused : Diag.t option;
 }
 
+(* A module folded into another (#215): every place the file names it, in
+   one pass, before anything else. The fixes go from the end of the file
+   back, so one that changes a line's length leaves the columns of the
+   ones before it where they were. *)
+let rename_modules ~path lines =
+  match Runner.typecheck_source ~path (join_lines lines) with
+  | Ok _ -> (lines, [])
+  | Error d ->
+    let wanted =
+      List.filter Renamed_modules.is_finding (Diag.all d)
+      |> List.sort (fun (a : Diag.t) (b : Diag.t) ->
+           let key (x : Diag.t) =
+             match x.Diag.loc with Some l -> (l.Token.line, l.Token.col) | None -> (0, 0) in
+           compare (key b) (key a))
+    in
+    let (lines, applied) =
+      List.fold_left (fun (lines, acc) d ->
+        match apply_fix lines d with
+        | Some (lines', a) -> (lines', a :: acc)
+        | None -> (lines, acc)) (lines, []) wanted
+    in
+    (lines, applied)
+
 let fix_outcome ~path (src : string) : outcome =
-  let (start, imports) = add_imports ~path (split_lines src) in
+  let (renamed_lines, renamed) = rename_modules ~path (split_lines src) in
+  let (start, imports) = add_imports ~path renamed_lines in
+  let imports = renamed @ imports in
   let rec go lines applied passes =
     if passes = 0 then Ok (join_lines lines, List.rev applied)
     else

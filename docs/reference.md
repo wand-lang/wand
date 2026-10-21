@@ -39,7 +39,7 @@ For what wand is and why, see the [README](../README.md).
 - [Packages](#packages)
 - [Current standard library](#current-standard-library)
   - [Three collections, and where they differ](#three-collections-and-where-they-differ)
-  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Bool](#bool) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Digest](#digest) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result) · [Wand](#wand)
+  - [List](#list) · [String](#string) · [Regex](#regex) · [Map](#map) · [FS](#fs) · [Resource](#resource) · [Stream](#stream) · [Path](#path) · [IO](#io) · [Bool](#bool) · [Float](#float) · [Int](#int) · [DateTime](#datetime) · [Clock](#clock) · [Random](#random) · [Proc](#proc) · [HTTP](#http) · [Net](#net) · [Env](#env) · [CSV](#csv) · [JSON](#json) · [TOML](#toml) · [YAML](#yaml) · [Duration](#duration) · [Size](#size) · [Port](#port) · [Version](#version) · [Glob](#glob) · [IPv4](#ipv4) · [CIDR](#cidr) · [URL](#url) · [Par](#par) · [Shared](#shared) · [Shell](#shell) · [Decode](#decode) · [Args](#args) · [Hash](#hash) · [Base64](#base64) · [Test](#test) · [Option](#option) · [Result](#result) · [Wand](#wand)
 - [Testing](#testing)
 - [Comments](#comments)
 - [Style for scripts](#style-for-scripts)
@@ -7713,28 +7713,39 @@ let ahead = Decode.run Decode.int $(git rev-list --count HEAD)
 ### `Hash`
 
 ```ocaml
-string : Algorithm -> String -> Digest
-file   : Algorithm -> Path -> Result String Digest  ! {FS.Read}
-file!  : Algorithm -> Path -> Digest                ! {FS.Read, Raise}
-hmac   : Algorithm -> String -> String -> Digest
-equal? : Digest -> Digest -> Bool
+type Algorithm = Sha256 | Sha512 | Sha1 | Md5
+type Hash(algorithm: Algorithm, hex: String)
+
+string    : Algorithm -> String -> Hash
+file      : Algorithm -> Path -> Result String Hash  ! {FS.Read}
+file!     : Algorithm -> Path -> Hash                ! {FS.Read, Raise}
+hmac      : Algorithm -> String -> String -> Hash
+equal?    : Hash -> Hash -> Bool
+name      : Algorithm -> String
+hex       : Hash -> String
+base64    : Hash -> String
+algorithm : Hash -> Algorithm
+of_hex    : Algorithm -> String -> Result String Hash
+of_hex!   : Algorithm -> String -> Hash ! {Raise}
 ```
 
-Digests without a subprocess. A checksum written by `Shell(shasum)` tells a
+Hashes without a subprocess. A checksum written by `Shell(shasum)` tells a
 reviewer that a binary ran and nothing about what was verified, and it does
 not run everywhere: the tool is `shasum` on macOS and `sha256sum` on most
-Linux images. A digest is arithmetic, and it should not depend on which
+Linux images. A hash is arithmetic, and it should not depend on which
 machine the script woke up on.
 
 ```ocaml
 uses {FS.Read}
-import Digest
 import Hash
-let {Sha256} = import Digest
 
-Hash.string Sha256 body |> Digest.hex
-Hash.file!  Sha256 ./dist/wand.tar.gz |> Digest.hex
+Hash.string Hash.Sha256 body |> Hash.hex
+Hash.file!  Hash.Sha256 ./dist/wand.tar.gz |> Hash.hex
 ```
+
+The type and its functions were two modules, `Digest` and `Hash`, until
+0.113.0 (#215). `import Digest` and every `Digest.` name are now errors
+that say so, and `wand t --fix` writes `Hash` in their place.
 
 **Hashing performs nothing.** `string`, `hmac` and every `Base64` function
 reach nothing outside the program and answer the same twice, so they fit
@@ -7750,34 +7761,19 @@ once and a message is what varies, so a partial application reads as the
 thing being built:
 
 ```ocaml
-let sign = Hash.hmac Sha256 secret
+let sign = Hash.hmac Hash.Sha256 secret
 let a = sign body
 ```
 
-**`equal?` is constant-time and `==` is not.** Both compare digests. Use
-`equal?` when the digest on one side came from somebody else — a webhook
+**`equal?` is constant-time and `==` is not.** Both compare hashes. Use
+`equal?` when the hash on one side came from somebody else — a webhook
 signature, a token — because a comparison that stops at the first wrong byte
 tells an attacker who can measure replies how much of the value they have
 guessed. A deploy script checking a published checksum is not that case, and
 `==` is right there. The lengths are compared before the bytes, and a
-digest's length is public.
+hash's length is public.
 
-### `Digest`
-
-```ocaml
-type Algorithm = Sha256 | Sha512 | Sha1 | Md5
-type Digest(algorithm: Algorithm, hex: String)
-
-name      : Algorithm -> String
-hex       : Digest -> String
-base64    : Digest -> String
-algorithm : Digest -> Algorithm
-of_hex    : Algorithm -> String -> Result String Digest
-of_hex!   : Algorithm -> String -> Digest ! {Raise}
-```
-
-`Hash` computes; this module holds the answer and renders it. A digest is a
-type rather than a hex `String`, which buys two things.
+A hash is a type rather than a hex `String`, which buys two things.
 
 **It carries which algorithm made it**, so comparing a sha256 against a
 sha512 is a question the checker answers rather than a `false` that reads
@@ -7790,14 +7786,14 @@ subresource integrity are base64. Two accessors say that, where a `String`
 return would need two families of function:
 
 ```ocaml
-Hash.string Sha256 "abc" |> Digest.hex
+Hash.string Hash.Sha256 "abc" |> Hash.hex
 -- "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-Hash.string Sha256 "abc" |> Digest.base64
+Hash.string Hash.Sha256 "abc" |> Hash.base64
 -- "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
 ```
 
-`hex` and `algorithm` answer the same as the fields `d.hex` and
-`d.algorithm`. The functions are the spelling that pipes.
+`hex` and `algorithm` answer the same as the fields `h.hex` and
+`h.algorithm`. The functions are the spelling that pipes.
 
 `Sha256` and `Sha512` are for new work. `Sha1` and `Md5` are here for
 interop and nothing else: git names objects with sha1 and S3 ETags are md5,
@@ -8485,9 +8481,9 @@ type ShellResult(stdout: String, stderr: String, code: Int)
 What `$?(...)` and `Shell.query` give, and `Shell.close`: ...
 
 $ wand d Sha256
-Digest.Sha256 is a constructor of Digest.Algorithm
+Hash.Sha256 is a constructor of Hash.Algorithm
 type Algorithm = Sha256 | Sha512 | Sha1 | Md5
-declared in Digest: write Digest.Algorithm, Digest.Sha256, Digest.Sha512, Digest.Sha1, Digest.Md5
+declared in Hash: write Hash.Algorithm, Hash.Sha256, Hash.Sha512, Hash.Sha1, Hash.Md5
 ```
 
 This works for the built-in types, the stdlib's, and the types of a file
@@ -9176,7 +9172,7 @@ type `T` where a `String` is expected gets `T.to_string` around it, when
 the module `T` has `to_string`: `expected String, got Path; Path.to_string
 gives its text`. `String.of_int` becomes `Int.to_string`. A bare
 constructor of a standard library module, such as `Sha256`, becomes
-`Digest.Sha256` when only one module has that constructor, and the import
+`Hash.Sha256` when only one module has that constructor, and the import
 is the next fix. An error
 whose change is a choice, such as a guess by spelling or two types that have
 the field, keeps only its text. A fix applies only where the text at its
@@ -9188,8 +9184,8 @@ for each applied fix: `rule: line — what changed`. With `--json` it prints the
 applied set in the diagnostics shape. A parse error refuses the whole run, and
 so does a type error with no fix. wand writes nothing, because a fix around a
 broken file is a guess. Missing standard library imports are the one
-exception. A `Digest.hex` in a file that has no `import Digest`, and no name
-`Digest` of its own, is known from the source alone. So `wand t` reports
+exception. A `Hash.hex` in a file that has no `import Hash`, and no name
+`Hash` of its own, is known from the source alone. So `wand t` reports
 each missing import with the first error, and `--fix` adds them all first,
 in one run, and keeps them when it then refuses at an error with no fix.
 A plain `wand t` reports the findings that carry no fix,

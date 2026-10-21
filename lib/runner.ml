@@ -4824,16 +4824,21 @@ let typecheck_source ?(set_main = true) ~path (src : string)
      module of the standard library is checked with every module in scope,
      so it has none. *)
   let missing = ref [] in
+  (* And the modules that were folded into another (#215), the same way. *)
+  let renamed = ref [] in
   let with_missing (d : Diag.t) =
     let extra = Missing_imports.not_in (Diag.all d) !missing in
+    let extra = extra @ Renamed_modules.not_in (Diag.all d) !renamed in
     if extra = [] then d else { d with Diag.others = d.Diag.others @ extra }
   in
   try
     if set_main then Package.set_main_file full;
     let tokens   = Lexer.tokenize src in
     let (prog, item_locs) = Parser.parse_program_with_locs tokens in
-    if not (is_stdlib_file full) then
+    if not (is_stdlib_file full) then begin
       missing := Missing_imports.find ~item_locs prog;
+      renamed := Renamed_modules.find src
+    end;
     let base_dir = Filename.dirname full in
     let cache = Hashtbl.create 8 in
     let loading = ref [] in

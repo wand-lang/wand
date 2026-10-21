@@ -197,6 +197,14 @@ let resolve_stdlib name =
     (match embedded_module name with
      | Some n -> Embedded n
      | None ->
+       match List.find_opt (fun (old, _, _) -> old = name) Renamed_modules.renamed with
+       (* A module folded into another (#215) says where it went, and that
+          `wand t --fix` moves the file over. *)
+       | Some (old, into, _) ->
+         raise (ImportError
+           (Printf.sprintf "%s; `wand t --fix` rewrites the file"
+              (Renamed_modules.message old into)))
+       | None ->
        raise (ImportError
          (Printf.sprintf
             "no standard library module named '%s'. This binary carries: %s."

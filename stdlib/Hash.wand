@@ -1,12 +1,13 @@
 uses {FS.Read}
 
-import Digest
+import Result
+import String
 
--- Digests, without a subprocess.
+-- Hashes, without a subprocess.
 --
 -- A checksum written by `Shell(shasum)` tells a reviewer that a binary
 -- ran and nothing about what was verified, and it does not run
--- everywhere: the tool is not the same tool on macOS and Linux. A digest
+-- everywhere: the tool is not the same tool on macOS and Linux. A hash
 -- is arithmetic, and it should not depend on which machine the script
 -- woke up on.
 --
@@ -15,29 +16,66 @@ import Digest
 -- for the read rather than anything for the arithmetic.
 --
 --     uses {FS.Read}
---     import Digest
 --     import Hash
---     let {Sha256} = import Digest
 --
---     Hash.file! Sha256 ./dist/wand.tar.gz |> Digest.hex
+--     Hash.file! Hash.Sha256 ./dist/wand.tar.gz |> Hash.hex
 --
--- The answer is a `Digest`, which carries the algorithm that made it; see
--- that module for the two renderings.
+-- The answer is a `Hash`, which carries the algorithm that made it, so
+-- comparing a sha256 against a sha512 is a question the checker answers
+-- rather than a `false` that reads like a failed verification. One value
+-- has two renderings: checksum files are hex, and S3 ETags and
+-- subresource integrity are base64.
+--
+-- The type and its functions were two modules, `Digest` and `Hash`, until
+-- every function in one answered with the other's type (#215).
 
--- The digest of a String.
+-- Which hash.
+--
+-- `Sha256` and `Sha512` are for new work. `Sha1` and `Md5` are here for
+-- interop and nothing else: git names objects with sha1 and S3 ETags are
+-- md5, so a script matching one of those is not making a mistake. Leaving
+-- them out would not stop anyone using them -- it would send them to
+-- `Shell(md5sum)`, where the manifest names a binary again and the tool
+-- differs between macOS and Linux.
+type Algorithm = Sha256 | Sha512 | Sha1 | Md5
+
+-- A hash: the algorithm that made it, and its value written as lowercase
+-- hex.
+type Hash(algorithm: Algorithm, hex: String)
+
+-- The algorithm's name, as a checksum file writes it.
+--
+-- >> Hash.name Hash.Sha256
+-- "sha256" : String
+let name algorithm =
+  match algorithm with
+  | Sha256 -> "sha256"
+  | Sha512 -> "sha512"
+  | Sha1 -> "sha1"
+  | Md5 -> "md5"
+
+-- How many hex digits the algorithm's output takes.
+let _hex_length algorithm =
+  match algorithm with
+  | Sha256 -> 64
+  | Sha512 -> 128
+  | Sha1 -> 40
+  | Md5 -> 32
+
+-- The hash of a String.
 --
 -- A String holds bytes, so this takes any of them -- a request body, a
 -- file already in memory, text.
 --
--- >> Hash.string Digest.Sha256 "abc" |> Digest.hex
+-- >> Hash.string Hash.Sha256 "abc" |> Hash.hex
 -- "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String
 --
--- >> Hash.string Digest.Md5 "abc" |> Digest.hex
+-- >> Hash.string Hash.Md5 "abc" |> Hash.hex
 -- "900150983cd24fb0d6963f7d28e17f72" : String
 let string algorithm text =
-  Digest.Digest(algorithm = algorithm, hex = hash_hex (Digest.name algorithm) text)
+  Hash(algorithm = algorithm, hex = hash_hex (name algorithm) text)
 
--- The digest of a file. Raises if it cannot be read.
+-- The hash of a file. Raises if it cannot be read.
 --
 -- The file is read in blocks and never held, so a release archive costs
 -- one block of memory rather than its own size. That is the whole reason
@@ -45,49 +83,96 @@ let string algorithm text =
 -- `FS.read_file!`.
 --
 -- >> with FS.temp_dir "hash_" as d ->
--- ..   (let f = Path.join d ./x; FS.write_file! f "abc"; Digest.hex (Hash.file! Digest.Sha256 f))
+-- ..   (let f = Path.join d ./x; FS.write_file! f "abc"; Hash.hex (Hash.file! Hash.Sha256 f))
 -- "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String
 let file! algorithm path =
-  Digest.Digest(algorithm = algorithm, hex = hash_file (Digest.name algorithm) path)
+  Hash(algorithm = algorithm, hex = hash_file (name algorithm) path)
 
--- The digest of a file, or an Error naming why it could not be read.
+-- The hash of a file, or an Error naming why it could not be read.
 --
 -- >> with FS.temp_dir "hash_" as d ->
--- ..   (match Hash.file Digest.Sha256 (Path.join d ./missing) with
+-- ..   (match Hash.file Hash.Sha256 (Path.join d ./missing) with
 -- ..    | Ok _ -> "hashed" | Error _ -> "not there")
 -- "not there" : String
 let file algorithm path = try file! algorithm path
 
--- A keyed digest: HMAC, as RFC 2104 defines it.
+-- A keyed hash: HMAC, as RFC 2104 defines it.
 --
 -- The key comes first and the message second, because a key is bound once
 -- and a message is what varies. So a partial application reads as the
 -- thing being built:
 --
---     let sign = Hash.hmac Sha256 secret
+--     let sign = Hash.hmac Hash.Sha256 secret
 --     let a = sign body
 --
--- >> Hash.hmac Digest.Sha256 "key" "The quick brown fox jumps over the lazy dog" |> Digest.hex
+-- >> Hash.hmac Hash.Sha256 "key" "The quick brown fox jumps over the lazy dog" |> Hash.hex
 -- "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8" : String
 let hmac algorithm key message =
-  Digest.Digest(algorithm = algorithm, hex = hmac_hex (Digest.name algorithm) key message)
+  Hash(algorithm = algorithm, hex = hmac_hex (name algorithm) key message)
 
--- True when two digests are the same, compared in constant time.
+-- True when two hashes are the same, compared in constant time.
 --
--- `==` compares digests too and is not constant time. Use this one when
--- the digest on one side came from somebody else -- a webhook signature,
+-- `==` compares hashes too and is not constant time. Use this one when
+-- the hash on one side came from somebody else -- a webhook signature,
 -- a token -- because a comparison that stops at the first wrong byte
 -- tells an attacker who can measure replies how much of the value they
 -- have guessed. A deploy script checking a published checksum is not that
 -- case, and `==` is fine there.
 --
--- Digests of different algorithms are never equal, and the lengths are
--- compared before the bytes: a digest's length is public.
+-- Hashes of different algorithms are never equal, and the lengths are
+-- compared before the bytes: a hash's length is public.
 --
--- >> Hash.equal? (Hash.string Digest.Sha256 "abc") (Hash.string Digest.Sha256 "abc")
+-- >> Hash.equal? (Hash.string Hash.Sha256 "abc") (Hash.string Hash.Sha256 "abc")
 -- true : Bool
 --
--- >> Hash.equal? (Hash.string Digest.Sha256 "abc") (Hash.string Digest.Sha256 "abd")
+-- >> Hash.equal? (Hash.string Hash.Sha256 "abc") (Hash.string Hash.Sha256 "abd")
 -- false : Bool
-let equal? (a: Digest.Digest) (b: Digest.Digest) =
-  a.algorithm == b.algorithm && ct_equal a.hex b.hex
+let equal? (a: Hash) (b: Hash) = a.algorithm == b.algorithm && ct_equal a.hex b.hex
+
+-- The hash as lowercase hex, which is what a checksum file holds.
+--
+-- The field is the same text; this is the spelling that pipes.
+--
+-- >> Hash.string Hash.Sha256 "abc" |> Hash.hex
+-- "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String
+let hex (h: Hash) = h.hex
+
+-- The hash as base64, which is what an S3 ETag and a subresource
+-- integrity attribute hold.
+--
+-- >> Hash.string Hash.Sha256 "abc" |> Hash.base64
+-- "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=" : String
+let base64 (h: Hash) =
+  match hex_decode h.hex with
+  | Ok raw -> base64_encode raw
+  | Error _ -> h.hex
+
+-- Which algorithm made this hash.
+--
+-- >> Hash.string Hash.Sha256 "abc" |> Hash.algorithm
+-- Sha256 : Algorithm
+let algorithm (h: Hash) = h.algorithm
+
+-- Read a hash out of hex text, checking it against the algorithm.
+--
+-- The algorithm comes from the caller because the text cannot supply it:
+-- 64 hex digits are a sha256 or half a sha512, and which one it is is
+-- known by whoever read it out of a file.
+--
+-- >> Hash.of_hex Hash.Md5 "900150983cd24fb0d6963f7d28e17f72"
+-- Ok(Hash(Md5, "900150983cd24fb0d6963f7d28e17f72")) : Result String Hash
+--
+-- >> Hash.of_hex Hash.Sha256 "abc"
+-- Error("a Sha256 hash is 64 hex digits, and this is 3") : Result String Hash
+let of_hex algorithm text =
+  let want = _hex_length algorithm;
+  let lower = String.lower text;
+  if String.length lower != want then
+    Error "a %{algorithm} hash is %{want} hex digits, and this is %{String.length lower}"
+  else Result.map (fn _ -> Hash(algorithm = algorithm, hex = lower)) (hex_decode lower)
+
+-- Read a hash out of hex text. Raises on text the algorithm rejects.
+--
+-- >> Hash.of_hex! Hash.Md5 "900150983cd24fb0d6963f7d28e17f72" |> Hash.algorithm
+-- Md5 : Algorithm
+let of_hex! algorithm text = Result.get! (of_hex algorithm text)

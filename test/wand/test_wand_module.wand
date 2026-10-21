@@ -114,5 +114,5 @@ test "a bare stdlib constructor names its module" (fn t ->
   let found = (Wand.check "let x = Sha256\n").diagnostics;
   t.ok
     (List.any?
-      (fn (d: Wand.Diagnostic) -> String.contains? "'Sha256' is 'Digest.Sha256'" d.message)
+      (fn (d: Wand.Diagnostic) -> String.contains? "'Sha256' is 'Hash.Sha256'" d.message)
       found))

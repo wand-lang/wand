@@ -896,9 +896,9 @@ let test_wand_d_shows_a_type () =
     has "a built-in record" ["d"; "ShellResult"]
       "type ShellResult(stdout: String, stderr: String, code: Int)";
     has "with its doc" ["d"; "ShellResult"] "its exit code";
-    has "a stdlib type" ["d"; "Digest.Algorithm"] "type Algorithm = Sha256 | Sha512 | Sha1 | Md5";
-    has "a bare stdlib type says where it is" ["d"; "Algorithm"] "declared in Digest: write Digest.Algorithm, Digest.Sha256";
-    has "a constructor names its type" ["d"; "Digest.Sha256"] "Digest.Sha256 is a constructor of Digest.Algorithm";
+    has "a stdlib type" ["d"; "Hash.Algorithm"] "type Algorithm = Sha256 | Sha512 | Sha1 | Md5";
+    has "a bare stdlib type says where it is" ["d"; "Algorithm"] "declared in Hash: write Hash.Algorithm, Hash.Sha256";
+    has "a constructor names its type" ["d"; "Hash.Sha256"] "Hash.Sha256 is a constructor of Hash.Algorithm";
     has "a constructor written with its type" ["d"; "Option.Some"] "Some is a constructor of Option";
     has "a type with nothing to declare" ["d"; "Command"] "`$*(...)` makes one";
     has "an alias gives its target's doc" ["d"; "HTTP.Request"] "The same type as HTTPRequest.";

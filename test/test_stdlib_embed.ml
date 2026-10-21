@@ -155,7 +155,7 @@ let test_constructor_of_two_modules () =
     List.iter
       (fun (name, src) ->
         let src =
-          if name = "Digest" then src ^ "\ntype Clash = Held | Other\n" else src
+          if name = "Hash" then src ^ "\ntype Clash = Held | Other\n" else src
         in
         Out_channel.with_open_text (Filename.concat alt (name ^ ".wand"))
           (fun oc -> Out_channel.output_string oc src))
@@ -183,7 +183,7 @@ let test_constructor_of_two_modules () =
     let out = wand "t clash.wand" in
     Alcotest.(check bool) "names both" true
       (contains out "'Held' is a constructor of more than one module: \
-                     'Digest.Held', 'FS.Held'");
+                     'FS.Held', 'Hash.Held'");
     ignore (wand "t --fix clash.wand");
     Alcotest.(check string) "the file is as it was" src
       (In_channel.with_open_text file In_channel.input_all))

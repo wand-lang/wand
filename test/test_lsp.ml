@@ -475,12 +475,12 @@ let test_code_action_annotates_parameter () =
 let test_code_action_adds_missing_imports () =
   let text =
     "import FS\nimport Path\n\
-     let f! p = Int.to_string (FS.size! p) ++ Digest.hex (Hash.file! Digest.Sha256 p)\n" in
+     let f! p = Int.to_string (FS.size! p) ++ String.upper (Hash.hex (Hash.file! Hash.Sha256 p))\n" in
   let (_, outs) = session [did_open uri text; code_action_at 24 uri 2 2] in
   let actions = items_of (response_for 24 outs) in
   let titles = List.map (fun a -> s (m "title" a)) actions in
   Alcotest.(check (list string)) "one action each"
-    ["Insert `import Int`"; "Insert `import Digest`"; "Insert `import Hash`"] titles;
+    ["Insert `import Int`"; "Insert `import String`"; "Insert `import Hash`"] titles;
   let edit_line title =
     List.find_map (fun a ->
       if s (m "title" a) <> title then None
@@ -488,8 +488,8 @@ let test_code_action_adds_missing_imports () =
         | `List [edit] -> Some (int_of (m "line" (m "start" (m "range" edit))))
         | _ -> None) actions
   in
-  Alcotest.(check (option int)) "Digest before FS" (Some 0)
-    (edit_line "Insert `import Digest`");
+  Alcotest.(check (option int)) "String after Path" (Some 2)
+    (edit_line "Insert `import String`");
   Alcotest.(check (option int)) "Hash after FS" (Some 1)
     (edit_line "Insert `import Hash`")
 

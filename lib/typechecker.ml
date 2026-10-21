@@ -11,7 +11,7 @@ let stdlib_module_names =
     "Regex"; "JSON"; "TOML"; "CSV"; "Option"; "Par"; "Resource"; "Stream";
     "Proc"; "Decode"; "Shell"; "Test"; "Args"; "Clock"; "Size"; "Port";
     "DateTime"; "Result"; "URL"; "Version"; "Glob"; "IPv4"; "CIDR";
-    "Random"; "Int"; "Hash"; "Digest"; "Base64"; "HTTP"; "YAML"; "Shared";
+    "Random"; "Int"; "Hash"; "Base64"; "HTTP"; "YAML"; "Shared";
     "Net"; "Wand" ]
 
 (* A module that was one and is not. The name is not unknown to anyone
