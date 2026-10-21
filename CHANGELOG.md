@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.112.0] - 2026-10-21
+
+### Changed
+
+- `Map.from_list` is `Map.of_list`, as `Stream.of_list`, `JSON.of_list` and the other conversions are named. The old name is an error, and `wand t --fix` writes the new one (#210).
+
 ## [0.111.0] - 2026-10-20
 
 ### Upgrading
