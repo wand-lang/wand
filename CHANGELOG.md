@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.114.0] - 2026-10-21
+
+### Changed
+
+- `Decode.run` or `Decode.lines` with a decoder that reads an object or a list is an error, because they read text and do not parse JSON. For `Decode.run`, `wand t --fix` writes `JSON.parse` and `JSON.decode` (#216).
+
+### Fixed
+
+- A text decoder given JSON says what to use: `JSON.parse`, then `JSON.decode` (#216).
+
+### Documentation
+
+- The reference's Decoders section says that `Decode.run` and `Decode.lines` do not parse JSON, and shows the form to use (#216).
+
 ## [0.113.1] - 2026-10-21
 
 ### Fixed
