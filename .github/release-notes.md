@@ -1,15 +1,7 @@
-## 0.114.0 - 2026-10-21
+## 0.114.1 - 2026-10-24
 
-This release refuses a text decoder that is given JSON, and fixes the call to parse the JSON first. A file that gives `Decode.run` a decoder of an object or a list fails until `wand t --fix` runs.
-
-### Changed
-
-- `Decode.run` or `Decode.lines` with a decoder that reads an object or a list is an error, because they read text and do not parse JSON. For `Decode.run`, `wand t --fix` writes `JSON.parse` and `JSON.decode` (#216).
+This release fixes a formatter bug that could change what a file does, when an item with a comment inside it ends with a `;` and the next item starts on the same line.
 
 ### Fixed
 
-- A text decoder given JSON says what to use: `JSON.parse`, then `JSON.decode` (#216).
-
-### Documentation
-
-- The reference's Decoders section says that `Decode.run` and `Decode.lines` do not parse JSON, and shows the form to use (#216).
+- `wand f` keeps an item on the line after a `;` when the item above it has a comment inside it. Before, the item could join the body above and change what the file does (#217).

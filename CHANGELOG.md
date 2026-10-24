@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.114.1] - 2026-10-24
+
+### Fixed
+
+- `wand f` keeps an item on the line after a `;` when the item above it has a comment inside it. (#217).
+
 ## [0.114.0] - 2026-10-21
 
 ### Changed
