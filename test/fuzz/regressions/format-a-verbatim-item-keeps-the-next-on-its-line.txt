@@ -1,0 +1,16 @@
+found:     Fuzz, seed 40099149951, iteration 272388, 2026-10-24 (#217)
+reported:  format:retyped:was E-TYPE, now typechecks to Unit
+fixed in:  lib/formatter.ml, `assemble`
+
+An item with a comment inside it that the emitters cannot place goes back
+as a verbatim slice, and the slice keeps the `;` that ended the item. The
+next item started on the same line, `m;()`, and `assemble` put it on a
+line of its own. A `;` inside a line ends the item; at the end of a line
+it means what a newline means. The slice kept its body at the left margin,
+so `()` below it was read as the last statement of the body, and a file
+the typechecker refused came back typechecking to Unit.
+
+`assemble` now keeps the next item on the line where the source had it,
+after a verbatim slice that ends in `;`. The fuzzer reached it from
+examples/ports/bc-driver.wand; the 418-byte mutant shrank to these four
+lines by hand.

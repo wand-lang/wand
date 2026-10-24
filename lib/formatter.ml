@@ -2988,6 +2988,9 @@ type piece = {
      inserted stayed jammed against the first import, and no amount of
      `wand f` would separate them. *)
   blank_after : bool;
+  (* The item's exact source text, which `item_pieces` falls back to when it
+     cannot place a comment inside the item. *)
+  verbatim : bool;
 }
 
 (* Trim trailing whitespace/newlines only -- leading indentation and
@@ -3108,7 +3111,8 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
       else end_loc.Token.end_line
     in
     let piece = { offset = start_loc.offset; start_line = start_loc.line;
-                  end_line; text; is_comment = false; blank_after = false } in
+                  end_line; text; is_comment = false; blank_after = false;
+                  verbatim = is_verbatim } in
     (* What the item's own text now accounts for. A verbatim slice runs to
        the next item and absorbs the comments between the two; a
        pretty-printed item ends where the item ends, so a comment below it
@@ -3166,6 +3170,15 @@ let assemble pieces =
   let buf = Buffer.create 1024 in
   let prev_end = ref None in
   let prev_blank_after = ref false in
+  (* A verbatim slice keeps the `;` that ended its item, and the next item
+     can start after it on the same line. There the `;` ends the item. At
+     the end of a line it means what a newline means, and the slice keeps
+     the indentation it was written with, so a body that starts at the left
+     margin ran on into the next item: `m;()` came back as `m;` and `()`
+     below it, and `()` became the last statement of the body above. So the
+     next item stays on the line the source put it on. Found by test/fuzz
+     (#217). *)
+  let prev_holds_the_line = ref false in
   (* The separator goes on the item above, written straight after its own
      text and so ahead of any comment that trails it or stands between the
      two. A comment does not end a statement: it runs to the end of its line,
@@ -3192,6 +3205,8 @@ let assemble pieces =
        | Some pel ->
          if p.is_comment && p.start_line = pel then
            Buffer.add_string buf "  "
+         else if !prev_holds_the_line && p.start_line = pel then
+           Buffer.add_char buf ' '
          else begin
            Buffer.add_char buf '\n';
            if !prev_blank_after || p.start_line - pel - 1 > 0 then
@@ -3211,6 +3226,10 @@ let assemble pieces =
          && not (p.text <> "" && p.text.[String.length p.text - 1] = ';')
          && not (ends_in_a_comment p.text) then
         Buffer.add_char buf ';';
+      prev_holds_the_line :=
+        p.verbatim
+        && p.text <> "" && p.text.[String.length p.text - 1] = ';'
+        && not (ends_in_a_comment p.text);
       prev_end := Some p.end_line;
       prev_blank_after := p.blank_after;
       go rest
@@ -3248,7 +3267,7 @@ let format_source src =
     if in_any_span c.c_offset then None
     else Some { offset = c.c_offset; start_line = c.c_start_line;
                 end_line = c.c_end_line; text = c.c_text; is_comment = true;
-                blank_after = false }
+                blank_after = false; verbatim = false }
   ) comments in
   let item_pcs = List.map (fun (_, _, _, _, p) -> p) items in
   (* The leading import region -- the run of imports before the first item
@@ -3369,7 +3388,8 @@ let format_source src =
          end_line   = loc.Token.end_line;
          text;
          is_comment = false;
-         blank_after = true }]
+         blank_after = true;
+         verbatim = false }]
   in
   let body = assemble (manifest_pcs @ comment_pcs @ item_pcs) in
   match shebang_of src with
