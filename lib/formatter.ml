@@ -2995,6 +2995,42 @@ type piece = {
 
 (* Trim trailing whitespace/newlines only -- leading indentation and
    interior formatting are preserved exactly (verbatim rendering). *)
+(* Whether a piece's text ends inside a comment. A comment runs to the end
+   of its line and swallows whatever is written after it, so a separator put
+   there stops being a separator and changes the comment's own text instead.
+
+   A comment piece never takes the separator, since it goes on the item
+   above. A verbatim slice can still end in a comment: it runs to the next
+   item and so ends in whatever the source had there -- a trailing comment
+   among the rest. Asked
+   by lexing, because `--` inside a string is not a comment. Found by
+   test/fuzz. *)
+let ends_in_a_comment text =
+  match Lexer.tokenize text with
+  | tokens ->
+    (* Past the `Newline` and `EOF` the lexer ends every list with: they say
+       nothing about what the last line holds. *)
+    let rec last = function
+      | (Token.Newline, _) :: tl | (Token.EOF, _) :: tl -> last tl
+      | (Token.LineComment _, _) :: _ -> true
+      | _ -> false
+    in
+    last (List.rev tokens)
+  | exception _ -> false
+
+(* Whether the item after this piece goes on the piece's last line. A
+   verbatim slice keeps the `;` that ended its item, and the next item can
+   start after it on the same line. There the `;` ends the item. At the end
+   of a line it means what a newline means, and the slice keeps the
+   indentation it was written with, so a body that starts at the left margin
+   ran on into the next item: `m;()` came back as `m;` and `()` below it,
+   and `()` became the last statement of the body above. So the next item
+   stays on the line the source put it on. Found by test/fuzz (#217). *)
+let holds_the_line p =
+  p.verbatim
+  && p.text <> "" && p.text.[String.length p.text - 1] = ';'
+  && not (ends_in_a_comment p.text)
+
 (* For each item, decide its rendered text and its [start_offset, stop)
    span. An item falls back to an exact verbatim source slice only when a
    comment sits inside its own span (multi-equation clauses, or a comment
@@ -3009,7 +3045,8 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
   let stop_offset i =
     if i + 1 < n then (fst locs.(i + 1)).Token.offset else String.length src
   in
-  List.init n (fun i ->
+  let prev = ref None in
+  let piece_of i =
     let item = items.(i) in
     let (start_loc, end_loc) : Token.loc * Token.loc = locs.(i) in
     let stop = stop_offset i in
@@ -3039,8 +3076,20 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
       | cs -> Some (List.map (fun c -> rstrip_ws c.c_text) cs)
       | exception _ -> None
     in
+    (* An item that starts on the line a verbatim slice ends on is given
+       back as written too. The emitters lay an item out from the left
+       margin, and this one starts part way along a line: its continuation
+       lines came back at two spaces, left of where the item starts, and the
+       next pass read each one as an item of its own. Found by test/fuzz
+       (#218). *)
+    let follows_a_slice =
+      match !prev with
+      | Some p -> holds_the_line p && p.end_line = start_loc.line
+      | None -> false
+    in
     let attempt =
-      if mine = [] then Some (emit_top_item_pretty item)
+      if follows_a_slice then None
+      else if mine = [] then Some (emit_top_item_pretty item)
       else begin
         interior := List.sort (fun a b -> compare a.c_offset b.c_offset) mine;
         item_start := start_loc.offset;
@@ -3118,11 +3167,15 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
        pretty-printed item ends where the item ends, so a comment below it
        is still a piece of its own. *)
     let consumed =
-      if mine = [] then None
-      else if is_verbatim then Some (start_loc.offset, stop)
+      if is_verbatim then Some (start_loc.offset, stop)
+      else if mine = [] then None
       else Some (start_loc.offset, end_loc.Token.offset)
     in
-    (is_verbatim, consumed, start_loc.offset, stop, piece))
+    prev := Some piece;
+    (is_verbatim, consumed, start_loc.offset, stop, piece)
+  in
+  let rec all i = if i >= n then [] else let r = piece_of i in r :: all (i + 1) in
+  all 0
 
 (* A piece that opens with an operator continues the piece above it, which
    is the hazard `emit_top_item_pretty_uncached` brackets a `TLExpr` for. An
@@ -3139,29 +3192,6 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
    than inventing brackets. `let b = import /p; -` re-read as
    `let b = import /p - ...` without it, which moved the `import` inside a
    binary expression. Found by test/fuzz. *)
-(* Whether a piece's text ends inside a comment. A comment runs to the end
-   of its line and swallows whatever is written after it, so a separator put
-   there stops being a separator and changes the comment's own text instead.
-
-   A comment piece never takes the separator, since it goes on the item
-   above. A verbatim slice can still end in a comment: it runs to the next
-   item and so ends in whatever the source had there -- a trailing comment
-   among the rest. Asked
-   by lexing, because `--` inside a string is not a comment. Found by
-   test/fuzz. *)
-let ends_in_a_comment text =
-  match Lexer.tokenize text with
-  | tokens ->
-    (* Past the `Newline` and `EOF` the lexer ends every list with: they say
-       nothing about what the last line holds. *)
-    let rec last = function
-      | (Token.Newline, _) :: tl | (Token.EOF, _) :: tl -> last tl
-      | (Token.LineComment _, _) :: _ -> true
-      | _ -> false
-    in
-    last (List.rev tokens)
-  | exception _ -> false
-
 let assemble pieces =
   (* Source order, not line order: an item and a comment can start on the
      same line, and which came first decides whether the comment trails the
@@ -3170,14 +3200,6 @@ let assemble pieces =
   let buf = Buffer.create 1024 in
   let prev_end = ref None in
   let prev_blank_after = ref false in
-  (* A verbatim slice keeps the `;` that ended its item, and the next item
-     can start after it on the same line. There the `;` ends the item. At
-     the end of a line it means what a newline means, and the slice keeps
-     the indentation it was written with, so a body that starts at the left
-     margin ran on into the next item: `m;()` came back as `m;` and `()`
-     below it, and `()` became the last statement of the body above. So the
-     next item stays on the line the source put it on. Found by test/fuzz
-     (#217). *)
   let prev_holds_the_line = ref false in
   (* The separator goes on the item above, written straight after its own
      text and so ahead of any comment that trails it or stands between the
@@ -3226,10 +3248,7 @@ let assemble pieces =
          && not (p.text <> "" && p.text.[String.length p.text - 1] = ';')
          && not (ends_in_a_comment p.text) then
         Buffer.add_char buf ';';
-      prev_holds_the_line :=
-        p.verbatim
-        && p.text <> "" && p.text.[String.length p.text - 1] = ';'
-        && not (ends_in_a_comment p.text);
+      prev_holds_the_line := holds_the_line p;
       prev_end := Some p.end_line;
       prev_blank_after := p.blank_after;
       go rest

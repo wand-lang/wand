@@ -654,6 +654,14 @@ let test_a_verbatim_item_keeps_the_next_on_its_line () =
   let src = "let m () =\nlet n x = x\n--\nm; ()\n" in
   Alcotest.(check string) "unchanged" src (fmt src)
 
+(* The item after it on that line is given back as written too. Laid out
+   from the left margin, its continuation lines came back left of where it
+   starts, and the next pass read each one as an item of its own (#218). *)
+let test_the_item_after_a_verbatim_slice_keeps_its_text () =
+  let src = "() --\n t; o keys drawn alike are rare enough at that range to\n" in
+  Alcotest.(check string) "unchanged" src
+    (Formatter.with_width 50 (fun () -> fmt src))
+
 (* Statements one per line are one flat sequence, as the same statements
    with `;` in a bracket are. They were nested to the left, and each one
    past the second came back inside another pair of brackets:
@@ -2635,6 +2643,8 @@ let () =
         test_a_tuple_subject_keeps_its_brackets;
       Alcotest.test_case "a verbatim item keeps the next on its line" `Quick
         test_a_verbatim_item_keeps_the_next_on_its_line;
+      Alcotest.test_case "the item after a verbatim slice keeps its text" `Quick
+        test_the_item_after_a_verbatim_slice_keeps_its_text;
       Alcotest.test_case "an arm before a semicolon" `Quick
         test_an_arm_before_a_semicolon_is_bracketed;
       Alcotest.test_case "a comment inside an item" `Quick test_a_comment_inside_an_item;

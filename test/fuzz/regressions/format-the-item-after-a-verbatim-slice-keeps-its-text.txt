@@ -1,0 +1,14 @@
+found:     Fuzz, seed 40136010217, iteration 725396, 2026-10-24 (#218)
+reported:  format:unstable, at width 50
+fixed in:  lib/formatter.ml, `item_pieces`
+
+The first item holds a comment, so it goes back as a verbatim slice that
+ends in `;`, and the item after it stays on the same line (#217). That
+item was pretty-printed from the left margin. It was too wide for the
+line, so its arguments went on lines of their own at two spaces, left of
+the column where the item starts. The next pass read each argument as an
+item of its own and wrote it at the left margin.
+
+An item that starts on the line a verbatim slice ends on is now given back
+as written too. The fuzzer reached it from stdlib/Random.wand at width 50;
+the line here is lengthened by hand so it reproduces at the suite's 92.

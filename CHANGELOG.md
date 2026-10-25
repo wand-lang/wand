@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wand f` keeps an item as written when it follows an item with a comment inside it on the same line. Before, a second run could split it into separate items (#218).
+
 ## [0.114.1] - 2026-10-24
 
 ### Fixed
