@@ -1,7 +1,7 @@
-## 0.114.1 - 2026-10-24
+## 0.114.2 - 2026-10-25
 
-This release fixes a formatter bug that could change what a file does, when an item with a comment inside it ends with a `;` and the next item starts on the same line.
+This release fixes a formatter bug that could change what a file does, when an item follows an item with a comment inside it on the same line.
 
 ### Fixed
 
-- `wand f` keeps an item on the line after a `;` when the item above it has a comment inside it. Before, the item could join the body above and change what the file does (#217).
+- `wand f` keeps an item as written when it follows an item with a comment inside it on the same line. Before, a second run could split it into separate items (#218).
