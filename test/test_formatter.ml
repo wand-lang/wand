@@ -620,6 +620,23 @@ let test_a_constructor_and_its_bracket_are_kept () =
       "let h = Ok (Some true)";
       "let k = Ok Some (true)" ]
 
+(* A payload against a constructor's name is a type error, and the checker
+   reads it from the text, so the bracket stays against the name. Written
+   with a space, the file the checker refused came back as one it took
+   (#219). Found by test/fuzz. *)
+let test_a_payload_against_the_name_is_kept () =
+  List.iter (fun src -> fmt_eq src src src)
+    [ "Error(\"\")";
+      "let a = Wrap(1)";
+      "let a = Rect(1, v + 1)";
+      "let a = f Some([1]) 2";
+      "let a = Option.Some(1)";
+      "let v =\n  match r with\n  | Some(1) -> 1\n  | Rect(1, 2) -> 2\n  | Option.Some(3) -> 3";
+      "let k = f Some (1)" ];
+  (* After an item whose layout lexed a rendering of its own. *)
+  fmt_eq "after a call" "let f x = g (h x) x\nError(\"3\")"
+    "let f x = g (h x) x\nError(\"3\")"
+
 (* One name alone in a constructor's brackets is kept, since it can be the
    field of that name (#115). *)
 let test_one_name_is_kept () =
@@ -2693,6 +2710,8 @@ let () =
       Alcotest.test_case "a wide interface wraps" `Quick test_a_wide_interface_wraps;
       Alcotest.test_case "a constructor and its bracket are kept" `Quick
         test_a_constructor_and_its_bracket_are_kept;
+      Alcotest.test_case "a payload against the name is kept" `Quick
+        test_a_payload_against_the_name_is_kept;
       Alcotest.test_case "one name is kept" `Quick test_one_name_is_kept;
       Alcotest.test_case "statements one per line stay flat" `Quick
         test_statements_one_per_line_stay_flat;

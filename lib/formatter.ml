@@ -381,6 +381,33 @@ let map_key ?(upper_is_bare = false) k =
   in
   if plain then k else "\"" ^ escape_string_body k ^ "\""
 
+(* Whether `written` stands at `offset` with a bracket against it: `Some(1)`,
+   `Wrap(f x)`. A bracket against a constructor's name is a field list (#207),
+   and a positional payload in one is a type error the checker reads from
+   the text. The parse is the one a space gives, so the formatter has to ask
+   the text as well. Written with the space, `Error("")` came back as
+   `Error ""`: a file the checker refused came back as one it took. Found by
+   test/fuzz (#219).
+
+   The text is the formatter's own copy, `source`, and not the lexer's.
+   The lexer keeps the last text it was given from its start, and the
+   formatter lexes its own renderings to ask what they hold, so by the time
+   a later item is laid out the lexer's copy can be a rendering. *)
+let source = ref ""
+
+let against_name offset written =
+  let src = !source in
+  let stop = offset + String.length written in
+  offset >= 0 && stop < String.length src
+  && String.sub src offset (String.length written) = written
+  && src.[stop] = '('
+
+(* The same question of an expression's constructor, by its own extent. *)
+let ctor_against f =
+  match f with
+  | Located (l, Constr c) -> against_name l.Token.offset c
+  | _ -> false
+
 let rec emit_pat (p : pat) : string = match p with
   | Int n      -> string_of_int n
   | Float f    -> string_of_wand_float f
@@ -424,6 +451,14 @@ let rec emit_pat (p : pat) : string = match p with
     c ^ "(" ^ String.concat ", " entries ^ ")"
   | PConstrBare (c, ids) -> c ^ "(" ^ String.concat ", " ids ^ ")"
   | PQualified (m, p) -> m ^ "." ^ emit_pat p
+  (* Kept against the name, as written; see `against_name`. *)
+  | PLocated (l, PConstr (c, (_ :: _ as ps))) when against_name l.Token.offset c ->
+    let ps = match ps with [PTuple qs] -> qs | ps -> ps in
+    c ^ "(" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
+  | PLocated (l, PQualified (m, PConstr (c, (_ :: _ as ps))))
+    when against_name (l.Token.offset + String.length m + 1) c ->
+    let ps = match ps with [PTuple qs] -> qs | ps -> ps in
+    m ^ "." ^ c ^ "(" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
   | PLocated (_, p) | PCtor (_, p, _) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
@@ -1313,6 +1348,7 @@ and emit_arg ?(followed = false) indent e =
 
      Bare names after a space are a payload too: only a bracket against
      the name is a field list (#207). *)
+  | App (f, arg) when ctor_against f -> emit_against indent f arg
   | App (f, arg) when Ast.is_constr_payload e ->
     let payload = match strip_located arg with
       | Tuple _ | Unit -> emit_expr indent arg
@@ -1344,6 +1380,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
   | Constr x   -> Doc.text x
   | EnvVar x   -> Doc.text ("$" ^ x)
   | Hole       -> Doc.text "?"
+  | App (f, arg) when ctor_against f -> emit_against indent f arg
   | App _      -> emit_app ~col indent e
   | Fn (ps, body) ->
     (* The body is written after `fn params -> `, so that is where it
@@ -1432,6 +1469,7 @@ and emit_expr_inner ?col ?(stmt = false) indent e =
        the bracket after it, and the formatter did not settle. Found by
        test/fuzz. *)
     (match strip_located e with
+     | App (f, arg) when ctor_against f -> Doc.text (m ^ ".") ^^ emit_against indent f arg
      | App (f, arg) when (match strip_located f with Constr _ -> true | _ -> false) ->
        (* After a space: a bracket against the name is a field list, and
           this constructor's payload is not one (#207). *)
@@ -1705,6 +1743,7 @@ and emit_app ?col indent e =
      bracket and the guard is owed nothing. Found by test/fuzz twice: as
      the instability, then as this. *)
   let rec flatten e = match strip_located e with
+    | App (f, _) as a when ctor_against f -> (a, [])
     | App (f, x) -> let (h, args) = flatten f in (h, args @ [x])
     | other -> (other, [])
   in
@@ -1786,6 +1825,15 @@ and emit_app ?col indent e =
                head_s ^^ Doc.text "\n" ^^ inner ^^ Doc.concat (Doc.text "\n" ^^ inner) rest
              | [] -> oneline))
        | _, None -> oneline)
+
+(* `Some(1)`: a payload against the constructor's name, kept there; see
+   `against_name`. *)
+and emit_against indent f arg =
+  let payload = match strip_located arg with
+    | Tuple es -> Doc.concat (Doc.text ", ") (List.map (emit_expr indent) es)
+    | _ -> emit_expr indent arg
+  in
+  emit_expr indent f ^^ Doc.text "(" ^^ payload ^^ Doc.text ")"
 
 (* What follows the `$`, brackets and all: the literal text spelled tight
    against the bracket, or the expression spelled a space away from it. *)
@@ -3273,6 +3321,7 @@ let format_source src =
   (* Emptied first, so the layout of a command is the one this file gave
      it and never one left by a file lexed before. *)
   Hashtbl.reset Lexer.continuations;
+  source := src;
   let tokens = Lexer.tokenize src in
   let (prog, item_locs) = Parser.parse_program_with_locs tokens in
   let comments = all_comments src tokens in

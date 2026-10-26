@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wand f` keeps a bracket against a constructor's name, as in `Error("")`. Before, it wrote `Error ""`, so a file with a type error came back as a file without one (#219).
+
 ## [0.114.2] - 2026-10-25
 
 ### Fixed
