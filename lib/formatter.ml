@@ -3003,7 +3003,16 @@ let emit_top_item_pretty_uncached = function
           | '-' | '+' | '*' | '/' | '<' | '>' | '=' | '&' | '|' | ':' -> true
           | _ -> false)
     in
-    if continues_the_line_above then Doc.to_string (bracket (Doc.text text))
+    (* And a line that opens with `import` is an import, not an expression:
+       `(import Regex)` is an error about where `import` may appear, and
+       without its brackets it became the import itself. Found by
+       test/fuzz (#220). *)
+    let reads_as_an_import =
+      text = "import"
+      || (String.length text > 6 && String.sub text 0 7 = "import ")
+    in
+    if continues_the_line_above || reads_as_an_import then
+      Doc.to_string (bracket (Doc.text text))
     else text
 
 (* One item's layouts belong to that item. `interior` and `item_start` are

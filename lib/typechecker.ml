@@ -9312,6 +9312,42 @@ let infer_program_body ?(base_env=builtin_type_env) ?(init_tenv=[]) ?(init_env=[
          one: scoping it is what separates this item's effects from the
          items around it, and re-absorbing is what keeps the file's total --
          which the manifest check reads -- whole. *)
+      (* A bare `(import Regex)` can mean only the import item, which is
+         the same words without the brackets, so the error carries that
+         (#220). When the file has that import already, a second one is an
+         error of its own, so the fix takes the expression away instead:
+         the line, when it holds nothing else. *)
+      (match e with
+       | Located (at, inner) ->
+         (match strip_located inner, Hashtbl.find_opt Lexer.sources at.Token.file with
+          | (ImportExpr k as imp), Some src
+            when at.Token.end_offset <= String.length src ->
+            let written =
+              String.sub src at.Token.offset
+                (at.Token.end_offset - at.Token.offset) in
+            let imported =
+              List.exists (function TLImport k' -> k' = k | _ -> false)
+                prog.items in
+            let blank s = String.trim s = "" in
+            let line_start =
+              match String.rindex_from_opt src (at.Token.offset - 1) '\n' with
+              | Some i -> i + 1
+              | None -> 0
+              | exception Invalid_argument _ -> 0 in
+            let line_end =
+              match String.index_from_opt src at.Token.end_offset '\n' with
+              | Some i -> i
+              | None -> String.length src in
+            let alone =
+              at.Token.line = at.Token.end_line
+              && blank (String.sub src line_start (at.Token.offset - line_start))
+              && blank (String.sub src at.Token.end_offset
+                          (line_end - at.Token.end_offset)) in
+            if not imported then replace_fix at written (Ast.show imp)
+            else if alone then pending_fix := Some Diag.DeleteLine
+            else replace_fix at written ""
+          | _ -> ())
+       | _ -> ());
       let (t, eff) = scoped_eff (fun () -> infer tenv env e) in
       performs eff;
       expr_item_types := (!item_index, t) :: !expr_item_types;

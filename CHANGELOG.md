@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `wand t --fix` turns a bare `(import Regex)` at the top level into the plain import `import Regex` (#220).
+
+### Fixed
+
+- `wand f` no longer turns a bare `(import Regex)` at the top level into the plain import `import Regex`, which changed what the file means (#220).
+
 ## [0.114.3] - 2026-10-26
 
 ### Fixed

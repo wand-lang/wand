@@ -1,0 +1,15 @@
+found:     Fuzz, seed 40787707903, iteration 39849, 2026-10-29 (#220)
+reported:  format:retyped:was E-TYPE, now typechecks to Unit
+fixed in:  lib/formatter.ml, the `TLExpr` case of `emit_top_item_pretty_uncached`
+
+At the top level, `(import Regex)` is a bare expression whose value is an
+`import` expression. Only a `let` may take an `import` expression as its
+value, so the typechecker refuses the file. The AST does not record the
+brackets, and `wand f` printed the expression as `import Regex`. The
+parser reads that as a plain import, so the formatted file typechecked:
+`wand f` had written a different program.
+
+`wand f` now puts brackets around a bare top-level expression whose text
+starts with `import`, so the file keeps its type error. The fuzzer reached
+it from examples/packages/text-tools/_split.wand; the mutant was already
+this one line.

@@ -1027,6 +1027,29 @@ let test_digest_is_hash () =
   let (fixed, _) = fix own in
   Alcotest.(check string) "a type of the file's own" own fixed
 
+(* A bare `(import Regex)` is an `import` expression, which only a `let`
+   may take as its value. The same words without the brackets are the
+   import item, which is the one thing it can mean, so the fix removes them
+   (#220). *)
+let test_bracketed_import () =
+  (match Runner.typecheck_source ~path:"wand_fix_test.wand" "(import Regex)\n" with
+   | Error { Diag.fix = Some (Diag.ReplaceAt { from_; to_; _ }); _ } ->
+     Alcotest.(check (pair string string)) "the brackets go"
+       ("(import Regex)", "import Regex") (from_, to_)
+   | _ -> Alcotest.fail "expected an error carrying a replacement");
+  (* With the import there already, a second one is an error of its own,
+     so the expression goes instead. *)
+  let src =
+    "uses {IO}\n\nimport IO\nimport Regex\n(import Regex)\n\n\
+     let main () = IO.println \"%{Regex.match? r/a/ \"a\"}\"\n" in
+  let (fixed, _) = fix_clean src in
+  Alcotest.(check string) "a second import goes"
+    "uses {IO}\n\nimport IO\nimport Regex\n\n\
+     let main () = IO.println \"%{Regex.match? r/a/ \"a\"}\"\n" fixed;
+  (* Under a `let` it is a value, and an error with no fix to carry. *)
+  let d = refuse "let f () =\n  (import Regex)\n  1\n" in
+  Alcotest.(check bool) "in a body, no fix" true (d.Diag.fix = None)
+
 (* `Decode.run` reads text and never parses JSON (#216). A decoder that
    reads an object or a list fails on every text, so where one can be seen
    the call is an error, and the fix puts `JSON.parse` in front of it --
@@ -1184,5 +1207,8 @@ let () =
     ];
     "a text decoder given JSON (#216)", [
       Alcotest.test_case "the fix parses it first" `Quick test_decode_run_on_json;
+    ];
+    "an import in brackets of its own (#220)", [
+      Alcotest.test_case "the fix removes them" `Quick test_bracketed_import;
     ];
   ]
