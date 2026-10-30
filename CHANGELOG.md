@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.115.0] - 2026-10-30
 
 ### Added
 
@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- `wand f` no longer turns a bare `(import Regex)` at the top level into the plain import `import Regex`, which changed what the file means (#220).
+- `wand f` no longer turns a bare `(import Regex)` at the top level into the plain import `import Regex`, which changes what the file means (#220).
 
 ## [0.114.3] - 2026-10-26
 
