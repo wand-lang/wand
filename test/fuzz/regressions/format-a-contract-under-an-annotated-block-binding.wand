@@ -1,0 +1,5 @@
+let g () =
+  let t : Int = ensures true
+    1
+  t
+  t

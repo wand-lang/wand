@@ -1,0 +1,14 @@
+found:     Fuzz, seed 41941885655, iteration 358316, 2026-11-05 (#222)
+reported:  format:unparses:this binding has no body: a block cannot end with a `let`, because nothing would
+fixed in:  lib/formatter.ml, the `Annot` case of `emit_binding`
+
+An annotated binding in a block can take a contract as its value:
+`let t : Int = ensures true` with its body indented below. `wand f`
+wrote the body level with the `let`, not past it. The parser then read
+that line as the binding's body, so the contract had no body and the
+block ended on the `let`, and the output did not parse.
+
+`wand f` now writes a contract's body one step past the `let`, as the
+source had it. The fuzzer reached it from test/wand/test_contracts.wand
+through truncate, swap-lines, repeat and splice-donor. The mutant was
+shrunk by hand to the five lines here.

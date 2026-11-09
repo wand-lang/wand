@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wand f` keeps the indent on the body below a contract in a block, as in `let t : Int = ensures result > 0`. Before, it moved the body back to the column of the `let`, so the file did not parse (#222).
+
 ## [0.115.0] - 2026-10-30
 
 ### Added

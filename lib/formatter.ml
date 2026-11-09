@@ -2351,8 +2351,17 @@ and emit_binding ?col ?(in_terminated = false) indent p e1 =
   match e1 with
   | Fn (params, fbody) -> emit_fn_clauses ~col indent p params fbody
   | Annot (te, body) ->
+    (* A contract's clauses and body go below the `=` line, and here they
+       go one step past the `let`. Level with it, the line under the clause
+       read as the binding's body rather than the contract's: the contract
+       lost its body, and the block lost the statement that ended it, so
+       the output did not parse (#222). *)
+    let body_indent = match strip_located body with
+      | Contract (reqs, ens, _) when reqs <> [] || ens <> [] -> indent + 2
+      | _ -> indent
+    in
     Doc.text ("let " ^ emit_pat p ^ " : " ^ emit_type_expr te ^ " = ")
-    ^^ value indent body
+    ^^ value body_indent body
   | _ when is_multiline_raw_string e1 || is_multiline_command e1 ->
     (* On the `=` line here as at the top level. A block binding gives every other
        wrapped value a line of its own, and that is the shape the corpus is
