@@ -210,6 +210,7 @@ exits 1 if a finding is not already in --known.
 
 let () =
   Printexc.record_backtrace true;
+  Oracle.bound_loop_memory ();
   let seed = ref 0 and iterations = ref 1000 and seconds = ref infinity in
   let only = ref (-1) and timeout = ref 10.0 and shrink_budget = ref 400 in
   let shrink_seconds = ref 45.0 in

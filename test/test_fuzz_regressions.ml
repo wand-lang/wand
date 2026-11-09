@@ -58,6 +58,30 @@ let check fixture () =
       fixture (Wand_fuzz.Oracle.describe v)
       (Filename.remove_extension fixture ^ ".txt")
 
+(* The budget that stops a check which allocates without end, and the loop
+   going on after it. Nothing in the language reaches it now -- the input
+   that did is fixed and held by test_typechecker.ml -- so it is driven
+   directly. Garbage, not a structure that grows: the budget counts what is
+   allocated, so this crosses it without holding 2GB, in under a second. *)
+let allocation_budget () =
+  let module O = Wand_fuzz.Oracle in
+  (* Four budgets and it stops on its own, so a guard that does not fire
+     is a failure here rather than a test that never ends. *)
+  let spin () =
+    let stop =
+      O.words_allocated () +. 4. *. float_of_int O.allocation_budget_words in
+    while O.words_allocated () < stop do
+      ignore (Sys.opaque_identity (Array.make 1000 0))
+    done
+  in
+  (match O.with_allocation_budget spin with
+   | () -> Alcotest.fail "four budgets were allocated and nothing stopped it"
+   | exception O.Over_budget -> ());
+  Alcotest.(check bool) "the profile is stopped after it" false
+    (Gc.Memprof.is_sampling ());
+  Alcotest.(check int) "a check under the budget answers" 42
+    (O.with_allocation_budget (fun () -> 6 * 7))
+
 let () =
   let cases =
     List.map
@@ -67,4 +91,8 @@ let () =
   (* The directory is empty until the fuzzer finds something. An empty run
      is a pass, but the missing-directory check above means it is a pass
      because there is nothing to check, not because nothing was looked at. *)
-  Alcotest.run "fuzz regressions" [ ("reproducers", cases) ]
+  Alcotest.run "fuzz regressions"
+    [ ("reproducers", cases);
+      ("budgets",
+       [ Alcotest.test_case "allocation stops a check" `Quick
+           allocation_budget ]) ]

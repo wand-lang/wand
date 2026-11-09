@@ -25,6 +25,7 @@ type verdict =
   | Internal of string           (* E-FAIL: a `Failure` from inside a stage *)
   | Crash    of string * string  (* an exception escaped: signature, backtrace *)
   | Overflow                     (* Stack_overflow *)
+  | Memory                       (* allocated past its budget *)
   | Timeout                      (* did not finish inside the budget *)
   | Died     of string           (* the process itself did not survive *)
   (* ── The formatter ────────────────────────────────────────────────────── *)
@@ -48,7 +49,7 @@ exception Timed_out
 
 let is_finding = function
   | Skipped | Typed _ | Rejected _ -> false
-  | Internal _ | Crash _ | Overflow | Timeout | Died _ -> true
+  | Internal _ | Crash _ | Overflow | Memory | Timeout | Died _ -> true
   | FmtUnparses _ | FmtUnstable | FmtLostComment | FmtRetyped _ | FmtRevalued _
   | FmtCrash _ -> true
   | Unstated _ -> true
@@ -147,6 +148,7 @@ let signature = function
   | Internal msg -> Some ("internal:" ^ normalise msg)
   | Crash (sg, _) -> Some ("crash:" ^ sg)
   | Overflow -> Some "overflow:Stack_overflow"
+  | Memory -> Some "memory:allocation-budget"
   | Timeout -> Some "timeout"
   | Died how -> Some ("died:" ^ how)
 
@@ -167,6 +169,7 @@ let describe = function
   | Internal msg -> "E-FAIL: " ^ normalise msg
   | Crash (sg, _) -> "escaped: " ^ sg
   | Overflow -> "stack overflow"
+  | Memory -> "allocated more than its budget"
   | Timeout -> "timed out"
   | Died how -> "process died: " ^ how
 
@@ -183,6 +186,55 @@ let slug sg =
     then c else '-') sg
 
 (* ── Running one input ────────────────────────────────────────────────────── *)
+
+(* What one check may allocate, in words. The alarm bounds time, and time
+   does not bound memory: an input that made `wand t` allocate 400MB a
+   second (`p.1686018427387903`, whose error message wrote one letter for
+   each element) reached the memory of the runner inside its twenty
+   seconds. The runner shut down, so the shard uploaded nothing, and the run
+   was red with no issue filed and no record of the input.
+
+   Allocation, not the size of the heap. The heap does not shrink when the
+   input that grew it is done, so a bound on it would condemn every input
+   after the first large one, and the point at which it is crossed depends
+   on when the collector ran. What a check allocates depends only on the
+   input. Over 25,000 inputs the most a check allocated was 217MB, and the
+   99th percentile was 39MB; 2GB is ten times the worst of them.
+
+   The bound is checked from a memprof callback, which is the one place that
+   can raise inside an allocation. A limit from the kernel does not raise:
+   under RLIMIT_AS, OCaml 5 stops with "allocation failure during minor GC",
+   and the process that runs the loop is the one that dies. A sample every
+   10,000 words or so costs nothing that measures. *)
+exception Over_budget
+
+let allocation_budget_words = 2 * 1024 * 1024 * 1024 / (Sys.word_size / 8)
+
+let words_allocated () =
+  let (minor, promoted, major) = Gc.counters () in
+  minor +. major -. promoted
+
+let with_allocation_budget f =
+  if Gc.Memprof.is_sampling () then f ()
+  else begin
+    let limit = words_allocated () +. float_of_int allocation_budget_words in
+    let over _ =
+      if words_allocated () > limit then raise Over_budget;
+      None
+    in
+    ignore (Gc.Memprof.start ~sampling_rate:1e-4 ~callstack_size:0
+              { Gc.Memprof.null_tracker with alloc_minor = over; alloc_major = over });
+    Fun.protect ~finally:Gc.Memprof.stop f
+  end
+
+(* What the check allocated is garbage once it is stopped, and the heap
+   that held it stays the size it grew to. The next step is a fork, to
+   confirm the finding in a fresh process, and a fork of a 2GB heap spent
+   its whole twenty seconds on copying it: the finding was dropped as one
+   that "timed out" alone. A compaction gives the memory back first. *)
+let over_budget () =
+  Gc.compact ();
+  Memory
 
 let with_timeout secs f =
   let previous = Sys.signal Sys.sigalrm (Sys.Signal_handle (fun _ -> raise Timed_out)) in
@@ -205,14 +257,15 @@ let with_timeout secs f =
    way that module is. *)
 let check ?(timeout = 10.0) ~path src =
   try
-    with_timeout timeout (fun () ->
+    with_timeout timeout (fun () -> with_allocation_budget (fun () ->
       match Runner.typecheck_source ~path src with
       | Ok sc -> Typed sc.Runner.sc_type
       | Error d when d.Diag.code = "E-FAIL" -> Internal d.Diag.message
-      | Error d -> Rejected d.Diag.code)
+      | Error d -> Rejected d.Diag.code))
   with
   | Timed_out -> Timeout
   | Stack_overflow -> Overflow
+  | Over_budget | Fun.Finally_raised Over_budget -> over_budget ()
   | e ->
     let raw = Printexc.get_raw_backtrace () in
     Crash (Printexc.to_string e ^ "@" ^ frame_of raw, Printexc.raw_backtrace_to_string raw)
@@ -359,10 +412,31 @@ external limit_address_space : int -> unit = "wand_limit_address_space"
 let eval_memory_budget = 1024 * 1024 * 1024
 
 let bound_memory () =
+  (* The child is a fork taken inside a check, so it inherits the parent's
+     allocation budget and the profile that enforces it. A run has bounds of
+     its own, and the parent's would make a program that allocates freely
+     read as one that did not run. *)
+  if Gc.Memprof.is_sampling () then Gc.Memprof.stop ();
   limit_address_space eval_memory_budget;
   let words = eval_memory_budget / (Sys.word_size / 8) in
   ignore (Gc.create_alarm (fun () ->
     if (Gc.quick_stat ()).Gc.heap_words > words then Stdlib.exit 0))
+
+(* The process that runs the loop has a bound from the kernel too, behind
+   the allocation budget of each check. The budget is what reports an input
+   that allocates without end, and the loop goes on. This is for what the
+   budget cannot see: memory the C side asks for, or a mistake in the
+   budget. Reaching it stops the loop with a fatal error, which is a red
+   shard with its log uploaded -- worse than a finding, better than a runner
+   with no memory left, which uploads nothing.
+
+   Twice the budget of a check, so the budget is reached first. The
+   children lower it to their own, which a process can always do. Linux
+   only, as for the children; on a Mac this does nothing, and the budget is
+   the whole bound. *)
+let loop_memory_budget = 4 * 1024 * 1024 * 1024
+
+let bound_loop_memory () = limit_address_space loop_memory_budget
 
 let outcomes_in_child ~path src once =
   flush stdout;
@@ -499,7 +573,7 @@ let check_format ?(timeout = 10.0) ?(eval = false) ~width ~path ~before src =
   if not (parses src) then Skipped
   else
     try
-      with_timeout timeout (fun () ->
+      with_timeout timeout (fun () -> with_allocation_budget (fun () ->
         let fmt s = Formatter.with_width width (fun () -> Formatter.format_source s) in
         let once = fmt src in
         if not (parses once) then
@@ -533,10 +607,11 @@ let check_format ?(timeout = 10.0) ?(eval = false) ~width ~path ~before src =
              | Some (was_v, now_v) when was_v <> now_v ->
                FmtRevalued (Printf.sprintf "was %s, now %s" was_v now_v)
              | _ -> Skipped)
-          | _ -> Skipped)
+          | _ -> Skipped))
     with
     | Timed_out -> Timeout
     | Stack_overflow -> Overflow
+    | Over_budget | Fun.Finally_raised Over_budget -> over_budget ()
     | e ->
       let raw = Printexc.get_raw_backtrace () in
       FmtCrash (Printexc.to_string e ^ "@" ^ frame_of raw,
