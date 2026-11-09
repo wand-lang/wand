@@ -5,7 +5,7 @@
 ### Fixed
 
 - `wand t` no longer uses all the memory of the machine on a read such as `p.1686018427387903` from a value with no known type. Past `.25`, the message names the elements and gives no example tuple type.
-- The fuzzer reports an input that allocates more than 2GB in one check as a finding, `memory:allocation-budget`, and goes on to the next input. Before, the runner ran out of memory and shut down, and no issue was filed.
+- The fuzzer reports an input that holds more than 2GB in one check as a finding, `memory:budget`, and goes on to the next input. Before, the runner ran out of memory and shut down, and no issue was filed.
 
 ## [0.115.1] - 2026-11-08
 

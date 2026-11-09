@@ -25,7 +25,7 @@ type verdict =
   | Internal of string           (* E-FAIL: a `Failure` from inside a stage *)
   | Crash    of string * string  (* an exception escaped: signature, backtrace *)
   | Overflow                     (* Stack_overflow *)
-  | Memory                       (* allocated past its budget *)
+  | Memory                       (* grew the heap past its budget *)
   | Timeout                      (* did not finish inside the budget *)
   | Died     of string           (* the process itself did not survive *)
   (* ── The formatter ────────────────────────────────────────────────────── *)
@@ -148,7 +148,7 @@ let signature = function
   | Internal msg -> Some ("internal:" ^ normalise msg)
   | Crash (sg, _) -> Some ("crash:" ^ sg)
   | Overflow -> Some "overflow:Stack_overflow"
-  | Memory -> Some "memory:allocation-budget"
+  | Memory -> Some "memory:budget"
   | Timeout -> Some "timeout"
   | Died how -> Some ("died:" ^ how)
 
@@ -169,7 +169,7 @@ let describe = function
   | Internal msg -> "E-FAIL: " ^ normalise msg
   | Crash (sg, _) -> "escaped: " ^ sg
   | Overflow -> "stack overflow"
-  | Memory -> "allocated more than its budget"
+  | Memory -> "held more memory than its budget"
   | Timeout -> "timed out"
   | Died how -> "process died: " ^ how
 
@@ -187,48 +187,70 @@ let slug sg =
 
 (* ── Running one input ────────────────────────────────────────────────────── *)
 
-(* What one check may allocate, in words. The alarm bounds time, and time
-   does not bound memory: an input that made `wand t` allocate 400MB a
+(* How much one check may grow the heap. The alarm bounds time, and time
+   does not bound memory: an input that made `wand t` hold 400MB more each
    second (`p.1686018427387903`, whose error message wrote one letter for
    each element) reached the memory of the runner inside its twenty
    seconds. The runner shut down, so the shard uploaded nothing, and the run
    was red with no issue filed and no record of the input.
 
-   Allocation, not the size of the heap. The heap does not shrink when the
-   input that grew it is done, so a bound on it would condemn every input
-   after the first large one, and the point at which it is crossed depends
-   on when the collector ran. What a check allocates depends only on the
-   input. Over 25,000 inputs the most a check allocated was 217MB, and the
-   99th percentile was 39MB; 2GB is ten times the worst of them.
+   The growth of the major heap, not what the check allocates. A first
+   version counted allocation, and a 900-byte chain of 370 subtractions made
+   the formatter allocate 2GB of short-lived strings in one second, with 13MB
+   resident: a finding for an input that does no harm. The heap grows only
+   when live data needs the room, so garbage does not count, and a block
+   too large for the pools counts while it is held. Over 25,000 inputs, no
+   check allocated more than 217MB in all, so 2GB of growth is far past
+   anything an honest input holds.
+
+   The heap does not shrink when the check that grew it is done, so the
+   bound is on growth from where the check began, and a check that crosses
+   it is followed by a compaction (`over_budget`).
 
    The bound is checked from a memprof callback, which is the one place that
    can raise inside an allocation. A limit from the kernel does not raise:
    under RLIMIT_AS, OCaml 5 stops with "allocation failure during minor GC",
    and the process that runs the loop is the one that dies. A sample every
-   10,000 words or so costs nothing that measures. *)
+   10,000 words or so, at about a microsecond a reading, costs nothing that
+   measures.
+
+   One profile for the life of the process, armed for a check and disarmed
+   after it. It was started and stopped around each check, and stopping it
+   ran a callback still pending from inside the check: the callback raised,
+   so the stop did not finish, and the profile went on sampling with a limit
+   already passed. The next allocation outside a check raised, and the loop
+   died with the exception -- found by replaying a seed of the scheduled
+   job. Read from a flag, a callback that runs late cannot raise. *)
 exception Over_budget
 
-let allocation_budget_words = 2 * 1024 * 1024 * 1024 / (Sys.word_size / 8)
+let memory_budget_words = 2 * 1024 * 1024 * 1024 / (Sys.word_size / 8)
 
-let words_allocated () =
-  let (minor, promoted, major) = Gc.counters () in
-  minor +. major -. promoted
+let heap_words () = (Gc.quick_stat ()).Gc.heap_words
 
-let with_allocation_budget f =
-  if Gc.Memprof.is_sampling () then f ()
+(* The heap size a check may reach, or max_int when no check is running. *)
+let heap_limit = ref max_int
+
+let disarm_memory_budget () = heap_limit := max_int
+
+let start_profile = lazy (
+  let over _ =
+    if heap_words () > !heap_limit then raise Over_budget;
+    None
+  in
+  ignore (Gc.Memprof.start ~sampling_rate:1e-4 ~callstack_size:0
+            { Gc.Memprof.null_tracker with alloc_minor = over; alloc_major = over }))
+
+(* A check inside a check keeps the outer limit. *)
+let with_memory_budget ?(words = memory_budget_words) f =
+  if !heap_limit < max_int then f ()
   else begin
-    let limit = words_allocated () +. float_of_int allocation_budget_words in
-    let over _ =
-      if words_allocated () > limit then raise Over_budget;
-      None
-    in
-    ignore (Gc.Memprof.start ~sampling_rate:1e-4 ~callstack_size:0
-              { Gc.Memprof.null_tracker with alloc_minor = over; alloc_major = over });
-    Fun.protect ~finally:Gc.Memprof.stop f
+    Lazy.force start_profile;
+    heap_limit := heap_words () + words;
+    Fun.protect ~finally:disarm_memory_budget f
   end
 
-(* What the check allocated is garbage once it is stopped, and the heap
-   that held it stays the size it grew to. The next step is a fork, to
+(* What the check held is garbage once it is stopped, and the heap that
+   held it stays the size it grew to. The next step is a fork, to
    confirm the finding in a fresh process, and a fork of a 2GB heap spent
    its whole twenty seconds on copying it: the finding was dropped as one
    that "timed out" alone. A compaction gives the memory back first. *)
@@ -257,7 +279,7 @@ let with_timeout secs f =
    way that module is. *)
 let check ?(timeout = 10.0) ~path src =
   try
-    with_timeout timeout (fun () -> with_allocation_budget (fun () ->
+    with_timeout timeout (fun () -> with_memory_budget (fun () ->
       match Runner.typecheck_source ~path src with
       | Ok sc -> Typed sc.Runner.sc_type
       | Error d when d.Diag.code = "E-FAIL" -> Internal d.Diag.message
@@ -393,10 +415,12 @@ let eval_budget = 2.0
 
    Two bounds, because neither covers both platforms.
 
-   `RLIMIT_AS` is the real one: the kernel refuses the mapping, the
-   allocation raises Out_of_memory, and the child reports what it reports for
-   any program that did not run. It covers every allocation, including a
-   single huge one and anything the C side asks for. Linux honours it and
+   `RLIMIT_AS` is the real one: the kernel refuses the mapping, and the
+   allocation raises Out_of_memory, or -- when a minor collection is what
+   asked -- the runtime stops with "allocation failure during minor GC"
+   (measured, Linux, OCaml 5.5). Either way the child gives no answer, and
+   that reads as a program that did not run. It covers every allocation,
+   including a single huge one and anything the C side asks for. Linux honours it and
    Darwin does not -- `setrlimit(RLIMIT_AS, ...)` there answers EINVAL for
    any value, as does `RLIMIT_DATA` (measured, macOS 25.6). The daily job
    runs on Linux, so that is where it bites.
@@ -413,18 +437,18 @@ let eval_memory_budget = 1024 * 1024 * 1024
 
 let bound_memory () =
   (* The child is a fork taken inside a check, so it inherits the parent's
-     allocation budget and the profile that enforces it. A run has bounds of
-     its own, and the parent's would make a program that allocates freely
-     read as one that did not run. *)
-  if Gc.Memprof.is_sampling () then Gc.Memprof.stop ();
+     memory budget. A run has bounds of its own, and the parent's would make
+     a program that holds what it is allowed to read as one that did not
+     run. *)
+  disarm_memory_budget ();
   limit_address_space eval_memory_budget;
   let words = eval_memory_budget / (Sys.word_size / 8) in
   ignore (Gc.create_alarm (fun () ->
     if (Gc.quick_stat ()).Gc.heap_words > words then Stdlib.exit 0))
 
 (* The process that runs the loop has a bound from the kernel too, behind
-   the allocation budget of each check. The budget is what reports an input
-   that allocates without end, and the loop goes on. This is for what the
+   the memory budget of each check. The budget is what reports an input
+   that holds memory without end, and the loop goes on. This is for what the
    budget cannot see: memory the C side asks for, or a mistake in the
    budget. Reaching it stops the loop with a fatal error, which is a red
    shard with its log uploaded -- worse than a finding, better than a runner
@@ -573,7 +597,7 @@ let check_format ?(timeout = 10.0) ?(eval = false) ~width ~path ~before src =
   if not (parses src) then Skipped
   else
     try
-      with_timeout timeout (fun () -> with_allocation_budget (fun () ->
+      with_timeout timeout (fun () -> with_memory_budget (fun () ->
         let fmt s = Formatter.with_width width (fun () -> Formatter.format_source s) in
         let once = fmt src in
         if not (parses once) then

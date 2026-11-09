@@ -58,29 +58,41 @@ let check fixture () =
       fixture (Wand_fuzz.Oracle.describe v)
       (Filename.remove_extension fixture ^ ".txt")
 
-(* The budget that stops a check which allocates without end, and the loop
-   going on after it. Nothing in the language reaches it now -- the input
-   that did is fixed and held by test_typechecker.ml -- so it is driven
-   directly. Garbage, not a structure that grows: the budget counts what is
-   allocated, so this crosses it without holding 2GB, in under a second. *)
-let allocation_budget () =
+(* The budget that stops a check which holds memory without end, and the
+   loop going on after it. Nothing in the language reaches it now -- the
+   input that did is fixed and held by test_typechecker.ml -- so it is
+   driven directly, with a budget of 64MB so the test holds little. *)
+let memory_budget () =
   let module O = Wand_fuzz.Oracle in
-  (* Four budgets and it stops on its own, so a guard that does not fire
-     is a failure here rather than a test that never ends. *)
-  let spin () =
-    let stop =
-      O.words_allocated () +. 4. *. float_of_int O.allocation_budget_words in
-    while O.words_allocated () < stop do
+  let words = 64 * 1024 * 1024 / (Sys.word_size / 8) in
+  (* Garbage does not count: the formatter makes 2GB of short-lived
+     strings from a 900-byte input in a second, and that is no danger. *)
+  let garbage () =
+    for _ = 1 to 16 * words / 1001 do
       ignore (Sys.opaque_identity (Array.make 1000 0))
     done
   in
-  (match O.with_allocation_budget spin with
-   | () -> Alcotest.fail "four budgets were allocated and nothing stopped it"
+  Alcotest.(check unit) "sixteen budgets of garbage pass" ()
+    (O.with_memory_budget ~words garbage);
+  (* Held memory does. Four budgets and it stops on its own, so a guard
+     that does not fire is a failure here rather than a test that never
+     ends. *)
+  let hold () =
+    let kept = ref [] in
+    for _ = 1 to 4 * words / 1001 do
+      kept := Array.make 1000 0 :: !kept
+    done;
+    List.length (Sys.opaque_identity !kept)
+  in
+  (match O.with_memory_budget ~words hold with
+   | _ -> Alcotest.fail "four budgets were held and nothing stopped it"
    | exception O.Over_budget -> ());
-  Alcotest.(check bool) "the profile is stopped after it" false
-    (Gc.Memprof.is_sampling ());
+  (* Past the check, the budget is disarmed. A callback still pending from
+     inside it once raised outside any check, and the loop died. *)
+  Alcotest.(check bool) "holding memory after it raises nothing" true
+    (hold () > 0);
   Alcotest.(check int) "a check under the budget answers" 42
-    (O.with_allocation_budget (fun () -> 6 * 7))
+    (O.with_memory_budget (fun () -> 6 * 7))
 
 let () =
   let cases =
@@ -94,5 +106,5 @@ let () =
   Alcotest.run "fuzz regressions"
     [ ("reproducers", cases);
       ("budgets",
-       [ Alcotest.test_case "allocation stops a check" `Quick
-           allocation_budget ]) ]
+       [ Alcotest.test_case "held memory stops a check" `Quick
+           memory_budget ]) ]
