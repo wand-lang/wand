@@ -1562,23 +1562,40 @@ let raise_settled_at pe msg =
 (* The error for a read whose value has no known type. The size of the
    tuple is not known, nor the type of each element, so no annotation is
    certain and none is offered as a fix. The example has as many elements
-   as the index needs. *)
+   as the index needs, up to one for each letter.
+
+   Past that, the message names the elements and gives no example. The
+   index is any number the source writes, and the example has one element
+   for each: `.1686018427387903` asked for a string of 10^16 bytes. `wand t`
+   grew by 400MB a second until the machine had no memory left, and a fuzz
+   runner that reached it shut down with no record of the input. *)
 let element_type_unknown_message ~subject ~label ~index =
   let example =
-    "(" ^ String.concat ", "
-      (List.init (max 2 (index + 1)) (fun k ->
-         String.make 1 (Char.chr (Char.code 'A' + (k mod 26))))) ^ ")"
+    if index >= 26 then None
+    else
+      Some ("(" ^ String.concat ", "
+              (List.init (max 2 (index + 1)) (fun k ->
+                 String.make 1 (Char.chr (Char.code 'A' + k)))) ^ ")")
   in
-  match subject with
-  | Some n ->
+  match subject, example with
+  | Some n, Some example ->
     Printf.sprintf
       "'%s' needs its type before '.%s' can be read: write its tuple \
        type, such as '(%s: %s)'" n label n example
-  | None ->
+  | Some n, None ->
+    Printf.sprintf
+      "'%s' needs its type before '.%s' can be read: write its tuple \
+       type, which has elements .0 to .%s" n label label
+  | None, Some example ->
     Printf.sprintf
       "this value needs its type before '.%s' can be read: bind it to \
        a name that carries its type, such as 'let (x: %s) = ...'"
       label example
+  | None, None ->
+    Printf.sprintf
+      "this value needs its type before '.%s' can be read: bind it to \
+       a name that carries its type, a tuple with elements .0 to .%s"
+      label label
 
 (* The element at `i` of a value of type `t`, when `t` says what it is:
    `Some` the element, `None` while `t` is still a variable. *)

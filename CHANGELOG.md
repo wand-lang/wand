@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- `wand t` no longer uses all the memory of the machine on a read such as `p.1686018427387903` from a value with no known type. Past `.25`, the message names the elements and gives no example tuple type.
+
 ## [0.115.1] - 2026-11-08
 
 ### Fixed

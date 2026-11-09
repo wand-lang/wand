@@ -2758,6 +2758,19 @@ let test_tuple_index () =
      such as '(p: (A, B))'";
   err_contains "the example is as long as the index needs"
     "let fourth p = p.3" "such as '(p: (A, B, C, D))'";
+  err_contains "the example stops at Z" "let f p = p.25"
+    "such as '(p: (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, \
+     S, T, U, V, W, X, Y, Z))'";
+  (* Past Z the message has no example, whatever the index. With one
+     element for each, `.1686018427387903` used every byte of a fuzz
+     runner's memory. A million keeps a regression to a short pause. *)
+  err_contains "past Z, the elements and no example" "let f p = p.1000000"
+    "write its tuple type, which has elements .0 to .1000000";
+  err_contains "past Z, with no name" "fn f -> (f ()).1000000"
+    "a tuple with elements .0 to .1000000";
+  err_contains "the largest index there is"
+    "let f p = p.4611686018427387903"
+    "which has elements .0 to .4611686018427387903";
   err_contains "a value with no name" "fn f -> (f ()).1"
     "this value needs its type before '.1' can be read";
   err_contains "not a tuple" "let x = 5 in x.1"
