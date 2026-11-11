@@ -3241,7 +3241,30 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
     (is_verbatim, consumed, start_loc.offset, stop, piece)
   in
   let rec all i = if i >= n then [] else let r = piece_of i in r :: all (i + 1) in
-  all 0
+  (* The same hazard as `shadowed_below`, from an item that is no binding.
+     After `let reason s = x;`, the rest is an expression, `let reason s =
+     ... in o`. Printed, it goes in brackets and is safe. Given back as
+     written -- a comment sends it there -- it opens with `let reason`, and
+     on the line below the function that is one more equation, which takes
+     no `in`. The `;` stays. Asked of the slice's own tokens, so it holds
+     whatever form of item the slice is. Found by test/fuzz (#224). *)
+  let opens_an_equation_of name text =
+    match Lexer.tokenize text with
+    | (Token.Let, _) :: (Token.Ident n, _) :: _ -> n = name
+    | _ -> false
+    | exception _ -> false
+  in
+  let pieces = Array.of_list (all 0) in
+  Array.iteri (fun i (v, c, o, st, p) ->
+    if i + 1 < n then
+      let (next_verbatim, _, _, _, q) = pieces.(i + 1) in
+      match items.(i) with
+      | TLLet (name, _ :: _, _)
+        when (not v) && next_verbatim && opens_an_equation_of name q.text
+             && not (p.text <> "" && p.text.[String.length p.text - 1] = ';') ->
+        pieces.(i) <- (v, c, o, st, { p with text = p.text ^ ";" })
+      | _ -> ()) pieces;
+  Array.to_list pieces
 
 (* A piece that opens with an operator continues the piece above it, which
    is the hazard `emit_top_item_pretty_uncached` brackets a `TLExpr` for. An

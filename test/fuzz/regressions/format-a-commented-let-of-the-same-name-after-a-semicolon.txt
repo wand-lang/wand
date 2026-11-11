@@ -1,0 +1,16 @@
+found:     Fuzz, seed 42742232917, iteration 274439, 2026-11-10 (#224)
+reported:  format:unparses:unexpected token: in -- _ closes a _ and there is none open here; a binding is _
+fixed in:  lib/formatter.ml, `item_pieces`
+
+After `let reason s = 1;`, the rest is an expression:
+`let reason s = match ... in let o = u`. The comment after its `in`
+makes `wand f` give that expression back as written. `wand f` changed
+the `;` to a newline, so the expression started a line below the
+function with `let reason`. The parser read it as a second equation of
+`reason`, and an equation takes no `in`, so the output did not parse.
+
+`wand f` now keeps the `;` when the next item is given back as written
+and starts with a `let` of the function's name. A printed expression
+goes in brackets and needs no `;`. The fuzzer reached it from
+stdlib/URL.wand through six edits. The mutant was shrunk by hand to the
+two lines here.

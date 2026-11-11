@@ -3146,8 +3146,11 @@ let parse_type_def s =
         | t -> fail_at loc (Format.asprintf "expected constructor name, got %a" Token.pp t)
       in
       (* `of` is an ordinary word, so the OCaml spelling is caught where it
-         is written rather than by reserving it everywhere. *)
-      (if peek s = Token.Ident "of" then
+         is written rather than by reserving it everywhere. On a line of
+         its own at the declaration's column it is not that spelling but
+         the next statement, as after a `;`: `type P = U; of 1` went back
+         as `of 1` below the declaration, and that refused it (#223). *)
+      (if peek s = Token.Ident "of" && not (newline_breaks_expr s) then
          fail_at (peek_loc s)
            "a constructor takes its payload directly: 'Circle Int', not \
             'Circle of Int'");

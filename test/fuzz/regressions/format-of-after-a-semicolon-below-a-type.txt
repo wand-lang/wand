@@ -1,0 +1,14 @@
+found:     Fuzz, seed 42742232914, iteration 456450, 2026-11-10 (#223)
+reported:  format:unparses:a constructor takes its payload directly: _, not _
+fixed in:  lib/parser.ml, the `of` check in `parse_ctor`
+
+`of` is an ordinary name, so `type P = U; of 1` is a declaration and
+then a statement that applies `of` to `1`. `wand f` wrote the statement
+on the line below the declaration, at its column. The parser then read
+that `of` as the OCaml spelling `U of Int` and refused it, so the output
+did not parse.
+
+The parser now refuses `of` only where it continues the declaration:
+on the same line, or on a line indented past it. The fuzzer reached it
+from test/wand/test_generics.wand through swap-lines, insert-fragment
+and delete-span. The mutant was shrunk by hand to the one line here.

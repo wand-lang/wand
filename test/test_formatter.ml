@@ -188,7 +188,10 @@ let test_a_shadowed_function_keeps_its_semicolon () =
   List.iter (fun src -> formats_and_parses "shadowed function" 92 src)
     [ "let f i = i; let f = 3\n";
       "let f 0 = 1\nlet f n = 2; let f = 3\n";
-      "let f i = i; -- note\nlet f = 3\n" ];
+      "let f i = i; -- note\nlet f = 3\n";
+      (* The rest after the `;` is an expression, `let f s = ... in o`, and
+         its comment keeps it as written, so it opens with `let f` (#224). *)
+      "let f s = 1;let f s = match s with | r -> w in --\nlet o = u\n" ];
   (* A function above a value of another name needs no `;`. *)
   let out = fmt "let f i = i; let g = 3\n" in
   if Lint.contains out ";" then
@@ -663,6 +666,15 @@ let test_a_tuple_subject_keeps_its_brackets () =
   let out = fmt src in
   Alcotest.(check bool) "one pair" false (Lint.contains out "((");
   Alcotest.(check string) "and it settles" out (fmt out)
+
+(* `of` on a line of its own below a declaration is the next statement,
+   as it was after the `;`, and not the OCaml spelling of a payload (#223).
+   Indented past the declaration, it is still refused as that. *)
+let test_of_below_a_type_is_a_statement () =
+  formats_and_parses "of below a type" 92 "type P = U;of 1\n";
+  match parses "type P = U\n  of Int\n" with
+  | Ok () -> Alcotest.fail "`U of Int` parsed"
+  | Error _ -> ()
 
 (* An item that keeps its comment is given back as written, `;` and all,
    and the item after it on the same line stays there. Below it, the `;`
@@ -2572,6 +2584,8 @@ let () =
         test_arm_statements_settle;
       Alcotest.test_case "a shadowed function keeps its ;" `Quick
         test_a_shadowed_function_keeps_its_semicolon;
+      Alcotest.test_case "of below a type is a statement" `Quick
+        test_of_below_a_type_is_a_statement;
       Alcotest.test_case "parameterless fn spacing" `Quick
         test_a_parameterless_fn_has_one_space;
       Alcotest.test_case "a string is not a comment" `Quick
