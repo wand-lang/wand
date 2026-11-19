@@ -691,6 +691,14 @@ let test_the_item_after_a_verbatim_slice_keeps_its_text () =
   Alcotest.(check string) "unchanged" src
     (Formatter.with_width 50 (fun () -> fmt src))
 
+(* An item given back as written keeps the column it was written at. A
+   `let ... in` at column 2 ends at a line at column 1; moved to column 1,
+   it took that line as more of its body, and the `import` there moved
+   inside it (#225). *)
+let test_a_verbatim_item_keeps_its_column () =
+  let src = " let v () = (e --\n) in ()\nlet b = import /e\n" in
+  Alcotest.(check string) "unchanged" src (fmt src)
+
 (* Statements one per line are one flat sequence, as the same statements
    with `;` in a bracket are. They were nested to the left, and each one
    past the second came back inside another pair of brackets:
@@ -2676,6 +2684,8 @@ let () =
         test_a_verbatim_item_keeps_the_next_on_its_line;
       Alcotest.test_case "the item after a verbatim slice keeps its text" `Quick
         test_the_item_after_a_verbatim_slice_keeps_its_text;
+      Alcotest.test_case "a verbatim item keeps its column" `Quick
+        test_a_verbatim_item_keeps_its_column;
       Alcotest.test_case "an arm before a semicolon" `Quick
         test_an_arm_before_a_semicolon_is_bracketed;
       Alcotest.test_case "a comment inside an item" `Quick test_a_comment_inside_an_item;

@@ -580,7 +580,10 @@ let an_operator = function
   | '-' | '+' | '*' | '/' | '<' | '>' | '=' | '&' | '|' | ':' -> true
   | _ -> false
 
-let opens_with_an_operator text = text <> "" && an_operator text.[0]
+(* Past any indentation: a verbatim slice keeps what it was written with. *)
+let opens_with_an_operator text =
+  let text = String.trim text in
+  text <> "" && an_operator text.[0]
 
 let doc_opens_with_an_operator d =
   match Doc.head_char d with Some c -> an_operator c | None -> false
@@ -3185,10 +3188,36 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
       end
     in
     let is_verbatim = attempt = None in
+    (* A verbatim slice keeps the column it was written at, as its other
+       lines keep theirs. It starts at its first token, so the indentation
+       in front of that token was dropped and the item moved to the left
+       margin. The column is what the parser measures the lines below
+       against: ` let v () = e in ()` at column 2 ends at a line that starts
+       at column 1, and the same item at column 1 takes that line as more of
+       its body. The next item was read as part of the one above, and an
+       `import` there moved inside an expression. So the indentation goes
+       back when the item started its own line, and the item above it, if
+       any, started at the margin -- an item above at a deeper column is
+       pretty-printed at the margin, and a slice indented past it there would
+       read as its continuation. Found by test/fuzz (#225). *)
+    let indent =
+      if not is_verbatim || follows_a_slice then ""
+      else if i > 0 && (fst locs.(i - 1)).Token.col <> 1 then ""
+      else
+        let line_start =
+          match String.rindex_from_opt src (start_loc.offset - 1) '\n' with
+          | Some j -> j + 1
+          | None -> 0
+          | exception Invalid_argument _ -> 0
+        in
+        let lead = String.sub src line_start (start_loc.offset - line_start) in
+        if String.for_all (fun c -> c = ' ') lead then lead else ""
+    in
     let text =
       match attempt with
       | Some t -> t
-      | None -> rstrip_ws (String.sub src start_loc.offset (stop - start_loc.offset))
+      | None ->
+        indent ^ rstrip_ws (String.sub src start_loc.offset (stop - start_loc.offset))
     in
     (* A function reads every `let` of its own name below it as one more
        equation, and a newline does not stop it -- only a `;` does. So

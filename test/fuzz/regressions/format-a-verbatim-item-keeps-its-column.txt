@@ -1,0 +1,16 @@
+found:     Fuzz, seed 43338878888, iteration 96993, 2026-11-13 (#225)
+reported:  format:retyped:was E-IMPORT, now E-TYPE
+fixed in:  lib/formatter.ml, `item_pieces`
+
+A `let ... in` at the top level takes the lines below it at its own
+column as more of its body. Written at column 2, it ends at a line that
+starts at column 1. A comment inside it makes `wand f` give it back as
+written, and the slice started at its `let`, so the indentation in front
+was dropped and the item moved to column 1. The `import` on the line
+below then became part of its body, and the file that failed on the
+import failed on a type error instead.
+
+A verbatim slice that started its own line now keeps the indentation it
+was written with, when the item above it started at the margin. The
+fuzzer reached it from stdlib/Args.wand through two edits. The mutant
+was shrunk by hand to the three lines here.

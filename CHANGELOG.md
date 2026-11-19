@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.115.3] - 2026-11-19
+
+### Fixed
+
+- `wand f` no longer moves an indented `let ... in` to column 1 when a comment inside it makes `wand f` keep it as written. At column 1, the `let ... in` took the next line as part of its body. In this file, `let b` is a separate item, but after `wand f` it was part of the body of `v` (#225):
+
+  ```
+   let v () = (e --
+  ) in ()
+  let b = import /e
+  ```
+
 ## [0.115.2] - 2026-11-11
 
 ### Fixed
