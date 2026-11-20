@@ -699,6 +699,22 @@ let test_a_verbatim_item_keeps_its_column () =
   let src = " let v () = (e --\n) in ()\nlet b = import /e\n" in
   Alcotest.(check string) "unchanged" src (fmt src)
 
+(* A slice keeps its column only where the lines above it are the
+   source's own. Below a pretty-printed body on a line of its own, an
+   indented `let name =` became one more statement of that body (#227);
+   below a `;` that `assemble` writes for a slice that opens with an
+   operator, an indented line does not parse (#226). *)
+let test_a_verbatim_item_below_a_printed_item_goes_to_the_margin () =
+  let src = "import List\nlet verify! some_limit those_files = List.zip those_files \
+             (List.map (fn f -> f + some_limit) those_files)\n  let name =\n\
+             let failures checked = (\n  -- c\n  checked)\nList.length (verify! 1 [2])\n" in
+  Alcotest.(check string) "at the margin"
+    "import List\n\nlet verify! some_limit those_files =\n  List.zip those_files \
+     (List.map (fn f -> f + some_limit) those_files)\nlet name =\n\
+     let failures checked = (\n  -- c\n  checked)\nList.length (verify! 1 [2])\n"
+    (Formatter.with_width 92 (fun () -> fmt src));
+  fmt_eq "an operator slice" "import List\n -(1 -- c\n)\n" "import List;\n\n-(1 -- c\n)"
+
 (* Statements one per line are one flat sequence, as the same statements
    with `;` in a bracket are. They were nested to the left, and each one
    past the second came back inside another pair of brackets:
@@ -2686,6 +2702,8 @@ let () =
         test_the_item_after_a_verbatim_slice_keeps_its_text;
       Alcotest.test_case "a verbatim item keeps its column" `Quick
         test_a_verbatim_item_keeps_its_column;
+      Alcotest.test_case "a verbatim item below a printed item" `Quick
+        test_a_verbatim_item_below_a_printed_item_goes_to_the_margin;
       Alcotest.test_case "an arm before a semicolon" `Quick
         test_an_arm_before_a_semicolon_is_bracketed;
       Alcotest.test_case "a comment inside an item" `Quick test_a_comment_inside_an_item;

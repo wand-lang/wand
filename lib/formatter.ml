@@ -3115,6 +3115,7 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
     if i + 1 < n then (fst locs.(i + 1)).Token.offset else String.length src
   in
   let prev = ref None in
+  let prev_at_column = ref false in
   let piece_of i =
     let item = items.(i) in
     let (start_loc, end_loc) : Token.loc * Token.loc = locs.(i) in
@@ -3199,10 +3200,24 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
        back when the item started its own line, and the item above it, if
        any, started at the margin -- an item above at a deeper column is
        pretty-printed at the margin, and a slice indented past it there would
-       read as its continuation. Found by test/fuzz (#225). *)
+       read as its continuation. Found by test/fuzz (#225).
+
+       The item above has to be given back as written too, at its own
+       column, or be absent. Then the lines between the two are the source's
+       lines, and the parser reads them as it read the source. A
+       pretty-printed item above is laid out by the emitters, and its layout
+       can take an indented line below it: `let verify! l f = e` at a narrow
+       margin puts `e` on a line of its own, and an indented `let name =`
+       below became one more statement of that body (#227). A slice that
+       opens with an operator is not indented either: `assemble` writes a
+       `;` above it, and a line indented past a `;` that ended an item is a
+       parse error (#226). *)
     let indent =
-      if not is_verbatim || follows_a_slice then ""
-      else if i > 0 && (fst locs.(i - 1)).Token.col <> 1 then ""
+      let above_keeps_its_column =
+        i = 0 || (match !prev with Some p -> p.verbatim | None -> false)
+                 && !prev_at_column
+      in
+      if not is_verbatim || follows_a_slice || not above_keeps_its_column then ""
       else
         let line_start =
           match String.rindex_from_opt src (start_loc.offset - 1) '\n' with
@@ -3211,8 +3226,13 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
           | exception Invalid_argument _ -> 0
         in
         let lead = String.sub src line_start (start_loc.offset - line_start) in
-        if String.for_all (fun c -> c = ' ') lead then lead else ""
+        let slice = String.sub src start_loc.offset (stop - start_loc.offset) in
+        if String.for_all (fun c -> c = ' ') lead && not (opens_with_an_operator slice)
+        then lead else ""
     in
+    (* Whether this item now stands where the source put it: a slice that
+       kept its indentation, or one written at the margin. *)
+    prev_at_column := is_verbatim && (indent <> "" || start_loc.col = 1);
     let text =
       match attempt with
       | Some t -> t

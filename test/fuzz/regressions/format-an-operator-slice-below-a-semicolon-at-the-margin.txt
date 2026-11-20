@@ -1,0 +1,10 @@
+found:     Fuzz, seeds 44653529909 and 44653529910, 2026-11-20 (#226)
+reported:  format:unparses:the ; above ended the definition, so this line is a statement of its own rather
+fixed in:  lib/formatter.ml, `item_pieces`
+
+The slice ` -(1` opens with an operator, so `assemble` writes a `;` on the
+item above it. The fix for #225 gave the slice back its indentation, and
+a line indented past a `;` that ended an item is a parse error. A slice
+that opens with an operator now goes to column 1, as it did before #225.
+The fuzzer reached it from stdlib/Float.wand and stdlib/Shared.wand.
+The mutant was rewritten by hand to the three lines here.

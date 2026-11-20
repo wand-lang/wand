@@ -1,0 +1,14 @@
+found:     Fuzz, seed 44653529908, iteration 574439, 2026-11-20 (#227)
+reported:  format:retyped:was Unit, now E-TYPE
+fixed in:  lib/formatter.ml, `item_pieces`
+
+`let verify! ...` is too long for one line, so `wand f` puts its body on
+a line of its own. The slice below it, `  let name = ...`, has a comment
+in it and is given back as written. The fix for #225 gave it back its
+indentation, and below a body on its own line an indented line is one
+more statement of that body. `verify!` then returned something else. A
+slice now keeps its indentation only when there is no item above it, or
+the item above is a slice at its own column too, so the lines between
+the two are the source's lines. The fuzzer reached it from
+examples/ports/verify-archives.wand at width 49. The mutant was shrunk
+by hand to fail at width 92.
