@@ -3208,10 +3208,10 @@ let item_pieces (src : string) (prog : program) (item_locs : (Token.loc * Token.
        pretty-printed item above is laid out by the emitters, and its layout
        can take an indented line below it: `let verify! l f = e` at a narrow
        margin puts `e` on a line of its own, and an indented `let name =`
-       below became one more statement of that body (#227). A slice that
+       below became one more statement of that body (#226). A slice that
        opens with an operator is not indented either: `assemble` writes a
        `;` above it, and a line indented past a `;` that ended an item is a
-       parse error (#226). *)
+       parse error (#227). *)
     let indent =
       let above_keeps_its_column =
         i = 0 || (match !prev with Some p -> p.verbatim | None -> false)

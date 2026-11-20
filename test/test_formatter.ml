@@ -701,9 +701,9 @@ let test_a_verbatim_item_keeps_its_column () =
 
 (* A slice keeps its column only where the lines above it are the
    source's own. Below a pretty-printed body on a line of its own, an
-   indented `let name =` became one more statement of that body (#227);
+   indented `let name =` became one more statement of that body (#226);
    below a `;` that `assemble` writes for a slice that opens with an
-   operator, an indented line does not parse (#226). *)
+   operator, an indented line does not parse (#227). *)
 let test_a_verbatim_item_below_a_printed_item_goes_to_the_margin () =
   let src = "import List\nlet verify! some_limit those_files = List.zip those_files \
              (List.map (fn f -> f + some_limit) those_files)\n  let name =\n\

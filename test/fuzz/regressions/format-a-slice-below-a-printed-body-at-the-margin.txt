@@ -1,4 +1,4 @@
-found:     Fuzz, seed 44653529908, iteration 574439, 2026-11-20 (#227)
+found:     Fuzz, seed 44653529908, iteration 574439, 2026-11-20 (#226)
 reported:  format:retyped:was Unit, now E-TYPE
 fixed in:  lib/formatter.ml, `item_pieces`
 
