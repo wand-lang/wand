@@ -640,6 +640,20 @@ let test_a_payload_against_the_name_is_kept () =
   fmt_eq "after a call" "let f x = g (h x) x\nError(\"3\")"
     "let f x = g (h x) x\nError(\"3\")"
 
+(* A payload of bare names against the name keeps a bracket of its own.
+   `Boxed(tag;)` is the payload `tag`; written back as `Boxed(tag)`, it was
+   the field list, and at a narrow margin the next `wand f` laid it out as
+   one (#228). Found by test/fuzz. *)
+let test_a_bare_name_payload_against_the_name_keeps_its_bracket () =
+  fmt_eq "a name" "let a = Boxed(tag;)" "let a = Boxed((tag))";
+  fmt_eq "names in a tuple" "let a = Pair((x, y))" "let a = Pair((x, y))";
+  fmt_eq "settled" "let a = Boxed((tag))" "let a = Boxed((tag))";
+  fmt_eq "in a pattern" "let v =\n  match r with\n  | Some((x)) -> x\n  | _ -> 0"
+    "let v =\n  match r with\n  | Some((x)) -> x\n  | _ -> 0";
+  let src = "a_name_long_enough_that_the_payload_after_it_goes_past_the_margin_of_ninety_two_columns Boxed(tag;)" in
+  let once = fmt src in
+  Alcotest.(check string) "settles at the margin" once (fmt once)
+
 (* One name alone in a constructor's brackets is kept, since it can be the
    field of that name (#115). *)
 let test_one_name_is_kept () =
@@ -2754,6 +2768,8 @@ let () =
         test_a_constructor_and_its_bracket_are_kept;
       Alcotest.test_case "a payload against the name is kept" `Quick
         test_a_payload_against_the_name_is_kept;
+      Alcotest.test_case "a bare name payload against the name keeps its bracket" `Quick
+        test_a_bare_name_payload_against_the_name_keeps_its_bracket;
       Alcotest.test_case "one name is kept" `Quick test_one_name_is_kept;
       Alcotest.test_case "statements one per line stay flat" `Quick
         test_statements_one_per_line_stay_flat;

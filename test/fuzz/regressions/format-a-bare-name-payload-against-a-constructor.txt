@@ -1,0 +1,12 @@
+found:     Fuzz, seed 45466162243, iteration 247366, 2026-11-24 (#228)
+reported:  format:unstable
+fixed in:  lib/formatter.ml, `emit_against` and `emit_pat`
+
+`Boxed(tag;)` is the constructor given the payload `tag`, with the bracket
+against the name. `wand f` keeps such a bracket as written (#219), but it
+dropped the `;` and wrote `Boxed(tag)`. A bracket of bare names against
+the name is the field list, so the file changed meaning, and the next
+`wand f` laid it out as a field list. A payload of bare names now keeps
+a bracket of its own: `Boxed((tag))`. The fuzzer reached it from
+test/wand/derive_fixture_b.wand; the mutant was rewritten by hand to a
+long name so that the line breaks at the width the test uses.

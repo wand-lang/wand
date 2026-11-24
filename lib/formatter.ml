@@ -408,6 +408,26 @@ let ctor_against f =
   | Located (l, Constr c) -> against_name l.Token.offset c
   | _ -> false
 
+(* Whether a payload kept against the name would come back as a field list
+   once its own bracket is gone. `W(x;)` and `W((x))` are the payload `x`,
+   and `W(x)` is the field `x`, or the bare form whose reading the
+   declaration decides; a bracket of bare names is that form (#207). So a
+   payload of nothing but names keeps a bracket of its own: written as
+   `W(x)`, the file the checker refused came back as one it took, and the
+   next `wand f` laid it out as the field list it now was. Found by
+   test/fuzz (#228). *)
+let rec names_only_expr e = match e with
+  | Located (_, e) -> names_only_expr e
+  | Var _ -> true
+  | Tuple es -> List.for_all names_only_expr es
+  | _ -> false
+
+let rec names_only_pat p = match p with
+  | PLocated (_, p) -> names_only_pat p
+  | PVar _ -> true
+  | PTuple ps -> List.for_all names_only_pat ps
+  | _ -> false
+
 let rec emit_pat (p : pat) : string = match p with
   | Int n      -> string_of_int n
   | Float f    -> string_of_wand_float f
@@ -453,12 +473,10 @@ let rec emit_pat (p : pat) : string = match p with
   | PQualified (m, p) -> m ^ "." ^ emit_pat p
   (* Kept against the name, as written; see `against_name`. *)
   | PLocated (l, PConstr (c, (_ :: _ as ps))) when against_name l.Token.offset c ->
-    let ps = match ps with [PTuple qs] -> qs | ps -> ps in
-    c ^ "(" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
+    c ^ against_pat_payload ps
   | PLocated (l, PQualified (m, PConstr (c, (_ :: _ as ps))))
     when against_name (l.Token.offset + String.length m + 1) c ->
-    let ps = match ps with [PTuple qs] -> qs | ps -> ps in
-    m ^ "." ^ c ^ "(" ^ String.concat ", " (List.map emit_pat ps) ^ ")"
+    m ^ "." ^ c ^ against_pat_payload ps
   | PLocated (_, p) | PCtor (_, p, _) -> emit_pat p
   | PMap kvs ->
     (* Punned whenever the key already names its variable; a quoted key has
@@ -487,6 +505,14 @@ let rec emit_pat (p : pat) : string = match p with
    field list does not, because its bracket stands against the name (#207)
    and holds the fields with it: `fn Pod(name) -> name`, `let f Pod(a = x)
    = x`. *)
+(* `Rect(1, v)`, kept against the name; see `against_name`. *)
+and against_pat_payload ps =
+  if names_only_pat (PTuple ps) && ps <> [] then
+    "((" ^ String.concat ", " (List.map emit_pat (untuple ps)) ^ "))"
+  else "(" ^ String.concat ", " (List.map emit_pat (untuple ps)) ^ ")"
+
+and untuple ps = match ps with [PTuple qs] -> qs | ps -> ps
+
 and emit_pat_atom (p : pat) : string = match strip_pat p with
   | PConstr (_, _ :: _) | PQualified _ -> "(" ^ emit_pat p ^ ")"
   | _ -> emit_pat p
@@ -1835,6 +1861,11 @@ and emit_against indent f arg =
   let payload = match strip_located arg with
     | Tuple es -> Doc.concat (Doc.text ", ") (List.map (emit_expr indent) es)
     | _ -> emit_expr indent arg
+  in
+  (* A payload of bare names keeps a bracket of its own; see
+     `names_only_expr`. *)
+  let payload =
+    if names_only_expr arg then Doc.text "(" ^^ payload ^^ Doc.text ")" else payload
   in
   emit_expr indent f ^^ Doc.text "(" ^^ payload ^^ Doc.text ")"
 
