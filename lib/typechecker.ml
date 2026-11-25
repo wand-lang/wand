@@ -4692,12 +4692,18 @@ let rec infer_pat tenv (p : pat) t (env : env) : env =
     (match ctor, pats with
      | Some c, _ :: _ ->
        refuse_payload_against tenv c written;
-       if ctor_shape tenv written = Named && spaced_bracket_after c then begin
-         spaced_fields_fix c;
+       (* `Circle (r)` and `Circle r` are one pattern: a payload after a
+          space. Only the first was refused, so `wand f`, which writes a
+          bracket around one name as the name, turned a file the checker
+          refused into one it took (#229). A constructor with named fields
+          takes them in a bracket against its name, and nothing else. *)
+       if ctor_shape tenv written = Named && bracket_against c = None then begin
+         if spaced_bracket_after c then spaced_fields_fix c;
          raise (TypeErrorAt (c, Printf.sprintf
            "'%s' has named fields, so they go in a bracket against its name: \
-            %s(field, ...). A bracket after a space is an argument"
-           written written))
+            %s(field, ...). %s after a space is an argument"
+           written written
+           (if spaced_bracket_after c then "A bracket" else "A payload")))
        end
      | _ -> ());
     (* `Pod(name, _)`: a field list with a `_` in it. A field the list does

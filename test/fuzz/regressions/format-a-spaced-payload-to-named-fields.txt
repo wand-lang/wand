@@ -1,0 +1,11 @@
+found:     Fuzz, seed 45537905764, iteration 253922, 2026-11-25 (#229)
+reported:  format:retyped:was E-TYPE, now typechecks to TestOutcome
+fixed in:  lib/typechecker.ml, `infer_pat`, the `PConstr` case
+
+`Circle (r)` gives `Circle`, a constructor with named fields, the payload
+`r` after a space. The checker refused it, but only because it saw the
+bracket in the source. `wand f` writes a bracket around one name as the
+name, and `Circle r` was taken as a positional payload to the one field.
+So the file the checker refused came back as one it took. Now a
+constructor with named fields refuses any payload that is not against its
+name. The fuzzer reached it from test/wand/test_match_places.wand.

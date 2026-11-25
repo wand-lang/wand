@@ -73,9 +73,17 @@ let test_one_name_puns () =
   expect_error "another name, in a let"
     (run_t ^ "let (Run(x)) = Run(a = 1, b = 2, c = 3)\nx")
     "2:6: constructor 'Run' has no field 'x'";
-  expect_error "too few values, in a parameter"
+  expect_error "a payload after a space, in a parameter"
     (run_t ^ "let f (Run x) = x\nf (Run(a = 1, b = 2, c = 3))")
-    "2:8: constructor 'Run' expects 3 argument(s), got 1"
+    "2:8: 'Run' has named fields, so they go in a bracket against its name";
+  (* `B x` and `B (x)` are one pattern, a payload after a space. Only the
+     second was refused, and `wand f` writes it as the first (#229). *)
+  expect_error "a bare payload to one field"
+    "type B(n: Int)\nmatch B(n = 4) with\n| B x -> x"
+    "3:3: 'B' has named fields, so they go in a bracket against its name";
+  expect_error "a bracketed payload to one field"
+    "type B(n: Int)\nmatch B(n = 4) with\n| B (x) -> x"
+    "3:3: 'B' has named fields, so they go in a bracket against its name"
 
 (* ── A `;` on an arm's own line is the arm's (#190) ─────────────────────── *)
 

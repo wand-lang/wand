@@ -4352,7 +4352,9 @@ The same holds in a pattern, a construction and an update, and in a
 declaration, where the bracket shows which it is: `type Pod(name: String)`
 against the name, and `type Wrap = Wrap (List Int)` after a space.
 `type Pod (name: String)` and `Wrap(List Int)` are parse errors that say
-what to write, and `wand t --fix` writes it. The value printer still shows
+what to write, and `wand t --fix` writes it. A constructor with named fields
+takes nothing after a space, in a pattern as in a construction: `Pod n` and
+`Pod (n)` are one pattern, and both are type errors. The value printer still shows
 a value as `Rect(1, 2)`; that is output, not source.
 
 #### Named fields in a type with several constructors

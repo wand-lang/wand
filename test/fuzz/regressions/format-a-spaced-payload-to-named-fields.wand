@@ -1,0 +1,11 @@
+import List
+let{test}=import Test
+type S=Circle(r:Int)|Rect(w:Int,h:Int)|D
+type P=Pair (Int,Int)
+type Sale(id:Int,n:String,amount:Int)
+let a s=match s with|Circle (r)->r|Rect(w,h)->h|t->0let first_some xs=match xs with|[e::rest]->first_some rest|[Some x::_]->x|[]->0let d p=match p with|(a,Some (b,Ok c))->c|(a,Some (b,Error _))->b|(a,e)->a
+let sum_pair(Pair (a))=a
+let net Sale(amount,id)=amount-id
+test""(fn t->t.eq[](List.map sum_pair[Pair (3,2),Pair (1,5)]))
+test""(fn t->t.eq[9,8](List.map net[]))
+test""(fn t->t.eq[5,0,2,0][])
