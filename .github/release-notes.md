@@ -1,11 +1,12 @@
-## 0.115.5 - 2026-11-24
+## 0.116.0 - 2026-11-25
 
-This release fixes a formatter bug that changed what a file means.
+This release fixes a bug where `wand f` changed what a file means. A pattern that was valid before can now be an error.
 
-### Fixed
+### Changed
 
-- `wand f` no longer changes a payload against a constructor's name into a field list. `Boxed(tag;)` gives `Boxed` the payload `tag`. `wand f` wrote it as `Boxed(tag)`, which is the field `tag`, and the next `wand f` wrote it again in a different layout. Now it writes `Boxed((tag))` (#228):
+- In a pattern, a constructor with named fields refuses a payload after a space, with or without a bracket. `Circle (r)` was an error and `Circle r` was not, and `wand f` writes the first as the second. Write the fields against the name: `Circle(r)` (#229):
 
   ```
-  ytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytytype Boxed(tag;)
+  type S = Circle(r: Int) | D
+  let a s = match s with | Circle (r) -> r | D -> 0
   ```
