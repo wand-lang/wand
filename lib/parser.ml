@@ -1205,11 +1205,17 @@ and pat_base_ s =
      apart, so it needs no separate form. *)
   | Token.RawStr str -> ignore (advance s); String str
   | Token.Bool b     -> ignore (advance s); Bool b
+  (* Placed, as the parameter's form is in `pat_atom_`, so that `wand f`
+     can tell `h.S(b: H)` from `h.S (b: H)`. Unplaced, a bracket against the
+     name inside a parameter's own brackets came back with a space, and the
+     next pass printed a different file (#230). *)
   | Token.Ident name when peek2 s = Token.Dot
                        && (match peek3 s with Token.Upper _ -> true | _ -> false) ->
+    let at = peek_loc s in
     ignore (advance s); ignore (advance s);
     (match advance s with
-     | Token.Upper base -> PQualified (name, type_qualified_pat_ s base)
+     | Token.Upper base ->
+       PLocated (span_to_here s at, PQualified (name, type_qualified_pat_ s base))
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
   | Token.Ident name -> ignore (advance s); PVar name
@@ -1255,9 +1261,11 @@ and pat_base_ s =
      only an `Upper` takes this branch. *)
   | Token.Upper name when peek2 s = Token.Dot
                        && (match peek3 s with Token.Upper _ -> true | _ -> false) ->
+    let at = peek_loc s in
     ignore (advance s); ignore (advance s);
     (match advance s with
-     | Token.Upper base -> PQualified (name, type_qualified_pat_ s base)
+     | Token.Upper base ->
+       PLocated (span_to_here s at, PQualified (name, type_qualified_pat_ s base))
      | t -> fail_at (peek_loc s) (Format.asprintf
          "expected a constructor after '%s.', got %a" name Token.pp t))
   (* A constructor that takes anything is placed, so that an error in it --

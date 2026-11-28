@@ -1,0 +1,13 @@
+found:     Fuzz, seed 46164794192, iteration 534321, 2026-11-28 (#230)
+reported:  format:unstable
+fixed in:  lib/parser.ml, `pat_base_`
+
+`h.S(b: H)` is the constructor `S`, reached through `h`, with a bracket
+against the name. The parser gave a position to this form where it read a
+parameter, but not where it read a whole pattern, and a parameter's own
+brackets are read as a whole pattern. So inside `(h.S(b: H))` the formatter
+could not see that the bracket stood against the name, and wrote
+`h.S (b: H)`: a file the checker refused came back as one it took, and a
+second `wand f` gave a different file from the first. The qualified
+constructor is now placed in both readings. The fuzzer reached it from
+stdlib/Hash.wand.
