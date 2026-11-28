@@ -1,12 +1,9 @@
-## 0.116.0 - 2026-11-25
+## 0.116.1 - 2026-11-28
 
-This release fixes a bug where `wand f` changed what a file means. A pattern that was valid before can now be an error.
+### Fixed
 
-### Changed
-
-- In a pattern, a constructor with named fields refuses a payload after a space, with or without a bracket. `Circle (r)` was an error and `Circle r` was not, and `wand f` writes the first as the second. Write the fields against the name: `Circle(r)` (#229):
+- `wand f` no longer adds a space between a qualified constructor and its bracket inside a parameter's brackets. `(shapes.Circle(radius: Int))` gives the bracket to `Circle`. `wand f` wrote it as `(shapes.Circle (radius: Int))`, which is a payload after a space, and the next `wand f` wrote a different file. Now it writes `(shapes.Circle((radius: Int)))` (#230):
 
   ```
-  type S = Circle(r: Int) | D
-  let a s = match s with | Circle (r) -> r | D -> 0
+  let area () (shapes.Circle(radius: Int)) = radius
   ```
